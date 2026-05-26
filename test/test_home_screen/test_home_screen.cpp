@@ -21,8 +21,8 @@
  * Unit tests for home screen icon routing
  *
  * Verifies that each home screen tile navigates to its intended screen.
- * The REPEATERS tile was incorrectly mapped to Screen::Heard (same as PACKETS)
- * instead of Screen::Network (Finder's screen which shows nearby nodes).
+ * The REPEATERS tile has its own RSSI-sorted nodes view instead of sharing
+ * the Finder or raw packets screens.
  */
 #include <gtest/gtest.h>
 #include <cstring>
@@ -38,6 +38,7 @@ enum class Screen {
     Contacts,
     Channels,
     Network,
+    Repeaters,
     Heard,
     Map,
     Advertise,
@@ -61,7 +62,7 @@ struct IconDef {
 static const IconDef icons[] = {
     {"CHATS",     "\x0e",  true,  Screen::Chat},
     {"CONTACTS",  "\x0f",  false, Screen::Contacts},
-    {"REPEATERS", "\x15",  false, Screen::Network},   // FIXED: was Heard, now Network
+    {"REPEATERS", "\x15",  false, Screen::Repeaters},
     {"FINDER",    "\x12",  false, Screen::Network},
     {"PACKETS",   "\x0b",  false, Screen::Heard},
     {"MAP",       "\x13",  false, Screen::Map},
@@ -87,14 +88,13 @@ TEST(HomeScreenIconTest, AllTilesHaveUniqueTargets) {
     }
     // FIXED: only PACKETS = 1 tile pointing to Heard
     EXPECT_EQ(heard_count, 1)
-        << "Only PACKETS should target Heard (REPEATERS now targets Network)";
+        << "Only PACKETS should target Heard";
 }
 
-TEST(HomeScreenIconTest, RepeatersTargetsNetwork) {
-    // REPEATERS now goes to Screen::Network (nodes by signal strength)
-    // instead of Screen::Heard (raw packets log)
-    EXPECT_EQ(icons[2].target, Screen::Network)
-        << "REPEATERS should target Network (nodes view), not Heard";
+TEST(HomeScreenIconTest, RepeatersTargetsRepeaters) {
+    // REPEATERS has a dedicated nodes/repeaters view sorted by signal strength.
+    EXPECT_EQ(icons[2].target, Screen::Repeaters)
+        << "REPEATERS should target the dedicated Repeaters view";
 }
 
 TEST(HomeScreenIconTest, PacketsTargetsHeard) {
@@ -103,12 +103,17 @@ TEST(HomeScreenIconTest, PacketsTargetsHeard) {
 }
 
 TEST(HomeScreenIconTest, FinderTargetsNetwork) {
-    // FINDER correctly shows the Network screen (nearby nodes)
+    // FINDER shows the nearby discovery screen with Ping Nearby.
     EXPECT_EQ(icons[3].target, Screen::Network);
 }
 
+TEST(HomeScreenIconTest, RepeatersAndFinderAreDifferent) {
+    EXPECT_NE(icons[2].target, icons[3].target)
+        << "REPEATERS should not borrow Finder's discovery screen";
+}
+
 TEST(HomeScreenIconTest, RepeatersAndPacketsAreDifferent) {
-    // FIXED: REPEATERS (Network) and PACKETS (Heard) now go to different screens
+    // REPEATERS and PACKETS go to different screens.
     EXPECT_NE(icons[2].target, icons[4].target)
         << "REPEATERS and PACKETS should go to different screens";
 }

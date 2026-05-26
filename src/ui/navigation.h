@@ -29,6 +29,7 @@ enum class Screen {
     Contacts,
     Channels,
     Network,
+    Repeaters,
     Heard,
     Map,
     Advertise,

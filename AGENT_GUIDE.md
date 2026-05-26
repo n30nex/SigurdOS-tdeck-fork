@@ -142,7 +142,7 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 |------|--------|-------------|
 | CHATS | `LV_SYMBOL_ENVELOPE` | Chat |
 | CONTACTS | `LV_SYMBOL_CALL` | Contacts |
-| REPEATERS | `LV_SYMBOL_WIFI` | Heard (network) |
+| REPEATERS | `LV_SYMBOL_WIFI` | Repeaters |
 | FINDER | `LV_SYMBOL_EYE_OPEN` | Network |
 | PACKETS | `LV_SYMBOL_LIST` | Heard (packet log) |
 | MAP | `LV_SYMBOL_GPS` | Map |
@@ -162,16 +162,17 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 2 | Chat (channels + DM) | `chat_screen.cpp` | ✅ |
 | 3 | Contacts (alphabetical, tap→DM) | `screens.cpp` | ✅ |
 | 4 | Channels (list + create #hashtag/PSK) | `screens.cpp` | ✅ |
-| 5 | Finder / Network (nearby nodes) | `screens.cpp` | ✅ |
-| 6 | Packets / Heard (packet log, 50 entries) | `screens.cpp` | ⚠️ Both REPEATERS and PACKETS home tiles map here (see docs/KNOWN_ISSUES.md) |
-| 7 | Map (touch pan, auto-center) | `screens.cpp` | ✅ |
-| 8 | Advertise (broadcast presence, status timer) | `screens.cpp` | ✅ |
-| 9 | Settings (radio, keyboard BL, date/time) | `screens.cpp` | ✅ |
-| 10 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
-| 11 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
-| 12 | Signal (live RSSI, SNR, noise floor, radio params from prefs) | `screens.cpp` | ✅ |
-| 13 | Radio Setup (freq presets, SF/BW/CR/Pwr controls, save & reboot) | `screens.cpp` | ✅ |
-| 14 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
+| 5 | Finder / Network (nearby discovery) | `screens.cpp` | ✅ |
+| 6 | Repeaters (nodes sorted by RSSI) | `screens.cpp` | ✅ |
+| 7 | Packets / Heard (packet log, 50 entries) | `screens.cpp` | ✅ |
+| 8 | Map (touch pan, auto-center) | `screens.cpp` | ✅ |
+| 9 | Advertise (broadcast presence, status timer) | `screens.cpp` | ✅ |
+| 10 | Settings (radio, keyboard BL, date/time) | `screens.cpp` | ✅ |
+| 11 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
+| 12 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
+| 13 | Signal (live RSSI, SNR, noise floor, radio params from prefs) | `screens.cpp` | ✅ |
+| 14 | Radio Setup (freq presets, SF/BW/CR/Pwr controls, save & reboot) | `screens.cpp` | ✅ |
+| 15 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
 | — | Custom RF (sub-screen of Radio Setup — Freq, SF, BW, CR, Pwr text inputs with Apply) | `screens.cpp` | ✅ |
 
 ---

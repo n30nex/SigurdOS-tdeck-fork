@@ -561,6 +561,82 @@ void contacts_screen_show()
 }
 
 // ════════════════════════════════════════════════════════
+// Repeaters — known nodes sorted by signal strength
+// ════════════════════════════════════════════════════════
+void repeaters_screen_show()
+{
+    lv_obj_t* scr = make_screen_full("Repeaters");
+
+    slopos::mesh::ContactInfo contacts[32];
+    int n = slopos::mesh::exportContactsFull(contacts, 32);
+    uint32_t now = slopos::mesh::getCurrentTime();
+
+    // Strongest signal first; break RSSI ties by most recent sighting.
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (contacts[j].rssi > contacts[i].rssi ||
+                (contacts[j].rssi == contacts[i].rssi &&
+                 contacts[j].last_seen > contacts[i].last_seen)) {
+                auto tmp = contacts[i];
+                contacts[i] = contacts[j];
+                contacts[j] = tmp;
+            }
+        }
+    }
+
+    lv_obj_t* summary = lv_label_create(scr);
+    lv_obj_set_width(summary, CONTENT_W);
+    lv_obj_set_style_pad_left(summary, 8, 0);
+    lv_obj_set_style_pad_right(summary, 8, 0);
+    lv_obj_set_style_text_align(summary, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(summary, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(summary, &lv_font_montserrat_10, 0);
+    lv_obj_align(summary, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 2);
+
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%d known node%s by RSSI",
+             n, n == 1 ? "" : "s");
+    lv_label_set_text(summary, n == 0 ? "No known nodes yet." : buf);
+
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, LV_PCT(100), CONTENT_H - 22);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y + 20);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+
+    if (n == 0) {
+        lv_obj_t* item = lv_list_add_btn(list, LV_SYMBOL_AUDIO, "Waiting for adverts...");
+        lv_obj_set_style_bg_color(item, lv_color_hex(BG_TERTIARY), 0);
+        show_screen(scr);
+        return;
+    }
+
+    for (int i = 0; i < n; i++) {
+        int32_t age_s = (int32_t)(now - contacts[i].last_seen);
+        if (age_s < 0) age_s = 0;
+
+        char age_buf[16];
+        if (contacts[i].last_seen == 0) {
+            snprintf(age_buf, sizeof(age_buf), "unknown");
+        } else if (age_s < 60) {
+            snprintf(age_buf, sizeof(age_buf), "%ds", (int)age_s);
+        } else if (age_s < 3600) {
+            snprintf(age_buf, sizeof(age_buf), "%dm", (int)(age_s / 60));
+        } else {
+            snprintf(age_buf, sizeof(age_buf), "%dh", (int)(age_s / 3600));
+        }
+
+        snprintf(buf, sizeof(buf), "%s  %ddBm  %s ago",
+                 contacts[i].name, contacts[i].rssi, age_buf);
+        lv_obj_t* item = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+        lv_obj_set_style_bg_color(item,
+            lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    }
+
+    show_screen(scr);
+}
+
+// ════════════════════════════════════════════════════════
 // Finder — nearby nodes with Ping Nearby
 // ════════════════════════════════════════════════════════
 void finder_screen_show()

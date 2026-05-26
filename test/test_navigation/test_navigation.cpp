@@ -33,7 +33,7 @@ namespace {
 
 // ── Replicate the navigation state machine for pure testing ──
 enum class Screen {
-    Home, Chat, Contacts, Channels, Network, Heard,
+    Home, Chat, Contacts, Channels, Network, Repeaters, Heard,
     Map, Advertise, Settings, Trace, Terminal, Noise, Signal, RadioSetup, COUNT
 };
 
@@ -152,7 +152,7 @@ TEST_F(NavigationTest, NavigateToSameScreenIsNoop) {
 
 TEST_F(NavigationTest, NavigateToAllScreens) {
     std::vector<Screen> screens = {
-        Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network,
+        Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network, Screen::Repeaters,
         Screen::Heard, Screen::Map, Screen::Advertise, Screen::Settings,
         Screen::Trace, Screen::Terminal, Screen::Noise, Screen::Signal
     };
@@ -219,12 +219,13 @@ TEST_F(NavigationTest, HistoryStackDropsOldestOnOverflow) {
     navigate_to(Screen::Contacts);  // push Chat (2)
     navigate_to(Screen::Channels);  // push Contacts (3)
     navigate_to(Screen::Network);   // push Channels (4)
-    navigate_to(Screen::Heard);     // push Network (5)
-    navigate_to(Screen::Map);       // push Heard (6)
-    navigate_to(Screen::Advertise); // push Map (7)
-    navigate_to(Screen::Settings);  // push Advertise (8) — stack full
-    navigate_to(Screen::Trace);     // push Settings → shift oldest (Home) out (9)
-    navigate_to(Screen::Terminal);  // push Trace → shift oldest (Chat) out (10)
+    navigate_to(Screen::Repeaters); // push Network (5)
+    navigate_to(Screen::Heard);     // push Repeaters (6)
+    navigate_to(Screen::Map);       // push Heard (7)
+    navigate_to(Screen::Advertise); // push Map (8) — stack full
+    navigate_to(Screen::Settings);  // push Advertise → shift oldest (Home) out (9)
+    navigate_to(Screen::Trace);     // push Settings → shift oldest (Chat) out (10)
+    navigate_to(Screen::Terminal);  // push Trace → shift oldest (Contacts) out (11)
     EXPECT_EQ(current, Screen::Terminal);
 
     // Go back should trace through the last 8 screens in order
@@ -233,10 +234,10 @@ TEST_F(NavigationTest, HistoryStackDropsOldestOnOverflow) {
     go_back(); EXPECT_EQ(current, Screen::Advertise);
     go_back(); EXPECT_EQ(current, Screen::Map);
     go_back(); EXPECT_EQ(current, Screen::Heard);
+    go_back(); EXPECT_EQ(current, Screen::Repeaters);
     go_back(); EXPECT_EQ(current, Screen::Network);
     go_back(); EXPECT_EQ(current, Screen::Channels);
-    go_back(); EXPECT_EQ(current, Screen::Contacts);
-    // Should be exhausted now (home was dropped)
+    // Should be exhausted now (home, chat, and contacts were dropped)
     EXPECT_FALSE(can_go_back());
 }
 
@@ -247,14 +248,15 @@ TEST_F(NavigationTest, OverflowBackSequenceFullCount) {
     navigate_to(Screen::Contacts);  // push Chat (2)
     navigate_to(Screen::Channels);  // push Contacts (3)
     navigate_to(Screen::Network);   // push Channels (4)
-    navigate_to(Screen::Heard);     // push Network (5)
-    navigate_to(Screen::Map);       // push Heard (6)
-    navigate_to(Screen::Advertise); // push Map (7)
-    navigate_to(Screen::Settings);  // push Advertise (8) — stack full
-    navigate_to(Screen::Trace);     // push Settings → shift oldest out (9)
-    navigate_to(Screen::Terminal);  // push Trace (10)
-    navigate_to(Screen::Signal);    // push Terminal (11)
-    navigate_to(Screen::RadioSetup);// push Signal (12)
+    navigate_to(Screen::Repeaters); // push Network (5)
+    navigate_to(Screen::Heard);     // push Repeaters (6)
+    navigate_to(Screen::Map);       // push Heard (7)
+    navigate_to(Screen::Advertise); // push Map (8) — stack full
+    navigate_to(Screen::Settings);  // push Advertise → shift oldest out (9)
+    navigate_to(Screen::Trace);     // push Settings (10)
+    navigate_to(Screen::Terminal);  // push Trace (11)
+    navigate_to(Screen::Signal);    // push Terminal (12)
+    navigate_to(Screen::RadioSetup);// push Signal (13)
 
     // Should always have exactly MAX_HISTORY back steps available
     int back_count = 0;
@@ -284,16 +286,16 @@ TEST_F(NavigationTest, AllScreenPairsWork) {
 }
 
 // ── Screen count matches expected ───────────────────────
-TEST_F(NavigationTest, ScreenCountIs13) {
-    EXPECT_EQ((int)Screen::COUNT, 14);
+TEST_F(NavigationTest, ScreenCountIs15) {
+    EXPECT_EQ((int)Screen::COUNT, 15);
 }
 
 // ── Screen enum values are contiguous ───────────────────
 TEST_F(NavigationTest, ScreenEnumValuesAreContiguous) {
     EXPECT_EQ((int)Screen::Home, 0);
     EXPECT_EQ((int)Screen::Chat, 1);
-    EXPECT_EQ((int)Screen::Signal, 12);
-    EXPECT_EQ((int)Screen::COUNT, 14);
+    EXPECT_EQ((int)Screen::Signal, 13);
+    EXPECT_EQ((int)Screen::COUNT, 15);
 }
 
 // ── Back-swipe (two-swipe commit) ─────────────────────────
@@ -367,7 +369,7 @@ TEST_F(NavigationTest, UpDownRightEventsDontTriggerBack) {
 
 TEST_F(NavigationTest, BackSwipeFromAnyNonHomeScreen) {
     std::vector<Screen> screens = {
-        Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network,
+        Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network, Screen::Repeaters,
         Screen::Heard, Screen::Map, Screen::Advertise, Screen::Settings,
         Screen::Trace, Screen::Terminal, Screen::Noise, Screen::Signal
     };

@@ -169,7 +169,7 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 |------|--------|-------------|
 | CHATS | `LV_SYMBOL_ENVELOPE` | Chat |
 | CONTACTS | `LV_SYMBOL_CALL` | Contacts |
-| REPEATERS | `LV_SYMBOL_WIFI` | Heard (network) |
+| REPEATERS | `LV_SYMBOL_WIFI` | Repeaters |
 | FINDER | `LV_SYMBOL_EYE_OPEN` | Network |
 | PACKETS | `LV_SYMBOL_LIST` | Heard (packet log) |
 | MAP | `LV_SYMBOL_GPS` | Map |
@@ -189,16 +189,17 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 2 | Chat (channels + DM) | `chat_screen.cpp` | ✅ |
 | 3 | Contacts (alphabetical, tap→DM) | `screens.cpp` | ✅ |
 | 4 | Channels (list + create #hashtag/PSK) | `screens.cpp` | ✅ |
-| 5 | Finder (nearby nodes) | `screens.cpp` | ✅ |
-| 6 | Packets (raw packet log, 50 entries) | `screens.cpp` | ✅ |
-| 7 | Map (touch pan, auto-center) | `screens.cpp` | ✅ |
-| 8 | Advertise (broadcast presence) | `screens.cpp` | ✅ |
-| 9 | Settings (radio, keyboard BL, date/time) | `screens.cpp` | ✅ |
-| 10 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
-| 11 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
-| 12 | Signal (live RSSI, SNR, radio params) | `screens.cpp` | ✅ |
-| 13 | Radio Setup (freq, SF, BW, CR, power) | `screens.cpp` | ✅ |
-| 14 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
+| 5 | Finder (nearby discovery) | `screens.cpp` | ✅ |
+| 6 | Repeaters (nodes sorted by RSSI) | `screens.cpp` | ✅ |
+| 7 | Packets (raw packet log, 50 entries) | `screens.cpp` | ✅ |
+| 8 | Map (touch pan, auto-center) | `screens.cpp` | ✅ |
+| 9 | Advertise (broadcast presence) | `screens.cpp` | ✅ |
+| 10 | Settings (radio, keyboard BL, date/time) | `screens.cpp` | ✅ |
+| 11 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
+| 12 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
+| 13 | Signal (live RSSI, SNR, radio params) | `screens.cpp` | ✅ |
+| 14 | Radio Setup (freq, SF, BW, CR, power) | `screens.cpp` | ✅ |
+| 15 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
 
 ---
 

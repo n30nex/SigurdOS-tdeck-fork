@@ -82,9 +82,9 @@ Pick any item from the list above and open a PR against the `dev` branch. See [`
 ## Chat Screen
 
 ### REPEATERS tile navigates to Packets screen instead of a nodes/repeaters view
-**FIXED in PR #99:** REPEATERS now redirects to `Screen::Network` (same as FINDER), which surfaces nearby nodes by signal strength.
+**FIXED in PR #99:** REPEATERS redirected away from the Packets screen.
 
-**Remaining:** A dedicated repeaters/nodes screen with RSSI-sorted list would be better than borrowing FINDER's screen, but the duplicate-icon bug is fixed.
+**FIXED:** REPEATERS now has a dedicated `Screen::Repeaters` view that lists known nodes sorted by RSSI, leaving FINDER focused on nearby Ping discovery and PACKETS focused on the raw packet log.
 
 ---
 
