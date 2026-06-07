@@ -68,6 +68,7 @@ static constexpr uint8_t  KB_BACKLIGHT_DEFAULT      = 127;  // mid brightness
 static constexpr uint8_t  KB_RAW_COLS               = 5;
 static constexpr uint8_t  KB_RAW_ROWS               = 7;
 static constexpr uint8_t  KB_RAW_ROW_MASK           = 0x7F;
+static constexpr uint8_t  KB_RAW_MAX_SIMULTANEOUS   = 4;
 
 enum class RawKeyKind : uint8_t {
     Printable,
@@ -167,6 +168,19 @@ static bool raw_key_down(const uint8_t matrix[KB_RAW_COLS], uint8_t col, uint8_t
 {
     if (col >= KB_RAW_COLS || row >= KB_RAW_ROWS) return false;
     return (matrix[col] & (uint8_t)(1u << row)) != 0;
+}
+
+static bool raw_matrix_valid(const uint8_t matrix[KB_RAW_COLS])
+{
+    uint8_t pressed = 0;
+    for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
+        if (matrix[col] & ~KB_RAW_ROW_MASK) return false;
+        for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
+            if (raw_key_down(matrix, col, row)) pressed++;
+            if (pressed > KB_RAW_MAX_SIMULTANEOUS) return false;
+        }
+    }
+    return true;
 }
 
 static bool is_modifier_kind(RawKeyKind kind)
@@ -396,17 +410,18 @@ bool sigurdos_keyboard_init()
         return false;
     }
 
-    // Switch to raw matrix mode when available. Raw mode exposes Sym, Shift,
-    // Mic, and the unlabeled/Alt matrix key so the host can provide a full
-    // T-Deck keyboard wrapper instead of relying on the C3's ASCII-only map.
+    // Switch to key mode on the C3 — raw mode is unreliable on some
+    // T-Deck C3 firmware revisions (garbage column data causes phantom
+    // Alt key presses that open the character picker for every typed key).
+    // Key mode returns pre-mapped ASCII characters directly.
     Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(CMD_MODE_RAW);
+    Wire.write(CMD_MODE_KEY);
     if (Wire.endTransmission() != 0) {
         initialized = false;
         return false;
     }
 
-    raw_mode_active = true;
+    raw_mode_active = false;
     initialized = true;
     return true;
 }
@@ -432,7 +447,7 @@ void sigurdos_keyboard_scan()
             matrix[got++] = (uint8_t)v;
         }
 
-        if (got == KB_RAW_COLS) {
+        if (got == KB_RAW_COLS && raw_matrix_valid(matrix)) {
             process_raw_matrix(matrix);
             return;
         }
