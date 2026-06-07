@@ -154,6 +154,7 @@ static void print_help() {
     Serial.println(F("║  backlight   Get/set backlight bri  ║"));
     Serial.println(F("║  setrf <freq> <sf> <bw> <cr> <pwr>  ║"));
     Serial.println(F("║           Set radio params in NVS  ║"));
+    Serial.println(F("║  getrf       Show current radio params  ║"));
     Serial.println(F("║  reboot      Reboot the device     ║"));
     Serial.println(F("║  advert      Send self advert      ║"));
     Serial.println(F("║  telemetry on|off|diff|hb N|full     ║"));
@@ -1005,6 +1006,20 @@ static void dump_focused_widget() {
     Serial.println();
 }
 
+// ── Cmd: getrf ────────────────────────────────────────────
+static void cmd_getrf() {
+    const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+
+    if (!p.configured) {
+        Serial.println(F("[test] getrf: radio not configured yet"));
+        return;
+    }
+
+    Serial.printf("[test] getrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d\n",
+                  p.freq, (int)p.sf, p.bw, (int)p.cr, (int)p.tx_power_dbm,
+                  (int)p.rx_boosted_gain);
+}
+
 // ── Cmd: setrf ────────────────────────────────────────────
 static void cmd_setrf(const char* arg) {
     SigurdOSTestRfParams rf{};
@@ -1037,13 +1052,15 @@ static void cmd_setrf(const char* arg) {
     p.bw = rf.bw;
     p.cr = rf.cr;
     p.tx_power_dbm = rf.tx_power_dbm;
+    p.rx_boosted_gain = rf.rx_boosted_gain;
     p.configured = true;
 
     if (prefs_save(p)) {
         sigurdos::prefs_set(p);
         Serial.println(F("[test] setrf: radio params saved to NVS"));
-        Serial.printf("[test] setrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm\n",
-                      rf.freq, (int)rf.sf, rf.bw, (int)rf.cr, (int)rf.tx_power_dbm);
+        Serial.printf("[test] setrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d\n",
+                      rf.freq, (int)rf.sf, rf.bw, (int)rf.cr, (int)rf.tx_power_dbm,
+                      (int)rf.rx_boosted_gain);
         Serial.println(F("[test] setrf: reboot to apply changes"));
     } else {
         Serial.println(F("[test] setrf: ERROR failed to save to NVS"));
@@ -1237,6 +1254,8 @@ static bool dispatch(const char* line) {
         channel[sizeof(channel) - 1] = '\0';
         bool ok = sigurdos::mesh::sendRoomMsgFetchRequest(name, channel);
         Serial.printf("[test] fetchmsgs %s channel=%s: %s\n", name, channel, ok ? "OK" : "FAILED");
+    } else if (strcmp(cmd, "getrf") == 0) {
+        cmd_getrf();
     } else if (strcmp(cmd, "setrf") == 0) {
         cmd_setrf(arg);
     } else if (strcmp(cmd, "reboot") == 0 || strcmp(cmd, "restart") == 0) {
