@@ -14,14 +14,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - env: SigurdOS_TDeck
-          - env: SigurdOS_TDeck_telemetry
-          - env: SigurdOS_TDeck_remote_test
-          - env: SigurdOS_TDeck_remote_test_radio
-          - env: SigurdOS_TDeck_ble
-          - env: SigurdOS_TDeck_ble_validation
-          - env: SigurdOS_TDeck_gps_validation
-          - env: SigurdOS_TDeck_gps_validation_wifi
+          - { env: SigurdOS_TDeck, requires_wifi: false }
+          - { env: SigurdOS_TDeck_telemetry, requires_wifi: false }
+          - { env: SigurdOS_TDeck_remote_test, requires_wifi: false }
+          - { env: SigurdOS_TDeck_remote_test_radio, requires_wifi: false }
+          - { env: SigurdOS_TDeck_ble_validation, requires_wifi: false }
+          - { env: SigurdOS_TDeck_gps_validation, requires_wifi: false }
+          - { env: SigurdOS_TDeck_gps_validation_wifi, requires_wifi: true }
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,8 +45,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
       - name: Build ${{ matrix.env }}
+        if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
         run: pio run -e ${{ matrix.env }}
       - name: Upload firmware artifacts for ${{ matrix.env }}
+        if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.env }}
