@@ -99,11 +99,11 @@ TEST_F(KeyboardTest, InitSendsDefaultBrightnessOnFirstSuccess) {
     // Init sends two commands:
     //   1. Brightness        (0x01 + prefs value)
     //   2. Default brightness (0x02 + prefs value)
-    //   3. Raw mode switch   (0x03)
+    //   3. Key mode switch   (0x04)
     // The mock only records the LAST transmission.
     EXPECT_EQ(Wire.mock_last_tx_addr(), 0x55u);
-    // Last transmission should be raw-mode command
-    EXPECT_EQ(Wire.mock_last_tx_data(0), 0x03u);
+    // Last transmission should be key-mode command
+    EXPECT_EQ(Wire.mock_last_tx_data(0), 0x04u);
 }
 
 TEST_F(KeyboardTest, InitProbesKeyboardAtCorrectAddress) {
