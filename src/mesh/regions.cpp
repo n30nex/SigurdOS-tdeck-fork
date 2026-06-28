@@ -3,6 +3,7 @@
 
 #include "regions.h"
 #include "../hal/prefs.h"
+#include "hal/storage.h"
 #include <SPIFFS.h>
 #include <cstring>
 
@@ -33,7 +34,7 @@ RegionMap* getRegionMap() {
 
 bool regionsLoad() {
     if (!g_region_map) return false;
-    if (!SPIFFS.begin(false)) return false;
+    if (!sigurdos::hal::storage_ensure_mounted()) return false;
 
     bool ok = g_region_map->load(&SPIFFS, "/regions2");
 
@@ -51,7 +52,7 @@ bool regionsLoad() {
 
 bool regionsSave() {
     if (!g_region_map) return false;
-    if (!SPIFFS.begin(false)) return false;
+    if (!sigurdos::hal::storage_ensure_mounted()) return false;
 
     bool ok = g_region_map->save(&SPIFFS, "/regions2");
     return ok;

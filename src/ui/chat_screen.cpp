@@ -30,6 +30,7 @@
 #include "../mesh/public_channel.h"
 #include "../mesh/message_store.h"
 #include "../hal/prefs.h"
+#include "../hal/storage.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstring>
@@ -2700,13 +2701,7 @@ static constexpr size_t   MSG_MAX_FILE_SIZE =
 
 void chat_save_messages()
 {
-    {
-        static bool mounted = false;
-        if (!mounted) {
-            if (!SPIFFS.begin(false)) return;
-            mounted = true;
-        }
-    }
+    if (!sigurdos::hal::storage_ensure_mounted()) return;
     File f = SPIFFS.open("/msgs", "w");
     if (!f) return;
 
@@ -2766,15 +2761,9 @@ void chat_load_messages()
         }
     }
 
-    {
-        static bool mounted = false;
-        if (!mounted) {
-            if (!SPIFFS.begin(false)) {
-                chat_load_companion_messages();
-                return;
-            }
-            mounted = true;
-        }
+    if (!sigurdos::hal::storage_ensure_mounted()) {
+        chat_load_companion_messages();
+        return;
     }
     if (!SPIFFS.exists("/msgs")) {
         chat_load_companion_messages();

@@ -2,7 +2,6 @@
 // Copyright (C) 2025 Ben
 
 #include <Arduino.h>
-#include <SPIFFS.h>
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/display.h"
@@ -14,6 +13,7 @@
 #include "hal/prefs.h"
 #include "hal/launcher_env.h"
 #include "hal/buzzer.h"
+#include "hal/storage.h"
 #include "app/map_renderer.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
@@ -87,10 +87,11 @@ void setup()
     boot_log("first splash frame flushed");
 
     boot_status("Mounting storage...");
-    // Try to mount without auto-formatting — a transient corruption
-    // should not destroy identity/contacts silently. Only format when
-    // explicitly requested via factory reset or recovery.
-    bool spiffs_ok = SPIFFS.begin(false);
+    // Try to mount without destructive auto-formatting — a transient
+    // corruption should not destroy identity/contacts silently. Fresh erased
+    // SPIFFS partitions are formatted once so first install has persistence.
+    const auto storage_result = sigurdos::hal::storage_begin();
+    const bool spiffs_ok = storage_result != sigurdos::hal::StorageMountResult::Unavailable;
     if (!spiffs_ok) {
         if (sigurdos_is_under_launcher()) {
             Serial.println("[boot] WARNING: SPIFFS mount failed — installed app-only under Launcher. Reinstall from the Launcher/merged image (SigurdOS-tdeck-launcher.bin) for persistence.");
@@ -98,7 +99,9 @@ void setup()
             Serial.println("[boot] WARNING: SPIFFS mount failed — identity/contacts won't persist across reboots. Use factory reset to reformat and recover.");
         }
     }
-    boot_status(spiffs_ok ? "Storage ready" : "Storage unavailable");
+    boot_status(storage_result == sigurdos::hal::StorageMountResult::Formatted
+                    ? "Storage formatted"
+                    : (spiffs_ok ? "Storage ready" : "Storage unavailable"));
 
     boot_status("Loading settings...");
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();

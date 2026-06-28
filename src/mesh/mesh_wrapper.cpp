@@ -16,6 +16,7 @@
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
 #include "hal/prefs.h"
+#include "hal/storage.h"
 #include "sigurd_mesh_v2.h"
 #include "regions.h"
 #include "../diagnostics/debug_cfg.h"
@@ -1622,6 +1623,7 @@ void factoryReset()
 
     // Close SPIFFS before reformatting
     SPIFFS.end();
+    sigurdos::hal::storage_reset_state();
 
     // Erase known NVS namespaces (prefs + channels, repeater passwords)
     {
@@ -1641,6 +1643,7 @@ void factoryReset()
 
     // Reformat SPIFFS to wipe identity, contacts, and any other files
     SPIFFS.format();
+    sigurdos::hal::storage_reset_state();
 
     // Only erase SigurdOS-owned NVS namespaces — do NOT erase the full
     // NVS partition (which would destroy PHY calibration data, BLE bonding
