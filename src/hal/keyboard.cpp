@@ -720,7 +720,7 @@ bool sigurdos_keyboard_get_diag(SigurdOSKeyboardDiag* out)
     out->alt = alt_held;
     out->sym_down = sym_sample_down;
     out->mic_down = mic_sample_down;
-    out->layout = prefs_get().kbd_layout;
+    out->layout = sigurdos::prefs_get().kbd_layout;
     out->last_key_mode_byte = diag_last_key_mode_byte;
     memcpy(out->raw_matrix, diag_raw_matrix, sizeof(out->raw_matrix));
     out->last_output_codepoint = diag_last_output_codepoint;

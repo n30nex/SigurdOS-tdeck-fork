@@ -20,6 +20,7 @@
 #include "touch.h"
 #include "i2c_bus.h"
 #include "tdeck_pins.h"
+#include "../diagnostics/log.h"
 #include <Wire.h>
 #include <Arduino.h>
 #if SIGURDOS_TELEMETRY
@@ -78,10 +79,8 @@ static bool i2c_read_bytes(uint16_t reg, uint8_t* out, size_t len)
 
     const size_t received = Wire.requestFrom(i2c_addr, len);
     if (received != len) {
-#if defined(SIGURDOS_DEBUG)
-        Serial.printf("[touch] I2C read 0x%04X: %u/%u bytes\n",
-                      reg, (unsigned)received, (unsigned)len);
-#endif
+        SIG_LOGD("touch I2C read 0x%04X: %u/%u bytes",
+                 reg, (unsigned)received, (unsigned)len);
         return false;
     }
     if (Wire.available() < (int)len) return false;
