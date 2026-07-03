@@ -517,18 +517,20 @@ SD card must be initialised **after** the LoRa radio, because the LoRa/SPI init
 If the SD card is initialised first with unconfigured pins, FATFS returns
 `FR_NOT_READY`.
 
-`sigurdos_sdcard_init()` makes only a **single attempt** at boot for fast startup.
-Consumers (e.g., the map renderer) call **`sigurdos_sdcard_retry()`** lazily when
-they need the card. The retry is capped at 3 total attempts to avoid unbounded
-re-probing of a broken or absent card.
+`sigurdos_sdcard_init()` makes three short, bounded boot attempts with 0/120/300 ms
+backoff. Consumers (e.g., the map renderer or System SD diagnostics) can call
+**`sigurdos_sdcard_retry()`** lazily when they need the card. Lazy retry is capped
+at 3 additional attempts to avoid unbounded re-probing of a broken or absent
+card.
 
 ### API
 
 | Function                             | Purpose                   |
 |--------------------------------------|---------------------------|
-| `sigurdos_sdcard_init()`              | Mount SD card (single attempt, fast boot) |
+| `sigurdos_sdcard_init()`              | Mount SD card (bounded boot attempts) |
 | `sigurdos_sdcard_retry()`             | Lazy retry (capped at 3), called by consumers |
 | `sigurdos_sdcard_mounted()`           | Check mount status        |
+| `sigurdos_sdcard_diagnostics()`       | Last mount status, attempt count, source, error, and backoff |
 | `sigurdos_sdcard_capacity_bytes()`    | Total card capacity       |
 | `sigurdos_sdcard_free_bytes()`        | Free space                |
 | `sigurdos_sdcard_read(path, buf, len)`| Read file                 |

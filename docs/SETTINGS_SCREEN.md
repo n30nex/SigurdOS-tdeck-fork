@@ -142,7 +142,7 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | Row | Action / persistence |
 |-----|----------------------|
 | `Name: <node_name>` | Read-only (set via onboarding) |
-| `SD Card: Mounted / Not mounted` | Read-only status from `sigurdos_sdcard_mounted()` |
+| `SD Card: Mounted / Not mounted` | Opens SD diagnostics: mount state, attempt count, last source/error, backoff, free/total space, and bounded retry |
 | `Date: YYYY-MM-DD` / `Time: HH:MM` | Open the date/time dialog (below) |
 | `Run Setup Wizard` | `navigate_to(Screen::Onboarding)` |
 | `Input Self-Test` | Opens a live touch, trackball, and keyboard diagnostic dialog |
@@ -179,6 +179,15 @@ The System `Input Self-Test` row opens a compact live diagnostic dialog:
 - Touch shows ready/offline state, current mapped coordinates, press/drag/release counters, I2C error count, and a marker on a 320x240-scaled pad while pressed.
 - Trackball shows ready/offline state, last direction or click, queued event count, total events, overflow count, active U/D/L/R/C states, and raw GPIO levels.
 - Keyboard shows ready/offline state, layout id, last emitted codepoint, event count, overwrite/drop count, and raw-matrix support state.
+
+### SD Card dialog
+
+The System `SD Card` row opens a compact diagnostic snapshot:
+
+- Mount state comes from `sigurdos_sdcard_diagnostics().mounted`.
+- Attempts, last source, last error, and last backoff expose the bounded mount/retry path used during boot and map access.
+- When mounted, the dialog shows free and total space using `sigurdos_sdcard_format_size()`.
+- `Retry` calls `sigurdos_sdcard_retry()` and refreshes both the dialog and the System row label.
 
 ---
 

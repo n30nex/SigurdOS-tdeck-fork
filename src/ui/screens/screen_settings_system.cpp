@@ -99,6 +99,108 @@ static void show_build_info_dialog(lv_obj_t* parent)
     }, LV_EVENT_CLICKED, nullptr);
 }
 
+struct SdDiagDialogCtx {
+    lv_obj_t* label;
+    lv_obj_t* row;
+};
+
+static void update_sd_row_label(lv_obj_t* row)
+{
+    if (!row) return;
+    char buf[40];
+    snprintf(buf, sizeof(buf), "  SD Card: %s", sigurdos_sdcard_mounted() ? "Mounted" : "Not mounted");
+    update_row_label(row, buf);
+}
+
+static void sd_diag_update(SdDiagDialogCtx* ctx)
+{
+    if (!ctx || !ctx->label) return;
+
+    SigurdosSdMountDiagnostic diag = sigurdos_sdcard_diagnostics();
+    char total_buf[24] = "n/a";
+    char free_buf[24] = "n/a";
+    if (diag.mounted) {
+        sigurdos_sdcard_format_size(sigurdos_sdcard_capacity_bytes(), total_buf, sizeof(total_buf));
+        sigurdos_sdcard_format_size(sigurdos_sdcard_free_bytes(), free_buf, sizeof(free_buf));
+    }
+
+    char body[256];
+    snprintf(body, sizeof(body),
+             "Mounted: %s\n"
+             "Attempts: %u\n"
+             "Last: %s / %s\n"
+             "Backoff: %lu ms\n"
+             "Free: %s / %s",
+             diag.mounted ? "yes" : "no",
+             diag.attempt_count,
+             sigurdos_sdcard_mount_source_name(diag.last_source),
+             sigurdos_sdcard_mount_error_name(diag.last_error),
+             (unsigned long)diag.last_backoff_ms,
+             free_buf,
+             total_buf);
+    lv_label_set_text(ctx->label, body);
+}
+
+static void show_sd_diag_dialog(lv_obj_t* parent, lv_obj_t* row)
+{
+    auto dlg_sz = dialog_size(270, 146);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(dlg, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "SD Card");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+    lv_obj_t* text = lv_label_create(dlg);
+    lv_obj_set_width(text, dlg_sz.w - 16);
+    lv_label_set_long_mode(text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(text, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(text, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(text, LV_ALIGN_TOP_LEFT, 0, 28);
+
+    auto* ctx = new SdDiagDialogCtx{text, row};
+    sd_diag_update(ctx);
+
+    lv_obj_t* retry_btn = lv_btn_create(dlg);
+    lv_obj_set_size(retry_btn, 72, 24);
+    lv_obj_align(retry_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+    apply_pixel_btn_outline(retry_btn);
+    lv_obj_t* rl = lv_label_create(retry_btn);
+    lv_label_set_text(rl, "Retry");
+    lv_obj_set_style_text_font(rl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(rl);
+    lv_obj_add_event_cb(retry_btn, [](lv_event_t* e) {
+        auto* ctx = (SdDiagDialogCtx*)lv_event_get_user_data(e);
+        sigurdos_sdcard_retry();
+        sd_diag_update(ctx);
+        update_sd_row_label(ctx ? ctx->row : nullptr);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 72, 24);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    apply_pixel_btn(close_btn);
+    lv_obj_t* cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "Close");
+    lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(cl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (SdDiagDialogCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, (void*)ctx);
+}
+
 struct InputDiagDialogCtx {
     lv_obj_t* dialog;
     lv_obj_t* touch_label;
@@ -462,6 +564,10 @@ void settings_system_show()
     lv_obj_set_style_bg_color(r1, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r1, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r1, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(r1, [](lv_event_t* e) {
+        lv_obj_t* row = (lv_obj_t*)lv_event_get_target(e);
+        show_sd_diag_dialog(lv_obj_get_screen(row), row);
+    }, LV_EVENT_CLICKED, nullptr);
     row++;
 
     // Date
