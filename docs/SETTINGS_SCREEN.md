@@ -188,7 +188,7 @@ The System `Input Self-Test` row opens a compact live diagnostic dialog:
 
 - Touch shows ready/offline state, current mapped coordinates, press/drag/release counters, I2C error count, and a marker on a 320x240-scaled pad while pressed.
 - Trackball shows ready/offline state, last direction or click, queued event count, total events, overflow count, active U/D/L/R/C states, and raw GPIO levels.
-- Keyboard shows ready/offline state, layout id, last emitted codepoint, event count, overwrite/drop count, and raw-matrix support state.
+- Keyboard shows ready/offline state, layout id, C3 key-mode byte, final output codepoint, event/drop counts, last event time, raw-matrix support state, five raw matrix bytes, and Shift/Ctrl/Alt/Sym/Mic modifier bits.
 
 ### SD Card dialog
 

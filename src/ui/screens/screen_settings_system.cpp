@@ -238,7 +238,7 @@ static void input_diag_update(InputDiagDialogCtx* ctx)
 
     SigurdOSTouchDiag td{};
     bool touch_ok = sigurdos_touch_get_diag(&td);
-    char text[160];
+    char text[256];
     snprintf(text, sizeof(text),
              "Touch: %s %s x=%d y=%d\npress=%lu drag=%lu rel=%lu err=%d",
              touch_ok && td.initialized ? "ready" : "offline",
@@ -286,18 +286,34 @@ static void input_diag_update(InputDiagDialogCtx* ctx)
 
     SigurdOSKeyboardDiag kd{};
     bool key_ok = sigurdos_keyboard_get_diag(&kd);
-    char printable = (kd.last_output_codepoint >= 32 && kd.last_output_codepoint <= 126)
+    char keymode_printable = (kd.last_key_mode_byte >= 32 && kd.last_key_mode_byte <= 126)
+        ? (char)kd.last_key_mode_byte : '.';
+    char output_printable = (kd.last_output_codepoint >= 32 && kd.last_output_codepoint <= 126)
         ? (char)kd.last_output_codepoint : '.';
     snprintf(text, sizeof(text),
-             "Keyboard: %s layout=%u key=U+%04lX '%c'\n"
-             "events=%lu drops=%lu raw=%s",
+             "Kbd: %s lay=%u km=%02X '%c' out=%04lX '%c'\n"
+             "ev=%lu drop=%lu ms=%lu raw=%s\n"
+             "mat=%02X %02X %02X %02X %02X mod=S%d C%d A%d Y%d M%d",
              key_ok && kd.initialized ? "ready" : "offline",
              kd.layout,
+             kd.last_key_mode_byte,
+             keymode_printable,
              (unsigned long)kd.last_output_codepoint,
-             printable,
+             output_printable,
              (unsigned long)kd.event_count,
              (unsigned long)kd.overwrite_count,
-             kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "n/a");
+             (unsigned long)kd.last_event_ms,
+             kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "n/a",
+             kd.raw_matrix[0],
+             kd.raw_matrix[1],
+             kd.raw_matrix[2],
+             kd.raw_matrix[3],
+             kd.raw_matrix[4],
+             kd.shift ? 1 : 0,
+             kd.ctrl ? 1 : 0,
+             kd.alt ? 1 : 0,
+             kd.sym_down ? 1 : 0,
+             kd.mic_down ? 1 : 0);
     lv_label_set_text(ctx->keyboard_label, text);
 }
 
@@ -313,7 +329,7 @@ static void input_diag_timer_cb(lv_timer_t* timer)
 
 static void show_input_diag_dialog(lv_obj_t* parent)
 {
-    auto dlg_sz = dialog_size(300, 194);
+    auto dlg_sz = dialog_size(300, 214);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -364,7 +380,7 @@ static void show_input_diag_dialog(lv_obj_t* parent)
     lv_label_set_long_mode(keyboard_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(keyboard_label, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(keyboard_label, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(keyboard_label, LV_ALIGN_TOP_LEFT, 0, 140);
+    lv_obj_align(keyboard_label, LV_ALIGN_TOP_LEFT, 0, 138);
 
     lv_obj_t* close_btn = lv_btn_create(dlg);
     lv_obj_set_size(close_btn, 70, 22);
