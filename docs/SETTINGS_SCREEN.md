@@ -218,6 +218,8 @@ All dialogs use zero radius, zero border width, and `dialog_size()` bounds — c
 
 - `docs/HOME_SCREEN.md` — Home screen with the SETTINGS tile launcher
 - `docs/LAUNCHER_ROADMAP.md` — why self-OTA is gated under Launcher
+- `docs/BLE_COMPANION_VALIDATION.md` — official MeshCore app BLE validation runbook
+- `docs/WIFI_OTA_VALIDATION.md` — WiFi and OTA hardware validation runbook
 - `src/hal/prefs.h` — `NodePrefs` struct definition and all persisted fields
 - `src/ui/responsive.h` — `dialog_size()` helper and layout constants
 - `src/ui/theme.h` — Full pixel theme colour palette
