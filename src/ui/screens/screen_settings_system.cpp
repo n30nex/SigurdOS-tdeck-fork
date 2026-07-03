@@ -22,8 +22,12 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../home_screen.h"
+#include "../../hal/keyboard.h"
 #include "../../hal/prefs.h"
 #include "../../hal/sdcard.h"
+#include "../../hal/tdeck_pins.h"
+#include "../../hal/touch.h"
+#include "../../hal/trackball.h"
 #include "../../hal/launcher_env.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/github_ota.h"
@@ -93,6 +97,202 @@ static void show_build_info_dialog(lv_obj_t* parent)
     lv_obj_add_event_cb(close_btn, [](lv_event_t* ev) {
         lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
     }, LV_EVENT_CLICKED, nullptr);
+}
+
+struct InputDiagDialogCtx {
+    lv_obj_t* dialog;
+    lv_obj_t* touch_label;
+    lv_obj_t* touch_marker;
+    lv_obj_t* touch_pad;
+    lv_obj_t* trackball_label;
+    lv_obj_t* keyboard_label;
+    lv_timer_t* timer;
+};
+
+static const char* input_diag_trackball_event_name(SigurdOSTrackballEvent ev)
+{
+    switch (ev) {
+    case SigurdOSTrackballEvent::Up: return "up";
+    case SigurdOSTrackballEvent::Down: return "down";
+    case SigurdOSTrackballEvent::Left: return "left";
+    case SigurdOSTrackballEvent::Right: return "right";
+    case SigurdOSTrackballEvent::Click: return "click";
+    case SigurdOSTrackballEvent::None:
+    default:
+        return "none";
+    }
+}
+
+static int input_diag_clamp(int value, int min_value, int max_value)
+{
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static void input_diag_update(InputDiagDialogCtx* ctx)
+{
+    if (!ctx) return;
+
+    SigurdOSTouchDiag td{};
+    bool touch_ok = sigurdos_touch_get_diag(&td);
+    char text[160];
+    snprintf(text, sizeof(text),
+             "Touch: %s %s x=%d y=%d\npress=%lu drag=%lu rel=%lu err=%d",
+             touch_ok && td.initialized ? "ready" : "offline",
+             td.pressed ? "down" : "up",
+             td.x, td.y,
+             (unsigned long)td.press_count,
+             (unsigned long)td.move_count,
+             (unsigned long)td.release_count,
+             td.consecutive_i2c_errors);
+    lv_label_set_text(ctx->touch_label, text);
+
+    if (touch_ok && td.initialized && td.pressed) {
+        const int pad_w = (int)lv_obj_get_width(ctx->touch_pad);
+        const int pad_h = (int)lv_obj_get_height(ctx->touch_pad);
+        const int marker_w = (int)lv_obj_get_width(ctx->touch_marker);
+        const int marker_h = (int)lv_obj_get_height(ctx->touch_marker);
+        int mx = (td.x * pad_w) / TFT_WIDTH - marker_w / 2;
+        int my = (td.y * pad_h) / TFT_HEIGHT - marker_h / 2;
+        mx = input_diag_clamp(mx, 0, pad_w - marker_w);
+        my = input_diag_clamp(my, 0, pad_h - marker_h);
+        lv_obj_set_pos(ctx->touch_marker, mx, my);
+        lv_obj_clear_flag(ctx->touch_marker, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(ctx->touch_marker, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    SigurdOSTrackballDiag bd{};
+    bool tb_ok = sigurdos_trackball_get_diag(&bd);
+    snprintf(text, sizeof(text),
+             "Trackball: %s last=%s q=%u ev=%lu ov=%lu\n"
+             "active UDLRC=%d%d%d%d%d raw=%u,%u,%u,%u,%u",
+             tb_ok && bd.initialized ? "ready" : "offline",
+             input_diag_trackball_event_name(bd.last_event),
+             bd.queue_count,
+             (unsigned long)bd.event_count,
+             (unsigned long)bd.overflow_count,
+             bd.active[0] ? 1 : 0,
+             bd.active[1] ? 1 : 0,
+             bd.active[2] ? 1 : 0,
+             bd.active[3] ? 1 : 0,
+             bd.active[4] ? 1 : 0,
+             bd.raw_levels[0], bd.raw_levels[1], bd.raw_levels[2],
+             bd.raw_levels[3], bd.raw_levels[4]);
+    lv_label_set_text(ctx->trackball_label, text);
+
+    SigurdOSKeyboardDiag kd{};
+    bool key_ok = sigurdos_keyboard_get_diag(&kd);
+    char printable = (kd.last_output_codepoint >= 32 && kd.last_output_codepoint <= 126)
+        ? (char)kd.last_output_codepoint : '.';
+    snprintf(text, sizeof(text),
+             "Keyboard: %s layout=%u key=U+%04lX '%c'\n"
+             "events=%lu drops=%lu raw=%s",
+             key_ok && kd.initialized ? "ready" : "offline",
+             kd.layout,
+             (unsigned long)kd.last_output_codepoint,
+             printable,
+             (unsigned long)kd.event_count,
+             (unsigned long)kd.overwrite_count,
+             kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "n/a");
+    lv_label_set_text(ctx->keyboard_label, text);
+}
+
+static void input_diag_timer_cb(lv_timer_t* timer)
+{
+    auto* ctx = (InputDiagDialogCtx*)lv_timer_get_user_data(timer);
+    if (!ctx || !ctx->dialog) {
+        lv_timer_del(timer);
+        return;
+    }
+    input_diag_update(ctx);
+}
+
+static void show_input_diag_dialog(lv_obj_t* parent)
+{
+    auto dlg_sz = dialog_size(300, 194);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(dlg, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Input Self-Test");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 3);
+
+    lv_obj_t* pad = lv_obj_create(dlg);
+    lv_obj_set_size(pad, 112, 76);
+    lv_obj_align(pad, LV_ALIGN_TOP_LEFT, 0, 25);
+    lv_obj_set_style_bg_color(pad, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_border_color(pad, lv_color_hex(DIVIDER), 0);
+    lv_obj_set_style_border_width(pad, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(pad, 0, 0);
+    lv_obj_set_style_pad_all(pad, 0, 0);
+
+    lv_obj_t* marker = lv_obj_create(pad);
+    lv_obj_set_size(marker, 8, 8);
+    lv_obj_set_style_bg_color(marker, lv_color_hex(ACCENT_GREEN), 0);
+    lv_obj_set_style_border_width(marker, 0, 0);
+    lv_obj_set_style_radius(marker, 0, 0);
+    lv_obj_add_flag(marker, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* touch_label = lv_label_create(dlg);
+    lv_obj_set_width(touch_label, dlg_sz.w - 134);
+    lv_label_set_long_mode(touch_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(touch_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(touch_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(touch_label, LV_ALIGN_TOP_LEFT, 122, 27);
+
+    lv_obj_t* trackball_label = lv_label_create(dlg);
+    lv_obj_set_width(trackball_label, dlg_sz.w - 16);
+    lv_label_set_long_mode(trackball_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(trackball_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(trackball_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(trackball_label, LV_ALIGN_TOP_LEFT, 0, 106);
+
+    lv_obj_t* keyboard_label = lv_label_create(dlg);
+    lv_obj_set_width(keyboard_label, dlg_sz.w - 16);
+    lv_label_set_long_mode(keyboard_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(keyboard_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(keyboard_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(keyboard_label, LV_ALIGN_TOP_LEFT, 0, 140);
+
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 70, 22);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -2);
+    apply_pixel_btn(close_btn);
+    lv_obj_t* close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, "Close");
+    lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(close_lbl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    auto* ctx = new InputDiagDialogCtx{
+        dlg, touch_label, marker, pad, trackball_label, keyboard_label, nullptr
+    };
+    ctx->timer = lv_timer_create(input_diag_timer_cb, 100, ctx);
+    input_diag_update(ctx);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        auto* ctx = (InputDiagDialogCtx*)lv_event_get_user_data(e);
+        if (ctx) {
+            if (ctx->timer) {
+                lv_timer_del(ctx->timer);
+                ctx->timer = nullptr;
+            }
+            ctx->dialog = nullptr;
+            delete ctx;
+        }
+    }, LV_EVENT_DELETE, ctx);
 }
 
 struct DateTimeDialogCtx {
@@ -303,6 +503,16 @@ void settings_system_show()
     lv_obj_set_style_text_color(btn_wizard, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(btn_wizard, [](lv_event_t*) {
         navigate_to(Screen::Onboarding);
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Input self-test
+    lv_obj_t* btn_input_diag = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, "  Input Self-Test");
+    lv_obj_set_style_bg_color(btn_input_diag, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_input_diag, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_input_diag, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_input_diag, [](lv_event_t* e) {
+        show_input_diag_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)));
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 

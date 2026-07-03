@@ -205,6 +205,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Per-feature toggles** — independent runtime on/off for display, mesh, UI, map, diagnostics
 - **Dump functions** — `dump_system()`, `dump_lvgl_rendering()`, `dump_trackball_state()`, `dump_home_screen_layout()`, `dump_memory()`, `dump_display_config()`, `dump_mesh_state()`
 - **Test controller integration** — remote test mode can change debug level and feature masks at runtime
+- **Input self-test** — Settings → System shows live touch coordinates/counters, trackball direction/click state, and keyboard diagnostic snapshots
 **Sources:** [`src/diagnostics/debug.cpp`](../src/diagnostics/debug.cpp), [`src/diagnostics/debug.h`](../src/diagnostics/debug.h), [`src/diagnostics/debug_cfg.h`](../src/diagnostics/debug_cfg.h)
 
 ### Logging Subsystem

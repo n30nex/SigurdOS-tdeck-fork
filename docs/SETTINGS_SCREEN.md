@@ -30,7 +30,7 @@ If a device PIN is configured (`NodePrefs::device_pin != 0`) and the PIN grace p
 | `src/ui/screens/screen_settings_radio.cpp` | Radio / Mesh sub-screen — RF summary row plus mesh behavior settings |
 | `src/ui/screens/screen_settings_gps.cpp` | GPS / Location sub-screen — fix status, GPS enable, poll interval, location sharing |
 | `src/ui/screens/screen_settings_display.cpp` | Display / UI sub-screen — keyboard/display brightness, auto-off, chat history cap, theme |
-| `src/ui/screens/screen_settings_system.cpp` | System sub-screen — name, SD, date/time, wizard, PIN, WiFi credentials, OTA, power controls, version |
+| `src/ui/screens/screen_settings_system.cpp` | System sub-screen — name, SD, date/time, wizard, input self-test, PIN, WiFi credentials, OTA, power controls, version |
 | `src/ui/screens/screen_radio_setup.cpp` | Radio Setup screen — frequency presets, SF/BW/CR/TX power, multi-ACK toggle, Custom RF |
 | `src/ui/screens/screen_wifi_networks.cpp` | WiFi networks screen — scan, connect, AP management |
 | `src/ui/screens/screen_bluetooth.cpp` | Bluetooth screen — BLE companion enable/disable, PIN display, connection status |
@@ -145,6 +145,7 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | `SD Card: Mounted / Not mounted` | Read-only status from `sigurdos_sdcard_mounted()` |
 | `Date: YYYY-MM-DD` / `Time: HH:MM` | Open the date/time dialog (below) |
 | `Run Setup Wizard` | `navigate_to(Screen::Onboarding)` |
+| `Input Self-Test` | Opens a live touch, trackball, and keyboard diagnostic dialog |
 | `Device PIN: Set/Change` | PIN protecting Settings entry (`NodePrefs::device_pin`) |
 | `WiFi: <ssid> / Not set` | Stores credentials for GitHub OTA (`NodePrefs::wifi_ssid/wifi_password`) |
 | `OTA Update` | Starts AP-mode upload OTA (`SigurdOS-OTA` AP, upload page at `192.168.4.1`) |
@@ -170,6 +171,14 @@ Self-OTA rows refuse to start when the firmware detects it is running under bmor
 
 - **Date mode** validates `YYYY-MM-DD` (year > 2020, month 1–12, day 1–31); **time mode** validates `HH:MM` (0–23 / 0–59). Invalid input shows a red feedback label.
 - On success the dialog combines the new value with the current date/time, builds an epoch via `sigurdos::mesh::makeEpoch()`, applies it with `sigurdos::mesh::setSystemTime()`, refreshes both row labels and the home-screen clock, and closes.
+
+### Input Self-Test dialog
+
+The System `Input Self-Test` row opens a compact live diagnostic dialog:
+
+- Touch shows ready/offline state, current mapped coordinates, press/drag/release counters, I2C error count, and a marker on a 320x240-scaled pad while pressed.
+- Trackball shows ready/offline state, last direction or click, queued event count, total events, overflow count, active U/D/L/R/C states, and raw GPIO levels.
+- Keyboard shows ready/offline state, layout id, last emitted codepoint, event count, overwrite/drop count, and raw-matrix support state.
 
 ---
 
