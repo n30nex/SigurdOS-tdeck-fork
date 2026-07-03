@@ -430,6 +430,35 @@ TEST_F(TouchTest, InitUsesBoundedSharedBusConfiguration) {
     EXPECT_EQ(Wire.mock_timeout_ms(), sigurdos::i2c::TRANSACTION_TIMEOUT_MS);
 }
 
+TEST_F(TouchTest, DiagnosticSnapshotReportsResetState) {
+    SigurdOSTouchDiag diag = {};
+    EXPECT_FALSE(sigurdos_touch_get_diag(&diag));
+    EXPECT_FALSE(diag.initialized);
+    EXPECT_FALSE(diag.init_attempted);
+    EXPECT_FALSE(diag.pressed);
+    EXPECT_FALSE(diag.edge_release_pending);
+    EXPECT_EQ(diag.i2c_addr, sigurdos::i2c::TOUCH_ADDR_PRIMARY);
+    EXPECT_EQ(diag.consecutive_i2c_errors, 0);
+    EXPECT_EQ(diag.press_count, 0u);
+    EXPECT_EQ(diag.release_count, 0u);
+    EXPECT_EQ(diag.move_count, 0u);
+}
+
+TEST_F(TouchTest, DiagnosticSnapshotReportsReadyState) {
+    EXPECT_TRUE(sigurdos_touch_init());
+
+    SigurdOSTouchDiag diag = {};
+    EXPECT_TRUE(sigurdos_touch_get_diag(&diag));
+    EXPECT_TRUE(diag.initialized);
+    EXPECT_TRUE(diag.init_attempted);
+    EXPECT_FALSE(diag.pressed);
+    EXPECT_FALSE(diag.edge_release_pending);
+    EXPECT_EQ(diag.consecutive_i2c_errors, 0);
+    EXPECT_EQ(diag.press_count, 0u);
+    EXPECT_EQ(diag.release_count, 0u);
+    EXPECT_EQ(diag.move_count, 0u);
+}
+
 TEST_F(TouchTest, FailedInitProbesOnlyKnownAddressesAndCachesResult) {
     Wire.mock_set_error(1);
     EXPECT_FALSE(sigurdos_touch_init());
@@ -442,6 +471,23 @@ TEST_F(TouchTest, FailedInitProbesOnlyKnownAddressesAndCachesResult) {
     Wire.mock_set_error(0);
     EXPECT_FALSE(sigurdos_touch_init());
     EXPECT_EQ(Wire.mock_end_count(), probes_after_failure);
+}
+
+TEST_F(TouchTest, DiagnosticSnapshotReportsFailedInitState) {
+    Wire.mock_set_error(1);
+    EXPECT_FALSE(sigurdos_touch_init());
+
+    SigurdOSTouchDiag diag = {};
+    EXPECT_FALSE(sigurdos_touch_get_diag(&diag));
+    EXPECT_FALSE(diag.initialized);
+    EXPECT_TRUE(diag.init_attempted);
+    EXPECT_FALSE(diag.pressed);
+    EXPECT_EQ(diag.i2c_addr, sigurdos::i2c::TOUCH_ADDR_PRIMARY);
+    EXPECT_EQ(diag.consecutive_i2c_errors, 0);
+}
+
+TEST_F(TouchTest, NullDiagnosticPointerIsRejected) {
+    EXPECT_FALSE(sigurdos_touch_get_diag(nullptr));
 }
 
 } // anonymous namespace

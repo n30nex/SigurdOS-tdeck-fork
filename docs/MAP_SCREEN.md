@@ -14,7 +14,8 @@ The Map screen renders **offline map tiles** from the SD card onto an LVGL canva
 | `src/app/tile_cache.cpp` | LRU cache implementation — init, lookup, evict-slot |
 | `src/app/lodepng_alloc.cpp` | lodepng memory allocator with PSRAM-fallback (for PNG decode) |
 | `scripts/download_maps.py` | Python tile downloader — fetches PNG tiles from OSM/CyclOSM/Carto servers |
-| `test/test_map/test_map.cpp` | 14 unit tests — tile math, zoom levels, LRU cache eviction, path format |
+| `test/test_map_renderer/test_map_renderer.cpp` | Unit tests — renderer math, zoom levels, default map centers |
+| `test/test_map/test_map.cpp` | Legacy tile/cache unit tests — tile math, LRU cache eviction, path format |
 
 ---
 
@@ -48,12 +49,13 @@ The Map screen is invoked from the **MAP tile** on the home screen:
 
 **What it does:**
 1. Creates a full screen via `make_screen_full("Map")`
-2. Calls `sigurdos_map_init()` — allocates the 153KB draw buffer, discovers tiles
+2. Calls `sigurdos_map_init()` — allocates the 153KB draw buffer
 3. Calls `sigurdos_map_reparent(scr)` — creates/attaches the LVGL canvas
-4. Calls `sigurdos_map_render()` — draws the initial tile grid
-5. Wires a transparent, clickable overlay for **drag-to-pan** (throttled to 200ms between renders)
-6. Adds **zoom buttons** (`+` and `-`, 32×32px, bottom-right, pixel-themed)
-7. Schedules a deferred render via `lv_timer_create(250ms)` to catch any late-widget layout
+4. Calls `sigurdos_map_discover_tiles()` — applies the radio-profile default, discovers SD tiles, then applies `metadata.json` bounds if present
+5. Calls `sigurdos_map_render()` — draws the initial tile grid
+6. Wires a transparent, clickable overlay for **drag-to-pan** (throttled to 200ms between renders)
+7. Adds **zoom buttons** (`+` and `-`, 32×32px, bottom-right, pixel-themed)
+8. Schedules a deferred render via `lv_timer_create(250ms)` to catch any late-widget layout
 
 ---
 
@@ -67,11 +69,10 @@ void sigurdos_map_reparent(lv_obj_t* new_parent);
 void sigurdos_map_deinit();
 ```
 
-1. **`sigurdos_map_init()`** — allocates the pixel draw buffer and discovers tiles:
+1. **`sigurdos_map_init()`** — allocates the pixel draw buffer:
    - Draw buffer: `TFT_WIDTH × TFT_HEIGHT × 2` = **320 × 240 × 2 = 153,600 bytes** (RGB565)
-   - Allocates from **DRAM** first (`MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT`), falls back to PSRAM
-   - DRAM is preferred because LVGL canvas draw operations require CPU/DMA-accessible memory
-   - Calls `load_metadata()` which runs tile discovery and parses `metadata.json`
+   - Allocates from **PSRAM** first (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), falls back to internal DRAM
+   - Tile discovery is deferred until `sigurdos_map_discover_tiles()` so boot is not blocked by large SD card tile sets
    - Sets `initialized = true`
 
 2. **`sigurdos_map_reparent(new_parent)`** — creates or reparents the LVGL canvas:
@@ -92,7 +93,7 @@ The canvas pixel buffer is the **primary working surface** for all map rendering
 |--------|-------|
 | Size | 153,600 bytes (320 × 240 × 2) |
 | Format | RGB565 (16-bit per pixel) |
-| Allocation priority | DRAM → PSRAM fallback |
+| Allocation priority | PSRAM → DRAM fallback |
 | Purpose | LVGL canvas pixel buffer, written directly by `draw_tile_from_cache()` |
 | Lifetime | Allocated in `sigurdos_map_init()`, freed in `sigurdos_map_deinit()` |
 
@@ -131,10 +132,19 @@ The firmware uses standard **slippy-map / Web Mercator (EPSG:3857)** tile math, 
 Map state is stored in module-level globals:
 
 ```cpp
-static double center_lat = 51.5074;  // London
-static double center_lon = -0.1278;
-static int    zoom_level = 10;
+static double center_lat = 39.8283;  // USA default
+static double center_lon = -98.5795;
+static int    zoom_level = 4;
 ```
+
+The default is preset-aware:
+
+| Radio profile | Default center | Zoom |
+|---------------|----------------|------|
+| `us_902_928` or unset/custom | 39.8283, -98.5795 | 4 |
+| `ca_902_928` | 56.1304, -106.3468 | 3 |
+
+These are only startup fallbacks. If SD tiles are present, discovery centers on the available tile coverage. If `/sdcard/tiles/metadata.json` has bounds, metadata overrides both the preset fallback and coverage sample.
 
 ### Rendering Pipeline
 
@@ -199,8 +209,8 @@ TileCoverage {
    - `scan_y_range(z, x)` — reads `.png` files in each X directory, finds min/max Y
    - Determines a sample tile (closest to the center of the bounding box)
 3. Sets `min_available_zoom` / `max_available_zoom` based on what's found
-4. `load_metadata()` — after discovery, optionally reads `/sdcard/tiles/metadata.json`:
-   - Parses the `"bounds"` array `[min_lat, min_lon, max_lat, max_lon]`
+4. `load_metadata()` — before discovery, applies the USA/Canada preset default from `NodePrefs.radio_profile`; after discovery, optionally reads `/sdcard/tiles/metadata.json`:
+   - Parses the `"bounds"` array `[min_lon, min_lat, max_lon, max_lat]`
    - Overrides the initial center to the midpoint of the bounds
 5. `clamp_view_to_coverage()` — prevents panning/zooming outside available tiles:
    - Clamps zoom level to available range
@@ -441,14 +451,14 @@ Optional file at `/sdcard/tiles/metadata.json` that overrides the initial map ce
 {
     "name": "london",
     "attribution": "© OpenStreetMap contributors",
-    "bounds": [51.3, -0.5, 51.7, 0.3],
+    "bounds": [-0.5, 51.3, 0.3, 51.7],
     "zoom_range": [10, 14],
     "format": "png",
     "tile_size": 256
 }
 ```
 
-The firmware only uses the `"bounds"` array: `[min_lat, min_lon, max_lat, max_lon]`. The center is set to the midpoint of the bounds. If `metadata.json` is missing, the map auto-centers on the sample tile found during tile discovery.
+The firmware only uses the `"bounds"` array: `[min_lon, min_lat, max_lon, max_lat]`. The center is set to the midpoint of the bounds. If `metadata.json` is missing, the map auto-centers on the sample tile found during tile discovery. If no SD tiles are present, the radio-profile fallback remains visible.
 
 ### Map Download Script
 
@@ -459,6 +469,12 @@ The firmware only uses the `"bounds"` array: `[min_lat, min_lon, max_lat, max_lo
 python3 scripts/download_maps.py --name teesside \
     --lat1 54.45 --lon1 -1.45 --lat2 54.65 --lon2 -1.05 \
     --zoom 8 14
+
+# Quick Canada starter pack
+python3 scripts/download_maps.py --name toronto --city toronto --zoom 9 13
+
+# Quick USA starter pack
+python3 scripts/download_maps.py --name seattle --city seattle --zoom 9 13
 
 # Quick city download
 python3 scripts/download_maps.py --city london --zoom 10 14
@@ -477,7 +493,7 @@ python3 scripts/download_maps.py --name uk \
 | `cyclosm` | `{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png` | 20 |
 | `carto` | `{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png` | 19 |
 
-Output: `maps-{name}/tiles/{z}/{x}/{y}.png` — copy the `tiles/` directory to the SD card root.
+Output: `maps-{name}/tiles/{z}/{x}/{y}.png` plus `maps-{name}/tiles/metadata.json`. Copy the `tiles/` directory to the SD card root so the device sees `/sdcard/tiles/{z}/{x}/{y}.png`.
 
 ---
 

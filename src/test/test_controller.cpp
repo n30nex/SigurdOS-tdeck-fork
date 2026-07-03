@@ -26,6 +26,7 @@
 #include "test_controller.h"
 #include "hal/display.h"
 #include "hal/trackball.h"
+#include "hal/touch.h"
 #include "hal/keyboard.h"
 #include "hal/prefs.h"
 #include "mesh/mesh_wrapper.h"
@@ -143,6 +144,7 @@ static void print_help() {
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
     Serial.println(F("║  keydiag     Dump keyboard diagnostics║"));
+    Serial.println(F("║  inputdiag   Dump touch/trackball diag║"));
     Serial.println(F("║  contactstats Show contact counters ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
@@ -1068,6 +1070,50 @@ static void cmd_keydiag() {
                   d.sym_down ? 1 : 0, d.mic_down ? 1 : 0);
 }
 
+static const char* trackball_event_label(SigurdOSTrackballEvent event)
+{
+    switch (event) {
+    case SigurdOSTrackballEvent::Up: return "up";
+    case SigurdOSTrackballEvent::Down: return "down";
+    case SigurdOSTrackballEvent::Left: return "left";
+    case SigurdOSTrackballEvent::Right: return "right";
+    case SigurdOSTrackballEvent::Click: return "click";
+    case SigurdOSTrackballEvent::None:
+    default: return "none";
+    }
+}
+
+// ── Touch + trackball diagnostics ────────────────────────
+static void cmd_inputdiag() {
+    SigurdOSTouchDiag td{};
+    bool touch_ok = sigurdos_touch_get_diag(&td);
+    Serial.printf("[test] inputdiag touch: ok=%d init=%d attempted=%d addr=0x%02X pressed=%d edge_release=%d x=%d y=%d errors=%d\n",
+                  touch_ok ? 1 : 0, td.initialized ? 1 : 0,
+                  td.init_attempted ? 1 : 0, td.i2c_addr,
+                  td.pressed ? 1 : 0, td.edge_release_pending ? 1 : 0,
+                  td.x, td.y, td.consecutive_i2c_errors);
+    Serial.printf("[test] inputdiag touch: presses=%lu releases=%lu moves=%lu last_ms=%lu\n",
+                  (unsigned long)td.press_count,
+                  (unsigned long)td.release_count,
+                  (unsigned long)td.move_count,
+                  (unsigned long)td.last_event_ms);
+
+    SigurdOSTrackballDiag bd{};
+    bool tb_ok = sigurdos_trackball_get_diag(&bd);
+    Serial.printf("[test] inputdiag trackball: ok=%d init=%d queue=%u last=%s events=%lu overflows=%lu last_ms=%lu\n",
+                  tb_ok ? 1 : 0, bd.initialized ? 1 : 0,
+                  bd.queue_count, trackball_event_label(bd.last_event),
+                  (unsigned long)bd.event_count,
+                  (unsigned long)bd.overflow_count,
+                  (unsigned long)bd.last_event_ms);
+    Serial.printf("[test] inputdiag trackball: raw(U,D,L,R,C)=%u,%u,%u,%u,%u active=%d,%d,%d,%d,%d\n",
+                  bd.raw_levels[0], bd.raw_levels[1], bd.raw_levels[2],
+                  bd.raw_levels[3], bd.raw_levels[4],
+                  bd.active[0] ? 1 : 0, bd.active[1] ? 1 : 0,
+                  bd.active[2] ? 1 : 0, bd.active[3] ? 1 : 0,
+                  bd.active[4] ? 1 : 0);
+}
+
 static void dump_focused_widget() {
     lv_group_t* g = lv_group_get_default();
     if (!g) { Serial.println("[test] focus: no default group"); return; }
@@ -1112,6 +1158,9 @@ static void cmd_getrf() {
     Serial.printf("[test] getrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d\n",
                   p.freq, (int)p.sf, p.bw, (int)p.cr, (int)p.tx_power_dbm,
                   (int)p.rx_boosted_gain);
+#if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
+    Serial.println(F("[test] getrf: remote-test RX-only mode enabled; TX commands are blocked"));
+#endif
 }
 
 // ── Cmd: setrf ────────────────────────────────────────────
@@ -1329,6 +1378,9 @@ static bool dispatch(const char* line) {
         cmd_status();
     } else if (strcmp(cmd, "keydiag") == 0 || strcmp(cmd, "kbddiag") == 0) {
         cmd_keydiag();
+    } else if (strcmp(cmd, "inputdiag") == 0 || strcmp(cmd, "touchdiag") == 0 ||
+               strcmp(cmd, "trackballdiag") == 0 || strcmp(cmd, "tbdiag") == 0) {
+        cmd_inputdiag();
     } else if (strcmp(cmd, "contactstats") == 0) {
         cmd_contactstats();
     } else if (strcmp(cmd, "debug") == 0) {
