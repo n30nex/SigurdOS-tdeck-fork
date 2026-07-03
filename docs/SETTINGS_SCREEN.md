@@ -96,10 +96,20 @@ When `NodePrefs::configured == false`, the RF summary row shows `Radio: NOT CONF
 
 | Row | Action / persistence |
 |-----|----------------------|
-| `GPS: Fix acquired / No fix` | Read-only status from `sigurdos_gps_has_fix()` |
+| `GPS: Fix acquired / No fix` | Opens GPS diagnostics: assessment, fix quality/type, visible satellites, UART/NMEA counters, position, UTC state |
 | `GPS: ON/OFF` | Enables/disables the GPS module (`NodePrefs::gps_enabled`) |
 | `GPS interval` | Poll-interval preset |
 | `Share location: ON/OFF` | Include coordinates in adverts (`NodePrefs::share_location`) |
+
+### GPS diagnostics dialog
+
+The GPS status row opens a compact diagnostic snapshot mirroring the remote-test `gpsdiag` signal:
+
+- Assessment distinguishes no UART activity, partial UART lines, checksum failures, valid NMEA without sky-view data, visible satellites without SNR, and fix acquired.
+- Fix state shows quality, GSA fix type, RMC status, satellites used, satellites in view, and GSV SNR summary.
+- UART/NMEA counters show active baud, characters, received/valid sentences, per-sentence counts, checksum failures, and baud switches.
+- Position and UTC fields show the latest parsed coordinates, altitude, time, and sync flag.
+- `Refresh` updates both the dialog and the GPS status row label.
 
 ---
 
