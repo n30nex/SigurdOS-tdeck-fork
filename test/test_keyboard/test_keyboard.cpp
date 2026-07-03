@@ -330,6 +330,20 @@ TEST_F(KeyboardTest, InjectedKeysAreQueuedAndConsumedInOrder) {
     EXPECT_FALSE(sigurdos_keyboard_consume_event());
 }
 
+TEST_F(KeyboardTest, DiagnosticSnapshotDoesNotConsumePendingKey) {
+    init_with_ack();
+    sigurdos_keyboard_inject('z');
+
+    SigurdOSKeyboardDiag diag{};
+    EXPECT_TRUE(sigurdos_keyboard_get_diag(&diag));
+
+    EXPECT_TRUE(diag.initialized);
+    EXPECT_EQ('z', diag.last_output_codepoint);
+    EXPECT_EQ(1u, diag.event_count);
+    EXPECT_TRUE(sigurdos_keyboard_has_event());
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'z');
+}
+
 TEST_F(KeyboardTest, InjectedInvalidBytesAreIgnored) {
     init_with_ack();
     sigurdos_keyboard_inject(0x00);

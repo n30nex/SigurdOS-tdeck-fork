@@ -504,7 +504,7 @@ SigurdOS is **architecturally compatible** with bmorcelli/Launcher — the pin m
 - `support_files/custom_16Mb.csv` — Launcher's resident partition table
 - `include/pre_compiler.h` — Compile-time defaults (SPIFFS thresholds, display config)
 - `src/main.cpp` — Launcher boot flow, app chain-boot
-- `src/display.cpp` — Display init via Arduino_GFX
+- `display.cpp` — Display init via Arduino_GFX
 
 ---
 

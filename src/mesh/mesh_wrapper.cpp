@@ -84,6 +84,15 @@ static void formatDmConversation(char* out, size_t out_size, const char* name)
     out[pos] = '\0';
 }
 
+static bool sigurdos_mesh_radio_tx_allowed()
+{
+#if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
+    return false;
+#else
+    return true;
+#endif
+}
+
 // ════════════════════════════════════════════════════
 // Message queue
 // ════════════════════════════════════════════════════
@@ -396,6 +405,11 @@ bool ensurePublicChannelPresent(bool persist)
     return ok;
 }
 
+bool radioTxAllowed()
+{
+    return sigurdos_mesh_radio_tx_allowed();
+}
+
 } // namespace
 
 // ── Packet log ────────────────────────────────────
@@ -453,11 +467,13 @@ int getAckCounter() {
 
 // ── REQ/RESPONSE framework (Phase 4.1) ────────
 bool sendRequest(const char* dest_name, uint8_t req_type) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name) return false;
     return g_mesh->sendRequest(dest_name, req_type);
 }
 
 bool sendRequestWithData(const char* dest_name, const uint8_t* data, uint8_t len) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !data) return false;
     return g_mesh->sendRequestWithData(dest_name, data, len);
 }
@@ -486,6 +502,7 @@ void clearResponses() {
 
 // ── Room message fetch (Phase 4.6) ───────────────────
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name) {
+    if (!radioTxAllowed()) return false;
     return g_mesh ? g_mesh->sendRoomMsgFetchRequest(contact_name, channel_name) : false;
 }
 
@@ -522,6 +539,7 @@ void clearRoomMsgFetch() {
 
 // ── Room message posting ───────────────────────────
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
+    if (!radioTxAllowed()) return 0;
     if (!g_mesh || !contact_name || !channel_name || !text) return 0;
     // Format: "[channel_name] text" — embeds the channel name in the message text
     // so the room server can identify which channel the message is for.
@@ -573,6 +591,7 @@ const char* getLoggedInRoomServerName(int index) {
 
 // ── Status request (Phase 4.2) ────────────────
 bool requestStatus(const char* dest_name) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
     bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS);
     if (ok) {
@@ -610,6 +629,7 @@ bool getStatusResult(NodeStatus* out) {
 
 // ── Telemetry queries (Phase 4.3) ────────────
 bool requestTelemetry(const char* dest_name) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
     bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_TELEMETRY_DATA);
     if (ok) {
@@ -714,6 +734,7 @@ bool getTelemetryResult(TelemetryResult* out) {
 
 // ── Path discovery (Phase 4.4) ────────────────
 uint32_t discoverPath(const char* dest_name) {
+    if (!radioTxAllowed()) return 0;
     if (!g_mesh || !dest_name || !dest_name[0]) return 0;
     return g_mesh->sendPathDiscovery(dest_name);
 }
@@ -915,8 +936,9 @@ bool init(bool spiffs_ok)
     // 869.525/SF10/BW250/CR5. addChannelBool() is a no-op if already present.
 #ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
     g_mesh->addChannelBool("testingsigurdos", "Si/tjXzmnwmPBA43Fw4b3Q==");
-    saveChannels();
-    // is fully operational without requiring Settings → Radio Setup.
+    // Keep the automation-only channel in RAM. Persisting it leaks test
+    // artifacts into normal firmware after a reboot or firmware swap.
+    // Force a test RF tuple so automation can run without Settings → Radio Setup.
     {
         sigurdos::NodePrefs dp = sigurdos::prefs_get();
         if (!dp.configured) {
@@ -1080,6 +1102,7 @@ private:
 };
 
 uint32_t sendMessage(const char* dest, const char* text) {
+    if (!radioTxAllowed()) return 0;
     if (!g_mesh) return 0;
     uint32_t ts = getCurrentTime();
     if (ts == 0) ts = 1;  // 0 means failure; use 1 as fallback so ACK matching still works
@@ -1096,6 +1119,7 @@ uint32_t sendMessage(const char* dest, const char* text) {
 }
 
 bool sendChannelMessage(const char* channel_name, const char* text) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh) return false;
     bool sent = false;
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
@@ -1346,6 +1370,10 @@ float getSignalHistorySNR(int idx) {
 }
 
 bool sendAdvert() {
+    if (!radioTxAllowed()) {
+        last_advert_success = false;
+        return false;
+    }
     // Rate limit: reject calls within 10 seconds of the last successful advert.
     // The UI also enforces this via button cooldown, but programmatic
     // callers (e.g. Terminal's `advert` command) bypass that layer.
@@ -1455,6 +1483,7 @@ int findContactIndex(const char* name) {
 }
 
 bool sendTrace(int contact_idx, uint32_t* out_tag) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh) return false;
     uint32_t tag = ++trace_tag_counter;
     if (out_tag) *out_tag = tag;
@@ -1476,6 +1505,7 @@ bool contactHasPath(int idx) {
 
 // ── Ping Nearby ────────────────────────────────
 bool sendPingNearby() {
+    if (!radioTxAllowed()) return false;
     return g_mesh ? g_mesh->sendPingNearby() : false;
 }
 
@@ -1798,6 +1828,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
 
     // ── Repeater/room login (Phase 4.5) ──────────────
     bool sendLogin(const char* name, const char* password) {
+        if (!radioTxAllowed()) return false;
         if (!g_mesh || !name || !password) return false;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
@@ -1810,6 +1841,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
     }
 
     void sendLogout(const char* name) {
+        if (!radioTxAllowed()) return;
         if (!g_mesh || !name) return;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
@@ -1821,6 +1853,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
     }
 
     bool sendCommand(const char* name, const char* text) {
+        if (!radioTxAllowed()) return false;
         if (!g_mesh || !name || !text) return false;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
@@ -1857,6 +1890,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
 
     // ── Anonymous requests (Phase 4.7) ────────────────
     bool sendAnonMessage(const char* pubkey_hex, const char* text) {
+        if (!radioTxAllowed()) return false;
         if (!g_mesh || !pubkey_hex || !text) return false;
         uint8_t pub_key[PUB_KEY_SIZE];
         int n = SigurdMeshV2::hexToBytes(pubkey_hex, pub_key, sizeof(pub_key));
@@ -1867,6 +1901,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
     // ── Group data datagrams (Phase 4.8) ─────────────
     bool sendGroupDataToChannel(int channel_idx, uint16_t data_type,
                                 const uint8_t* data, int data_len) {
+        if (!radioTxAllowed()) return false;
         return g_mesh ? g_mesh->sendGroupDataToChannel(channel_idx, data_type, data, data_len) : false;
     }
 

@@ -30,7 +30,7 @@ If a device PIN is configured (`NodePrefs::device_pin != 0`) and the PIN grace p
 | `src/ui/screens/screen_settings_radio.cpp` | Radio / Mesh sub-screen — RF summary row plus mesh behavior settings |
 | `src/ui/screens/screen_settings_gps.cpp` | GPS / Location sub-screen — fix status, GPS enable, poll interval, location sharing |
 | `src/ui/screens/screen_settings_display.cpp` | Display / UI sub-screen — keyboard/display brightness, auto-off, chat history cap, theme |
-| `src/ui/screens/screen_settings_system.cpp` | System sub-screen — name, SD, date/time, wizard, PIN, WiFi credentials, OTA, power controls, version |
+| `src/ui/screens/screen_settings_system.cpp` | System sub-screen — name, SD, date/time, wizard, input self-test, PIN, WiFi credentials, OTA, power controls, version |
 | `src/ui/screens/screen_radio_setup.cpp` | Radio Setup screen — frequency presets, SF/BW/CR/TX power, multi-ACK toggle, Custom RF |
 | `src/ui/screens/screen_wifi_networks.cpp` | WiFi networks screen — scan, connect, AP management |
 | `src/ui/screens/screen_bluetooth.cpp` | Bluetooth screen — BLE companion enable/disable, PIN display, connection status |
@@ -96,10 +96,20 @@ When `NodePrefs::configured == false`, the RF summary row shows `Radio: NOT CONF
 
 | Row | Action / persistence |
 |-----|----------------------|
-| `GPS: Fix acquired / No fix` | Read-only status from `sigurdos_gps_has_fix()` |
+| `GPS: Fix acquired / No fix` | Opens GPS diagnostics: assessment, fix quality/type, visible satellites, UART/NMEA counters, position, UTC state |
 | `GPS: ON/OFF` | Enables/disables the GPS module (`NodePrefs::gps_enabled`) |
 | `GPS interval` | Poll-interval preset |
 | `Share location: ON/OFF` | Include coordinates in adverts (`NodePrefs::share_location`) |
+
+### GPS diagnostics dialog
+
+The GPS status row opens a compact diagnostic snapshot mirroring the remote-test `gpsdiag` signal:
+
+- Assessment distinguishes no UART activity, partial UART lines, checksum failures, valid NMEA without sky-view data, visible satellites without SNR, and fix acquired.
+- Fix state shows quality, GSA fix type, RMC status, satellites used, satellites in view, and GSV SNR summary.
+- UART/NMEA counters show active baud, characters, received/valid sentences, per-sentence counts, checksum failures, and baud switches.
+- Position and UTC fields show the latest parsed coordinates, altitude, time, and sync flag.
+- `Refresh` updates both the dialog and the GPS status row label.
 
 ---
 
@@ -142,16 +152,17 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | Row | Action / persistence |
 |-----|----------------------|
 | `Name: <node_name>` | Read-only (set via onboarding) |
-| `SD Card: Mounted / Not mounted` | Read-only status from `sigurdos_sdcard_mounted()` |
+| `SD Card: Mounted / Not mounted` | Opens SD diagnostics: mount state, attempt count, last source/error, backoff, free/total space, and bounded retry |
 | `Date: YYYY-MM-DD` / `Time: HH:MM` | Open the date/time dialog (below) |
 | `Run Setup Wizard` | `navigate_to(Screen::Onboarding)` |
+| `Input Self-Test` | Opens a live touch, trackball, and keyboard diagnostic dialog |
 | `Device PIN: Set/Change` | PIN protecting Settings entry (`NodePrefs::device_pin`) |
 | `WiFi: <ssid> / Not set` | Stores credentials for GitHub OTA (`NodePrefs::wifi_ssid/wifi_password`) |
 | `OTA Update` | Starts AP-mode upload OTA (`SigurdOS-OTA` AP, upload page at `192.168.4.1`) |
 | `OTA Branch` / `Pre-releases` | GitHub OTA release-selection options |
 | `OTA from GitHub` | Downloads the latest release `firmware.bin` and flashes it |
 | `Shut down` / `Reboot` / `Factory reset` | Power controls with confirmation; state is saved before restart |
-| `SigurdOS <version>` | Read-only — `SIGURDOS_VERSION` from `src/hal/tdeck_pins.h` |
+| `SigurdOS <version>` | Opens Build Info: firmware version, Git SHA/dirty flag, MeshCore SHA, build env, partition table, board/MCU, build source, Actions run id/attempt, and ref |
 
 Self-OTA rows refuse to start when the firmware detects it is running under bmorcelli/Launcher (see `docs/LAUNCHER_ROADMAP.md`) — updating must then go through Launcher instead.
 
@@ -170,6 +181,23 @@ Self-OTA rows refuse to start when the firmware detects it is running under bmor
 
 - **Date mode** validates `YYYY-MM-DD` (year > 2020, month 1–12, day 1–31); **time mode** validates `HH:MM` (0–23 / 0–59). Invalid input shows a red feedback label.
 - On success the dialog combines the new value with the current date/time, builds an epoch via `sigurdos::mesh::makeEpoch()`, applies it with `sigurdos::mesh::setSystemTime()`, refreshes both row labels and the home-screen clock, and closes.
+
+### Input Self-Test dialog
+
+The System `Input Self-Test` row opens a compact live diagnostic dialog:
+
+- Touch shows ready/offline state, current mapped coordinates, press/drag/release counters, I2C error count, and a marker on a 320x240-scaled pad while pressed.
+- Trackball shows ready/offline state, last direction or click, queued event count, total events, overflow count, active U/D/L/R/C states, and raw GPIO levels.
+- Keyboard shows ready/offline state, layout id, C3 key-mode byte, final output codepoint, event/drop counts, last event time, raw-matrix support state, five raw matrix bytes, and Shift/Ctrl/Alt/Sym/Mic modifier bits.
+
+### SD Card dialog
+
+The System `SD Card` row opens a compact diagnostic snapshot:
+
+- Mount state comes from `sigurdos_sdcard_diagnostics().mounted`.
+- Attempts, last source, last error, and last backoff expose the bounded mount/retry path used during boot and map access.
+- When mounted, the dialog shows free and total space using `sigurdos_sdcard_format_size()`.
+- `Retry` calls `sigurdos_sdcard_retry()` and refreshes both the dialog and the System row label.
 
 ---
 
@@ -218,6 +246,8 @@ All dialogs use zero radius, zero border width, and `dialog_size()` bounds — c
 
 - `docs/HOME_SCREEN.md` — Home screen with the SETTINGS tile launcher
 - `docs/LAUNCHER_ROADMAP.md` — why self-OTA is gated under Launcher
+- `docs/BLE_COMPANION_VALIDATION.md` — official MeshCore app BLE validation runbook
+- `docs/WIFI_OTA_VALIDATION.md` — WiFi and OTA hardware validation runbook
 - `src/hal/prefs.h` — `NodePrefs` struct definition and all persisted fields
 - `src/ui/responsive.h` — `dialog_size()` helper and layout constants
 - `src/ui/theme.h` — Full pixel theme colour palette

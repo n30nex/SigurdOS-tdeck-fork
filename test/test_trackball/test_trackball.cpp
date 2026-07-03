@@ -200,4 +200,39 @@ TEST_F(TrackballTest, InjectedInvalidEventsDoNotDisruptValidOrdering) {
     EXPECT_FALSE(next(&event));
 }
 
+TEST_F(TrackballTest, DiagnosticSnapshotDoesNotDrainQueuedEvents) {
+    sigurdos_trackball_inject(SigurdOSTrackballEvent::Up);
+
+    SigurdOSTrackballDiag diag = {};
+    EXPECT_TRUE(sigurdos_trackball_get_diag(&diag));
+    EXPECT_TRUE(diag.initialized);
+    EXPECT_EQ(diag.queue_count, 1u);
+    EXPECT_EQ(diag.last_event, SigurdOSTrackballEvent::Up);
+    EXPECT_EQ(diag.event_count, 1u);
+    EXPECT_EQ(diag.overflow_count, 0u);
+    EXPECT_GT(diag.last_event_ms, 0u);
+
+    SigurdOSTrackballEvent event = SigurdOSTrackballEvent::None;
+    ASSERT_TRUE(next(&event));
+    EXPECT_EQ(event, SigurdOSTrackballEvent::Up);
+    EXPECT_FALSE(next(&event));
+}
+
+TEST_F(TrackballTest, DiagnosticSnapshotCountsQueueOverflow) {
+    for (int i = 0; i < 9; ++i) {
+        sigurdos_trackball_inject(SigurdOSTrackballEvent::Down);
+    }
+
+    SigurdOSTrackballDiag diag = {};
+    EXPECT_TRUE(sigurdos_trackball_get_diag(&diag));
+    EXPECT_EQ(diag.queue_count, 8u);
+    EXPECT_EQ(diag.last_event, SigurdOSTrackballEvent::Down);
+    EXPECT_EQ(diag.event_count, 9u);
+    EXPECT_EQ(diag.overflow_count, 1u);
+}
+
+TEST_F(TrackballTest, NullDiagnosticPointerIsRejected) {
+    EXPECT_FALSE(sigurdos_trackball_get_diag(nullptr));
+}
+
 } // namespace

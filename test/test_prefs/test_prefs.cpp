@@ -20,6 +20,8 @@
 /**
  * Unit tests for NodePrefs defaults and native preference persistence.
  */
+#include <cstring>
+
 #include <gtest/gtest.h>
 
 #include "hal/prefs.h"
@@ -113,6 +115,20 @@ TEST_F(PrefsTest, KeyboardLayoutRoundTripsThroughPrefs) {
     loaded.set_defaults();
     ASSERT_TRUE(sigurdos::prefs_load(loaded));
     EXPECT_EQ(9, loaded.kbd_layout);
+}
+
+TEST_F(PrefsTest, RadioProfileRoundTripsThroughPrefs) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    std::strncpy(saved.radio_profile, "ca_902_928", sizeof(saved.radio_profile) - 1);
+    saved.radio_profile[sizeof(saved.radio_profile) - 1] = '\0';
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_STREQ("ca_902_928", loaded.radio_profile);
 }
 
 } // namespace

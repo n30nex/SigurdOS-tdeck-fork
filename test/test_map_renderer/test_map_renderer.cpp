@@ -108,4 +108,37 @@ TEST_F(MapRendererMathTest, InvalidZoomReturnsNeutralCoordinate) {
     EXPECT_DOUBLE_EQ(sigurdos_map_tile_y_to_lat(0.0, -1), 0.0);
 }
 
+TEST_F(MapRendererMathTest, DefaultMapViewUsesUnitedStatesProfile) {
+    const SigurdosMapDefaultView view =
+        sigurdos_map_default_view_for_radio_profile("us_902_928");
+
+    EXPECT_DOUBLE_EQ(view.lat, SIGURDOS_MAP_DEFAULT_US_LAT);
+    EXPECT_DOUBLE_EQ(view.lon, SIGURDOS_MAP_DEFAULT_US_LON);
+    EXPECT_EQ(view.zoom, SIGURDOS_MAP_DEFAULT_US_ZOOM);
+}
+
+TEST_F(MapRendererMathTest, DefaultMapViewUsesCanadaProfile) {
+    const SigurdosMapDefaultView view =
+        sigurdos_map_default_view_for_radio_profile("ca_902_928");
+
+    EXPECT_DOUBLE_EQ(view.lat, SIGURDOS_MAP_DEFAULT_CA_LAT);
+    EXPECT_DOUBLE_EQ(view.lon, SIGURDOS_MAP_DEFAULT_CA_LON);
+    EXPECT_EQ(view.zoom, SIGURDOS_MAP_DEFAULT_CA_ZOOM);
+}
+
+TEST_F(MapRendererMathTest, DefaultMapViewFallsBackToUnitedStates) {
+    const SigurdosMapDefaultView empty =
+        sigurdos_map_default_view_for_radio_profile("");
+    const SigurdosMapDefaultView unknown =
+        sigurdos_map_default_view_for_radio_profile("custom");
+
+    EXPECT_DOUBLE_EQ(empty.lat, SIGURDOS_MAP_DEFAULT_US_LAT);
+    EXPECT_DOUBLE_EQ(empty.lon, SIGURDOS_MAP_DEFAULT_US_LON);
+    EXPECT_EQ(empty.zoom, SIGURDOS_MAP_DEFAULT_US_ZOOM);
+
+    EXPECT_DOUBLE_EQ(unknown.lat, SIGURDOS_MAP_DEFAULT_US_LAT);
+    EXPECT_DOUBLE_EQ(unknown.lon, SIGURDOS_MAP_DEFAULT_US_LON);
+    EXPECT_EQ(unknown.zoom, SIGURDOS_MAP_DEFAULT_US_ZOOM);
+}
+
 } // namespace

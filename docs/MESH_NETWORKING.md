@@ -724,8 +724,13 @@ versions or manual configuration:
 This is **not** enabled by `SIGURDOS_DEBUG` — that flag is for diagnostic
 logging only. `SIGURDOS_DEBUG_FORCE_RADIO_PARAMS` is intended for CI/remote-test
 environments. When defined, it also auto-joins the `#testingsigurdos` test channel
-(on frequency 869.525/SF10/BW250/CR5) so the device is fully operational without
+(on the build's forced RF tuple) so the device is fully operational without
 requiring Settings → Radio Setup.
+
+The automation channel is deliberately RAM-only: it is added after persisted
+channels load and is not saved to NVS during boot. If a validation run creates
+other temporary channels manually, the remote controller supports
+`removechannel <idx|name>` / `rmchannel <idx|name>` and persists that cleanup.
 
 ### SX1262 Hard Reset
 
@@ -807,6 +812,7 @@ onPeerDataRecv / onGroupDataRecv / onAnonDataRecv
 | [`FEATURES_OVERVIEW.md`](FEATURES_OVERVIEW.md) | High-level feature catalog — all 12 home screen tiles and system capabilities |
 | [`CHAT_SCREEN.md`](CHAT_SCREEN.md) | Chat screen UI — channel tabs, DM conversations, message history |
 | [`TERMINAL.md`](TERMINAL.md) | Terminal commands — mesh diagnostics, advert, trace, ping, inject |
+| [`RF_INTEROP_TEST_PLAN.md`](RF_INTEROP_TEST_PLAN.md) | Minimal local-node RF interop validation for repeaters, rooms, DMs, channel messages, packet logs, and trace/path |
 | [`MISSING_FEATURES.md`](MISSING_FEATURES.md) | Companion parity audit — implemented, declined, and out-of-scope MeshCore deltas |
 | [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Tracked bugs, limitations, and workarounds |
 | [`AGENTS.md`](../AGENTS.md) | Full architecture guide — hardware, UI conventions, boot sequence |

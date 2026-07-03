@@ -205,6 +205,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Per-feature toggles** — independent runtime on/off for display, mesh, UI, map, diagnostics
 - **Dump functions** — `dump_system()`, `dump_lvgl_rendering()`, `dump_trackball_state()`, `dump_home_screen_layout()`, `dump_memory()`, `dump_display_config()`, `dump_mesh_state()`
 - **Test controller integration** — remote test mode can change debug level and feature masks at runtime
+- **Input self-test** — Settings → System shows live touch coordinates/counters, trackball direction/click state, and keyboard diagnostic snapshots
 **Sources:** [`src/diagnostics/debug.cpp`](../src/diagnostics/debug.cpp), [`src/diagnostics/debug.h`](../src/diagnostics/debug.h), [`src/diagnostics/debug_cfg.h`](../src/diagnostics/debug_cfg.h)
 
 ### Logging Subsystem
@@ -414,6 +415,7 @@ Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md)
 | [`AGENTS.md`](../AGENTS.md) | Full architecture guide, conventions, pitfalls (agent context) |
 | [`CLAUDE.md`](../CLAUDE.md) | Claude Code agent context (mirror of AGENTS.md) |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow, PR checklist, coding standards |
+| [`docs/BLE_COMPANION_VALIDATION.md`](BLE_COMPANION_VALIDATION.md) | Official MeshCore app BLE pairing, reconnect, and companion protocol validation |
 | [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Tracked bugs, fixes, and workarounds |
 | [`docs/CHAT_SCREEN.md`](CHAT_SCREEN.md) | Chat screen UI and messaging documentation |
 | [`docs/CONTACT_STORE.md`](CONTACT_STORE.md) | Contact store API, persistence, and data model |
@@ -423,6 +425,8 @@ Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md)
 | [`docs/LOGGING.md`](LOGGING.md) | Logging subsystem API, verbosity levels, and configuration |
 | [`docs/MAP_SCREEN.md`](MAP_SCREEN.md) | Map screen and tile cache system documentation |
 | [`docs/MESH_NETWORKING.md`](MESH_NETWORKING.md) | Mesh networking protocol and features documentation |
+| [`docs/RF_INTEROP_TEST_PLAN.md`](RF_INTEROP_TEST_PLAN.md) | Local-node RF interop plan for repeaters, rooms, DMs, channels, packet logs, and trace/path validation |
+| [`docs/WIFI_OTA_VALIDATION.md`](WIFI_OTA_VALIDATION.md) | WiFi station, AP upload OTA, GitHub OTA, PIN gate, and Launcher gate validation |
 | [`docs/MISSING_FEATURES.md`](MISSING_FEATURES.md) | Companion parity audit: implemented, declined, and out-of-scope MeshCore deltas |
 | [`docs/NETWORK_SCREEN.md`](NETWORK_SCREEN.md) | Network screen documentation |
 | [`docs/ROADMAP.md`](ROADMAP.md) | Development roadmap and planned features |

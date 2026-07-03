@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from safe_serial_monitor import open_safe_serial
+
 DEFAULT_BAUD = 115200
 serial = None
 
@@ -152,6 +154,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--startup-timeout", type=float, default=5.0)
     parser.add_argument("--command-timeout", type=float, default=None)
+    parser.add_argument(
+        "--dtr",
+        action="store_true",
+        help="assert DTR explicitly; default leaves DTR deasserted for COM8 safety",
+    )
+    parser.add_argument(
+        "--rts",
+        action="store_true",
+        help="assert RTS explicitly; default leaves RTS deasserted for COM8 safety",
+    )
     return parser
 
 
@@ -189,7 +201,14 @@ def main(argv: list[str] | None = None) -> int:
     started = datetime.now().isoformat(timespec="seconds")
     results: list[dict[str, object]] = []
     banner = ""
-    with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
+    with open_safe_serial(
+        serial,
+        args.port,
+        args.baud,
+        timeout=0.1,
+        dtr=args.dtr,
+        rts=args.rts,
+    ) as ser:
         time.sleep(0.5)
         ser.reset_input_buffer()
         ser.write(b"\n")

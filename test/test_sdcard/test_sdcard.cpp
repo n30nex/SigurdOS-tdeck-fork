@@ -86,6 +86,30 @@ TEST_F(SDCardTest, ErrorStateHasZeroCapacity) {
     EXPECT_EQ(sd_state, SDState::ERROR);
 }
 
+TEST_F(SDCardTest, DiagnosticDefaultStateIsUnmounted) {
+    SigurdosSdMountDiagnostic diag = {};
+    EXPECT_FALSE(diag.mounted);
+    EXPECT_EQ(diag.attempt_count, 0);
+    EXPECT_EQ(diag.last_source, SIGURDOS_SD_MOUNT_SOURCE_NONE);
+    EXPECT_EQ(diag.last_error, SIGURDOS_SD_MOUNT_ERROR_NONE);
+    EXPECT_EQ(diag.last_backoff_ms, 0U);
+}
+
+TEST_F(SDCardTest, DiagnosticCanReportRetryFailure) {
+    SigurdosSdMountDiagnostic diag = {};
+    diag.mounted = false;
+    diag.attempt_count = 4;
+    diag.last_source = SIGURDOS_SD_MOUNT_SOURCE_RETRY;
+    diag.last_error = SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED;
+    diag.last_backoff_ms = 300;
+
+    EXPECT_FALSE(diag.mounted);
+    EXPECT_EQ(diag.attempt_count, 4);
+    EXPECT_EQ(diag.last_source, SIGURDOS_SD_MOUNT_SOURCE_RETRY);
+    EXPECT_EQ(diag.last_error, SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED);
+    EXPECT_EQ(diag.last_backoff_ms, 300U);
+}
+
 TEST_F(SDCardTest, ValidPathStartsWithSlash) {
     EXPECT_TRUE(sigurdos_sdcard_path_valid("/maps/london.mbtiles"));
     EXPECT_TRUE(sigurdos_sdcard_path_valid("/config.txt"));
