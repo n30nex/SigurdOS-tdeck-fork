@@ -9,8 +9,10 @@ namespace {
 
 using sigurdos::ui::onboarding_date_valid;
 using sigurdos::ui::onboarding_days_in_month;
+using sigurdos::ui::onboarding_clamp_day;
 using sigurdos::ui::onboarding_is_leap_year;
 using sigurdos::ui::onboarding_time_valid;
+using sigurdos::ui::onboarding_wrap_range;
 
 TEST(OnboardingValidation, LeapYearRulesCoverCenturyCases) {
     EXPECT_TRUE(onboarding_is_leap_year(2024));
