@@ -45,3 +45,127 @@ jobs:
 
       - name: Run native tests
         run: pio test -e native_test -v
+
+  build:
+    name: Firmware build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio intelhex
+
+      - name: Build firmware
+        run: |
+          set -o pipefail
+          pio run -e SigurdOS_TDeck | tee build.log
+
+      - name: Build debug firmware
+        run: pio run -e SigurdOS_TDeck_debug
+
+      - name: Build remote test firmware
+        run: pio run -e SigurdOS_TDeck_remote_test_radio
+
+      - name: Report firmware size
+        if: always()
+        run: |
+          if [ -f build.log ] && grep -qE '^(RAM|Flash):' build.log; then
+            {
+              echo '### Firmware size (SigurdOS_TDeck)'
+              echo '```'
+              grep -E '^(RAM|Flash):' build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  lint:
+    name: Static analysis + logging policy (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Static analysis (pio check)
+        run: pio check -e SigurdOS_TDeck --skip-packages
+
+      - name: Logging policy grep
+        run: |
+          # Raw Serial.print* belongs in SIG_LOG* macros (src/diagnostics/log.h).
+          # Whitelist: diagnostics/test/validation modules by policy, plus files
+          # not yet migrated — shrink the second list per T9 migration PR.
+          allow_dirs='^src/(diagnostics|test|validation)/'
+          not_migrated='^src/(app/map_renderer|hal/display|hal/github_ota|hal/keyboard|hal/storage|hal/trackball|hal/wifi_ota|main|mesh/mesh_wrapper|mesh/sigurd_mesh_v2|ui/chat_screen|ui/home_screen|ui/screens/screen_channels|ui/screens/screen_contacts)\.cpp$'
+          violations=$(grep -rl "Serial\.print" src --include="*.cpp" | grep -Ev "$allow_dirs|$not_migrated" || true)
+          if [ -n "$violations" ]; then
+            echo "Raw Serial.print outside the logging whitelist — use SIG_LOG* from src/diagnostics/log.h:"
+            echo "$violations"
+            exit 1
+          fi
+          echo "Logging policy: OK"
+
+      - name: Doc reference check
+        run: |
+          # Verify src/... file paths cited in docs/*.md exist in this repo
+          # or in the MeshCore submodule (some docs cite submodule-relative
+          # paths). Excluded docs: planning docs citing not-yet-created files
+          # (CODEBASE_IMPROVEMENT_ROADMAP), docs describing external repos
+          # (LAUNCHER_ROADMAP), and docs already flagged OUT OF DATE
+          # (TELEMETRY_ARCHITECTURE) — re-include the last after its rewrite.
+          status=0
+          for doc in docs/*.md; do
+            case "$doc" in
+              docs/CODEBASE_IMPROVEMENT_ROADMAP.md|docs/LAUNCHER_ROADMAP.md|docs/TELEMETRY_ARCHITECTURE.md) continue;;
+            esac
+            for ref in $(grep -ohE 'src/[A-Za-z0-9_/.-]+\.(cpp|h|c)' "$doc" | sort -u); do
+              case "$ref" in */.*) continue;; esac
+              if [ ! -f "$ref" ] && [ ! -f "lib/meshcore/$ref" ]; then
+                echo "::warning file=$doc::cites missing file $ref"
+                status=1
+              fi
+            done
+          done
+          [ "$status" -eq 0 ] && echo "Doc references: OK"
+          exit "$status"

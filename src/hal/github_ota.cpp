@@ -7,12 +7,14 @@
 
 #include "github_ota.h"
 #include "github_ota_plan.h"
+#include "launcher_env.h"
 #include "prefs.h"
 #include "wifi_ota.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include <cstring>
 #include <cstdlib>
@@ -128,6 +130,13 @@ static void fail(const char* msg) {
 
 bool startGitHubUpdate() {
     if (s_active) return true;
+
+    if (sigurdos_is_under_launcher()) {
+        Serial.println("[gh-ota] REFUSED: GitHub OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
+        setStatus(GitHubOTAState::Failed, 0, "Failed",
+                  "Update SigurdOS through Launcher instead");
+        return false;
+    }
 
     const NodePrefs& p = prefs_get();
     if (!p.wifi_ssid[0]) {
@@ -355,6 +364,7 @@ void loop() {
                                   s_downloaded);
                     setStatus(GitHubOTAState::Success, 100,
                               "Update complete — rebooting...");
+                    SPIFFS.end();
                     delay(500);
                     ESP.restart();
                 } else {

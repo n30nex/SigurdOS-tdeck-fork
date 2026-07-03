@@ -31,12 +31,17 @@ This document catalogs every feature in the firmware — the 12-grid home screen
   - [Emoji Font Support](#emoji-font-support)
   - [NVS Preferences](#nvs-preferences)
   - [Diagnostics & Debug](#diagnostics--debug)
+  - [Logging Subsystem](#logging-subsystem)
   - [Packet Log](#packet-log)
   - [RTC & System Time](#rtc--system-time)
   - [SPIFFS Persistence](#spiffs-persistence)
+  - [Contact Persistence](#contact-persistence)
   - [Web Flasher Support](#web-flasher-support)
   - [OTA Firmware Update](#ota-firmware-update)
   - [Remote Test Controller](#remote-test-controller)
+  - [Structured Telemetry](#structured-telemetry)
+  - [Launcher Compatibility](#launcher-compatibility)
+  - [Companion BLE](#companion-ble-official-meshcore-app)
 - [Hardware Features](#hardware-features)
   - [ST7789 Display](#st7789-display)
   - [GT911 Touch](#gt911-touch)
@@ -83,32 +88,32 @@ Room servers tab.
 **Map:** `Screen::Contacts`
 
 ### 4. CONTACTS
-List of discovered mesh nodes (up to 64) with LRU eviction. Shows contact names, RSSI, location/path metadata, ACL permission role, QR sharing, telemetry action, and promote/demote controls in Contact Detail.
-**Sources:** [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h), [`src/mesh/sigurd_mesh_v2.h`](../src/mesh/sigurd_mesh_v2.h), [`src/app/qr_show.cpp`](../src/app/qr_show.cpp)
+List of discovered mesh nodes (up to 350, `-D MAX_CONTACTS=350`) with LRU eviction. Shows contact names, RSSI, location/path metadata, ACL permission role, QR sharing, telemetry action, and promote/demote controls in Contact Detail.
+**Sources:** [`src/ui/screens/screen_contacts.cpp`](../src/ui/screens/screen_contacts.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h), [`src/mesh/sigurd_mesh_v2.h`](../src/mesh/sigurd_mesh_v2.h), [`src/app/qr_show.cpp`](../src/app/qr_show.cpp)
 
 ### 5. REPEATERS
-Network / signal view showing nearby nodes sorted by signal strength. Routes to the Network screen.
-**Sources:** [`src/ui/screens.cpp`](../src/ui/screens.cpp)
+Lists infrastructure repeater nodes heard on the mesh, with login/command workflows. Routes to the Repeaters screen.
+**Sources:** [`src/ui/screens/screen_repeaters.cpp`](../src/ui/screens/screen_repeaters.cpp)
 
 ### 6. PACKETS
 Heard packets log — a running list of all received radio packets with timestamp, source, RSSI, SNR, and packet type (ADVERT, DM, GRP, TRACE, etc.).
-**Sources:** [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h) (lines 27–33, 77–79)
+**Sources:** [`src/ui/screens/screen_packets.cpp`](../src/ui/screens/screen_packets.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### 7. MAP
 Offline map view using PNG tiles from SD card. Renders a tile grid on an LVGL canvas with pan and zoom, uses PSRAM-backed tile cache, shows own GPS position, and overlays tappable contact-location markers.
-**Sources:** [`src/app/map_renderer.cpp`](../src/app/map_renderer.cpp), [`src/app/map_renderer.h`](../src/app/map_renderer.h), [`src/app/tile_cache.h`](../src/app/tile_cache.h), [`src/ui/screens.cpp`](../src/ui/screens.cpp)
+**Sources:** [`src/app/map_renderer.cpp`](../src/app/map_renderer.cpp), [`src/app/map_renderer.h`](../src/app/map_renderer.h), [`src/app/tile_cache.h`](../src/app/tile_cache.h), [`src/ui/screens/screen_map.cpp`](../src/ui/screens/screen_map.cpp)
 
 ### 8. ADVERTISE
 Send a manual mesh advert broadcast to announce your node's presence on the network. Optionally includes GPS coordinates if a fix is available.
-**Sources:** [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h) (lines 61–64)
+**Sources:** [`src/ui/screens/screen_advertise.cpp`](../src/ui/screens/screen_advertise.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### 9. SETTINGS
-Device configuration screen. Includes node/radio status, Radio Setup/Custom RF, keyboard/chat/display toggles, client repeat, multi-ACK, device PIN, WiFi credentials, AP OTA upload, GitHub OTA download, storage display, reboot, shutdown, factory reset, and version info.
-**Sources:** [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`src/hal/prefs.h`](../src/hal/prefs.h), [`src/hal/wifi_ota.cpp`](../src/hal/wifi_ota.cpp), [`src/hal/github_ota.cpp`](../src/hal/github_ota.cpp)
+Settings category hub routing to dedicated sub-screens: WiFi, Bluetooth, Radio / Mesh (RF params, flood/auto-add/timing/duty-cycle, client repeat, regions), GPS / Location, Display / UI (brightness, auto-off, chat cap, theme), System (date/time, PIN, WiFi credentials, AP/GitHub OTA, power controls, version), and Node Stats. See [`docs/SETTINGS_SCREEN.md`](SETTINGS_SCREEN.md).
+**Sources:** [`src/ui/screens/screen_settings.cpp`](../src/ui/screens/screen_settings.cpp), [`src/ui/screens/screen_settings_radio.cpp`](../src/ui/screens/screen_settings_radio.cpp), [`src/ui/screens/screen_settings_gps.cpp`](../src/ui/screens/screen_settings_gps.cpp), [`src/ui/screens/screen_settings_display.cpp`](../src/ui/screens/screen_settings_display.cpp), [`src/ui/screens/screen_settings_system.cpp`](../src/ui/screens/screen_settings_system.cpp), [`src/hal/prefs.h`](../src/hal/prefs.h), [`src/hal/wifi_ota.cpp`](../src/hal/wifi_ota.cpp), [`src/hal/github_ota.cpp`](../src/hal/github_ota.cpp)
 
 ### 10. TERMINAL
 Serial-like terminal screen for diagnostics and utility commands. Includes `help`, status/advert/ping, message signing (`sign <data>`), identity backup (`exportkey`/`importkey`), URI import (`import meshcore://...`), fetch/group-data commands, custom vars, and log clearing.
-**Sources:** [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`src/ui/screens.h`](../src/ui/screens.h), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
+**Sources:** [`src/ui/screens/screen_terminal.cpp`](../src/ui/screens/screen_terminal.cpp), [`src/ui/screens.h`](../src/ui/screens.h), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### 11. SETUP
 First-boot onboarding wizard. Guides the user through node name, radio configuration, and channel setup before first use. Saves prefs and reboots when complete.
@@ -116,7 +121,7 @@ First-boot onboarding wizard. Guides the user through node name, radio configura
 
 ### 12. SIGNAL
 Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal quality metrics. Visual bar chart representation.
-**Sources:** [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`src/ui/theme.h`](../src/ui/theme.h) (lines 59–108)
+**Sources:** [`src/ui/screens/screen_signal.cpp`](../src/ui/screens/screen_signal.cpp), [`src/ui/theme.h`](../src/ui/theme.h)
 
 ---
 
@@ -129,6 +134,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Programmable brightness** via PWM (0–255)
 - **Screen capture** via serial hex dump (`lv_snapshot_take_to_draw_buf`)
 - **Tick-starvation fix** — periodic `lv_timer_handler()` inside mesh loop (20ms guard) keeps UI responsive
+- **Boot splash with live status** — `boot_status()` updates a status label on the splash screen during boot sequence (PR #625), showing progress such as "Mounting storage...", "Starting radio..."
 **Sources:** [`src/hal/display.cpp`](../src/hal/display.cpp), [`src/hal/display.h`](../src/hal/display.h), [`src/lv_conf.h`](../src/lv_conf.h), [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md#ui-performance)
 
 ### Mesh Networking
@@ -136,7 +142,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **SX1262 LoRa radio** on shared SPI bus
 - **Direct messages** (peer-to-peer encrypted) with path-aware routing (direct or flood)
 - **Group channels** — hashtag channels with shared PSK (up to 8 channels)
-- **Automatic contact discovery** via advert broadcasts (max 64 contacts, LRU eviction)
+- **Automatic contact discovery** via advert broadcasts (max 350 contacts via `-D MAX_CONTACTS=350`, LRU eviction)
 - **Path learning** — learns and stores outbound/inbound advert paths; Contact Detail shows direct/hop count status
 - **Trace route** — per-hop SNR and node hash reporting
 - **Ping Nearby** — zero-hop active discovery with tagged PING/PONG exchange
@@ -150,7 +156,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 **Sources:** [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h), [`src/mesh/sigurd_mesh_v2.h`](../src/mesh/sigurd_mesh_v2.h), [`lib/meshcore/`](../lib/meshcore/)
 
 ### Screen Navigation
-- **Screen enum** with 24 screen IDs (Home, Chat, Contacts, Channels, Network, Heard, Map, Advertise, Settings, Trace, Terminal, Signal, RadioSetup, Repeaters, Onboarding, ContactDetail, SettingsRadio, SettingsGPS, SettingsDisplay, SettingsSystem, NodeStats, Telemetry, NodeStatus, WiFiNetworks)
+- **Screen enum** with 26 screen IDs (Home, Chat, Contacts, Channels, Network, Heard, Map, Advertise, Settings, Trace, Terminal, Signal, RadioSetup, Repeaters, Onboarding, ContactDetail, SettingsRadio, SettingsGPS, SettingsDisplay, SettingsSystem, NodeStats, Telemetry, NodeStatus, WiFiNetworks, Bluetooth, Regions)
 - **Slide transitions** — configurable `lv_scr_load_anim` with direction and duration
 - **Back stack** — linear stack (drops oldest when full, no wrapping), with `can_go_back()` and `go_back()`
 - **Universal back-swipe** — two-swipe commit pattern: first Left neutralises, second Left triggers back
@@ -201,27 +207,41 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Test controller integration** — remote test mode can change debug level and feature masks at runtime
 **Sources:** [`src/diagnostics/debug.cpp`](../src/diagnostics/debug.cpp), [`src/diagnostics/debug.h`](../src/diagnostics/debug.h), [`src/diagnostics/debug_cfg.h`](../src/diagnostics/debug_cfg.h)
 
+### Logging Subsystem
+- **Lightweight serial logging** — header-only macros for tagged log messages (`LOG_I`, `LOG_W`, `LOG_E`)
+- **Compile-time gating** — logging compiles away entirely when `SIGURDOS_DEBUG` is not defined
+- **Flexible backends** — supports both USB CDC serial and the telemetry framing layer
+- **Full documentation:** [`docs/LOGGING.md`](LOGGING.md)
+**Sources:** [`src/diagnostics/log.h`](../src/diagnostics/log.h)
+
 ### Packet Log
 - **Circular packet buffer** — logs every received radio frame with timestamp, source, RSSI, SNR, and payload type string
 - **Type classification** — ADVERT_RX, DM_RX, GRP_RX, ANON_RX, ACK, TRACE, PKT_RX
 - **Query API** — `getPacketLogCount()`, `getPacketLogEntry()` for UI consumption
-**Sources:** [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h) (lines 27–33, 77–79)
+**Sources:** [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### RTC & System Time
 - **MeshCore RTC clock** — network-synchronised time for message timestamps and contact `last_seen`
 - **Local date/time** — `getCurrentLocalDateTime()` returns year/month/day/hour/minute
 - **Epoch helpers** — `makeEpoch()` / `setSystemTime()` for GPS-based or manual time setting
-**Sources:** [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h) (lines 70–74), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp)
+**Sources:** [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp)
 
 ### SPIFFS Persistence
 - **State storage** — SPIFFS filesystem for persisting identity keys, contact list, channel config, and message history
 - **Graceful fallback** — if SPIFFS mount fails at boot, device continues without persistence (warning logged)
 - **Chat persistence** — `chat_save_messages()` / `chat_load_messages()` per-channel history
-**Sources:** [`src/main.cpp`](../src/main.cpp) (line 42), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/ui/chat_screen.h`](../src/ui/chat_screen.h) (lines 48–49)
+**Sources:** [`src/main.cpp`](../src/main.cpp), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/ui/chat_screen.h`](../src/ui/chat_screen.h)
+
+### Contact Persistence
+- **Contact management** — add, remove, lookup, and favourite contacts via `contact_store`
+- **On-disk storage** — contacts persisted to SPIFFS via `persistence_store`
+- **LRU eviction** — bounded contact list (up to 350 entries) with least-recently-used eviction
+- **Full documentation:** [`docs/CONTACT_STORE.md`](CONTACT_STORE.md)
+**Sources:** [`src/mesh/contact_store.cpp`](../src/mesh/contact_store.cpp), [`src/mesh/contact_store.h`](../src/mesh/contact_store.h), [`src/mesh/persistence_store.cpp`](../src/mesh/persistence_store.cpp), [`src/mesh/persistence_store.h`](../src/mesh/persistence_store.h)
 
 ### Web Flasher Support
-- **Pre-built binaries** in `webflasher/` — bootloader, partitions, boot_app0, firmware, and merged full image
-- **Manifest JSON** — versioned metadata for `flasher.meshcore.io` custom firmware installer
+- **Pre-built binaries** in `webflasher/` — bootloader, partitions, boot_app0, firmware, merged full image, and the Launcher-named copy
+- **Manifest JSON** — versioned metadata (version, git SHA, SHA-256 checksums, offsets) for the `flasher.sigurdos.dev` custom firmware installer
 - **4-partition flash layout** — bootloader (0x0000), partitions (0x8000), boot_app0 (0xe000), firmware (0x10000)
 **Sources:** [`webflasher/manifest.json`](../webflasher/manifest.json), [`firmware/README.md`](../firmware/README.md), [`webflasher/`](../webflasher/)
 
@@ -230,13 +250,30 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **GitHub pull OTA** — Settings → System → "OTA from GitHub" joins saved WiFi, downloads `firmware.bin` from the latest GitHub release, streams to `Update.write()`, and reboots on success.
 - **WiFi credentials** — Settings → System → "WiFi: ..." persists SSID/password in NVS.
 - **Dual OTA partitioning** — `default_16MB.csv` provides two app slots for safe OTA updates.
-**Sources:** [`src/hal/wifi_ota.cpp`](../src/hal/wifi_ota.cpp), [`src/hal/github_ota.cpp`](../src/hal/github_ota.cpp), [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`platformio.ini`](../platformio.ini)
+- **Launcher gating** — both OTA paths refuse to start when running under bmorcelli/Launcher (`src/hal/launcher_env.cpp` detection) to protect co-installed firmware.
+**Sources:** [`src/hal/wifi_ota.cpp`](../src/hal/wifi_ota.cpp), [`src/hal/github_ota.cpp`](../src/hal/github_ota.cpp), [`src/hal/launcher_env.cpp`](../src/hal/launcher_env.cpp), [`src/ui/screens/screen_settings_system.cpp`](../src/ui/screens/screen_settings_system.cpp), [`platformio.ini`](../platformio.ini)
 
 ### Remote Test Controller
 - **`SIGURDOS_REMOTE_TEST` build mode** — disables LoRa radio, enables simulated input
 - **Inject capabilities** — `keyboard_inject()`, `trackball_inject()`, `test_set_touch()`, `injectMessage()`
 - **Remote test loop** — runs alongside normal display/UI loop for automated QA
-**Sources:** [`src/test/test_controller.h`](../src/test/test_controller.h), [`src/main.cpp`](../src/main.cpp) (lines 67–73, 127)
+**Sources:** [`src/test/test_controller.h`](../src/test/test_controller.h), [`src/main.cpp`](../src/main.cpp)
+
+### Structured Telemetry
+- **`SIGURDOS_TELEMETRY` build flag** — machine-parseable `@tag|key=value|...` records over USB CDC serial for AI-agent/automated monitoring; zero overhead when disabled
+- **Heartbeat ring** — periodic system snapshots (heap, PSRAM, loop timing) in a PSRAM-backed ring buffer (`telemetry_hb_ring`)
+- **Crash capture** — backtrace ring buffer that survives reboot (`telemetry_crash`)
+- **Collectors** — peripheral state (GPS, SD, WiFi, battery, task watermarks) in `telemetry_collectors`; input-event capture in `telemetry_input`
+- The source under `src/diagnostics/` is the authoritative reference for the telemetry system (the earlier design/plan docs were retired once the implementation landed)
+**Sources:** [`src/diagnostics/telemetry.cpp`](../src/diagnostics/telemetry.cpp), [`src/diagnostics/telemetry_protocol.cpp`](../src/diagnostics/telemetry_protocol.cpp), [`src/diagnostics/telemetry_crash.cpp`](../src/diagnostics/telemetry_crash.cpp), [`src/diagnostics/telemetry_hb_ring.cpp`](../src/diagnostics/telemetry_hb_ring.cpp), [`src/diagnostics/telemetry_collectors.cpp`](../src/diagnostics/telemetry_collectors.cpp), [`src/diagnostics/telemetry_input.cpp`](../src/diagnostics/telemetry_input.cpp)
+
+### Launcher Compatibility
+- **Runtime detection** — `sigurdos_is_under_launcher()` probes for Launcher's resident `test`-subtype app partition, confirmed via the `otadata @ 0xD000` offset; structurally impossible to false-positive on the standalone partition table
+- **Self-OTA gating** — WiFi AP and GitHub OTA refuse to run under Launcher to protect co-installed firmware
+- **Boot diagnostics** — targeted warning when an app-only Launcher install leaves the device without a SPIFFS partition
+- **Install artifact** — releases publish `SigurdOS-tdeck-launcher.bin` (byte-identical to `firmware-merged.bin`) for Launcher SD/WebUI/URL installs
+**Full documentation:** [`docs/LAUNCHER.md`](LAUNCHER.md), [`docs/LAUNCHER_ROADMAP.md`](LAUNCHER_ROADMAP.md), [`docs/LAUNCHER_SIZE_AUDIT.md`](LAUNCHER_SIZE_AUDIT.md), [`firmware/README.md`](../firmware/README.md)
+**Sources:** [`src/hal/launcher_env.cpp`](../src/hal/launcher_env.cpp), [`src/hal/launcher_env.h`](../src/hal/launcher_env.h), [`test/test_launcher_env/`](../test/test_launcher_env/)
 
 ### Companion BLE (Official MeshCore App)
 
@@ -245,10 +282,10 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Dual-consumer hook** — `companion_adapter.inc` fans out message/advert/ack events to both UI and BLE simultaneously
 - **SPIFFS message store** — persistent, append-only, dedup-keyed by (conversation, sender, timestamp); survives reboot; shared between chat UI and BLE sync
 - **Bluetooth UI screen** — enable/disable toggle, PIN display, connection status indicator, Settings → Network entry
-- **Build envs** — `[env:SigurdOS_TDeck_ble]` with `-D SIGURDOS_COMPANION_BLE=1`; 53 companion protocol + 5 message store native tests
+- **Build envs** — BLE is in the default env (`[env:SigurdOS_TDeck]` sets `-D SIGURDOS_COMPANION_BLE=1`; `SigurdOS_TDeck_ble_validation` adds the validation harness); 53 companion protocol + 5 message store native tests
 - **PIN pairing** — static PIN from `NodePrefs.device_pin` with MITM bonding
 - **Phased implementation** — Phase 0 (message store persistence), Phase 1 (MVP: handshake, contact sync, DM send/recv), Phase 2 (channels, adverts, radio config), Phase 3 (repeater login, trace, telemetry, private-key export)
-**Sources:** [`src/comms/companion_bridge.h`](../src/comms/companion_bridge.h), [`src/comms/companion_bridge.cpp`](../src/comms/companion_bridge.cpp), [`src/comms/companion_adapter.inc`](../src/comms/companion_adapter.inc), [`src/mesh/message_store.h`](../src/mesh/message_store.h), [`src/mesh/message_store.cpp`](../src/mesh/message_store.cpp), [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`platformio.ini`](../platformio.ini), [`test/test_companion_protocol/`](../test/test_companion_protocol/), [`test/test_message_store/`](../test/test_message_store/)
+**Sources:** [`src/comms/companion_bridge.h`](../src/comms/companion_bridge.h), [`src/comms/companion_bridge.cpp`](../src/comms/companion_bridge.cpp), [`src/comms/companion_adapter.inc`](../src/comms/companion_adapter.inc), [`src/mesh/message_store.h`](../src/mesh/message_store.h), [`src/mesh/message_store.cpp`](../src/mesh/message_store.cpp), [`src/ui/screens/screen_bluetooth.cpp`](../src/ui/screens/screen_bluetooth.cpp), [`platformio.ini`](../platformio.ini), [`test/test_companion_protocol/`](../test/test_companion_protocol/), [`test/test_message_store/`](../test/test_message_store/)
 
 ---
 
@@ -272,13 +309,17 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 **Sources:** [`src/hal/touch.cpp`](../src/hal/touch.cpp), [`src/hal/touch.h`](../src/hal/touch.h), [`test/test_touch/`](../test/test_touch/)
 
 ### I2C Keyboard
-- **MCU:** Separate ESP32-C3 slave on I2C address 0x55, 100 kHz
-- **Mode:** Returns ASCII characters for each keypress
+- **MCU:** Separate ESP32-C3 slave on I2C address 0x55, shared 400 kHz bus
+- **Mode:** Model-independent ASCII key mode, with bounded raw modifier samples
 - **Backlight:** I2C commands 0x01/0x02 for brightness control (0–255)
-- **Modifiers:** `is_shift()`, `is_ctrl()`, `is_alt()` — tracked from key codes
+- **Modifiers:** Alt/Mic/Sym extensions retained without raw-decoding normal keys
+- **Layouts:** 12 persisted hardware layouts (English, Cyrillic, Greek, Arabic,
+  AZERTY/QWERTZ, and accented Latin); double-tap Space within 250 ms to cycle
+- **Rendering:** Complete UTF-8 insertion plus Greek/Cyrillic/Arabic font
+  fallback; Arabic uses LVGL bidi ordering and contextual shaping
 - **Debouncing:** MCU handles matrix scanning and debounce internally
 - **Inject API:** `keyboard_inject()` for simulated input in test mode
-**Sources:** [`src/hal/keyboard.cpp`](../src/hal/keyboard.cpp), [`src/hal/keyboard.h`](../src/hal/keyboard.h), [`test/test_keyboard/`](../test/test_keyboard/)
+**Sources:** [`src/hal/keyboard.cpp`](../src/hal/keyboard.cpp), [`src/hal/keyboard_layouts.cpp`](../src/hal/keyboard_layouts.cpp), [`test/test_keyboard/`](../test/test_keyboard/), [`test/test_keyboard_layouts/`](../test/test_keyboard_layouts/)
 
 ### 5-Direction Trackball
 - **GPIO:** UP=3, DOWN=15, LEFT=1, RIGHT=2, CLICK=0 (BOOT button)
@@ -329,14 +370,15 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 
 ### Buzzer
 - **Pin:** GPIO 46 (active low)
-- Driver with beep functions.
+- **Non-blocking pattern playback** — notification patterns (short/double beep) are stepped by `buzzer_loop()` from the main loop instead of blocking delays
+- **Quiet mode** — buzzer can be silenced via preferences
 **Sources:** [`src/hal/buzzer.cpp`](../src/hal/buzzer.cpp), [`src/hal/buzzer.h`](../src/hal/buzzer.h)
 
 ### Peripheral Power
 - **Control:** GPIO 10 — `PIN_PERIPH_PWR`
 - **Default:** Set HIGH in `TDeckBoard::begin()` to enable all peripherals
 - **Sleep:** Set LOW before deep sleep to conserve battery; GPIO hold re-enabled on wake
-**Sources:** [`src/hal/tdeck_board.h`](../src/hal/tdeck_board.h) (lines 51–52, 120)
+**Sources:** [`src/hal/tdeck_board.h`](../src/hal/tdeck_board.h)
 
 ---
 
@@ -344,7 +386,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 
 A dedicated app-level feature bridging the display, SD card, and GPS systems.
 
-- **Tile source:** PNG format map tiles from SD card (`/sdcard/map/tiles/`)
+- **Tile source:** PNG format map tiles from SD card (`/sdcard/tiles/{z}/{x}/{y}.png`)
 - **Coordinate system:** Slippy-map tile math (lat/lon → tile X/Y at zoom levels)
 - **Rendering:** LVGL canvas grid overlaid with decoded tile pixels
 - **Cache:** PSRAM-backed LRU tile cache (4 entries @ 256×256 RGB565 ≈ 524 KB)
@@ -358,34 +400,9 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 
 ## Test Suite
 
-While not a user-facing feature, the comprehensive test suite (433 tests (1 skipped, 432 passed) across 22 modules) validates every subsystem:
+While not a user-facing feature, the comprehensive native test suite (768 cases — 767 passing, 1 always-skipped — across 56 `test/test_<name>/` suites as of 2026-06-11) validates every subsystem: HAL drivers, mesh wrapper and protocol contracts, regions, companion BLE protocol, message/contact stores, navigation, layout, theme, telemetry, emoji fonts, OTA contracts, and the Launcher detection helper.
 
-| Module | Tests | What's Covered |
-|--------|-------|----------------|
-| `test_touch` | 22 | GT911 coordinate mapping, multitouch, press→release lifecycle |
-| `test_keyboard` | 20 | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
-| `test_battery` | 16 | mV→%, clamping, monotonicity, ADC math, edge cases |
-| `test_sdcard` | 15 | SPI init, mount, read/write, directory listing, edge cases |
-| `test_mesh_messaging` | 15 | Message queue, send/receive, channel ops, contact export |
-| `test_map` | 14 | Tile math (lat/lon→tile), zoom levels, bounding box |
-| `test_mesh_wrapper` | 13 | API signatures, return ranges, unread count init |
-| `test_navigation` | 12 | Forward/back, history stack, deep nav chains, all pairs |
-| `test_home_screen` | 12 | Home grid layout, tile rendering, top/bottom bars |
-| `test_gps` | 12 | NMEA parsing, coordinate conversion, fix detection |
-| `test_trackball` | 9 | Direction debounce, deadtime, click detection, idle calibration |
-| `test_pins` | 9 | GPIO ranges, SPI/I2C bus conflicts, duplication, LoRa params |
-| `test_layout` | 9 | Responsive layout helpers, column distribution, dialog sizing |
-| `test_theme` | 7 | Color darkness, vibrancy, distinctness, readability hierarchy |
-| `test_prefs` | 7 | NVS load/save, defaults, edge cases |
-| `test_build` | 7 | All headers compile together, cross-module API consistency |
-| `test_terminal` | 6 | Terminal command parsing, execution, edge cases |
-| `test_emoji` | 5 | Emoji font fallback, index access, rendering |
-| `test_chat_truncation` | 4 | Message truncation, UTF-8 safety, boundary conditions |
-| `test_regions` | 43 | Region CRUD, key derivation, transport code calc, scope stamping, NVS round-trip |
-| `test_companion_protocol` | 53 | Handshake frames, cmd dispatch, offline queue, contact/channel sync, byte-level golden frames |
-| `test_message_store` | 5 | Append-only persistence, dedup, reboot survival, offline-queue isolation |
-
-See [`test/README.md`](../test/README.md) for full documentation.
+Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md) for the full per-suite listing and mock structure — per-module counts are not duplicated here because they change with nearly every PR.
 
 ---
 
@@ -395,13 +412,15 @@ See [`test/README.md`](../test/README.md) for full documentation.
 |----------|-------------|
 | [`README.md`](../README.md) | Project overview, quick start, hardware table |
 | [`AGENTS.md`](../AGENTS.md) | Full architecture guide, conventions, pitfalls (agent context) |
-| [`AGENT_GUIDE.md`](../AGENT_GUIDE.md) | Agent onboarding and context reference |
 | [`CLAUDE.md`](../CLAUDE.md) | Claude Code agent context (mirror of AGENTS.md) |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow, PR checklist, coding standards |
 | [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Tracked bugs, fixes, and workarounds |
 | [`docs/CHAT_SCREEN.md`](CHAT_SCREEN.md) | Chat screen UI and messaging documentation |
+| [`docs/CONTACT_STORE.md`](CONTACT_STORE.md) | Contact store API, persistence, and data model |
 | [`docs/HARDWARE.md`](HARDWARE.md) | Hardware pinout, peripherals, and configuration |
 | [`docs/HOME_SCREEN.md`](HOME_SCREEN.md) | Home screen layout and tile system documentation |
+| [`docs/LAUNCHER.md`](LAUNCHER.md) | Launcher detection, OTA gating, partition layout |
+| [`docs/LOGGING.md`](LOGGING.md) | Logging subsystem API, verbosity levels, and configuration |
 | [`docs/MAP_SCREEN.md`](MAP_SCREEN.md) | Map screen and tile cache system documentation |
 | [`docs/MESH_NETWORKING.md`](MESH_NETWORKING.md) | Mesh networking protocol and features documentation |
 | [`docs/MISSING_FEATURES.md`](MISSING_FEATURES.md) | Companion parity audit: implemented, declined, and out-of-scope MeshCore deltas |

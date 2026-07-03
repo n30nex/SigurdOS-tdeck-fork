@@ -7,13 +7,24 @@
 
 #pragma once
 #include <cstdint>
+#include <cstdlib>
 
 namespace sigurdos {
 namespace ota {
 
+// Authentication predicate for the OTA upload endpoint. The endpoint is only
+// reachable when a device PIN is configured; an upload is accepted only when a
+// non-zero device PIN is set and the submitted PIN matches it. A zero/unset PIN
+// or an empty submission is treated as unauthenticated (#687).
+inline bool otaPinAccepts(uint32_t device_pin, const char* entered) {
+    if (device_pin == 0 || entered == nullptr || entered[0] == '\0') return false;
+    return (uint32_t)strtoul(entered, nullptr, 10) == device_pin;
+}
+
 // Start WiFi AP + web server for OTA upload.
 // ssid: max 32 chars (truncated), password: max 63 (empty = open AP).
-// Returns true if started successfully.
+// Returns true if started successfully. Returns false (refuses to start) when
+// no device PIN is configured, since the PIN is the upload endpoint's only auth.
 bool start(const char* ssid, const char* password = "");
 
 // Call in main loop to handle web server requests.
@@ -90,11 +101,6 @@ void beginConnect(const char* ssid, const char* password);
 
 // Returns current connection status.
 Status getStatus();
-
-// Connect to an access point. Blocks up to 15s for connection.
-// Returns true if connected (WL_CONNECTED).
-// Prefer beginConnect() + timer polling for UI responsiveness.
-bool connect(const char* ssid, const char* password);
 
 // Disconnect and turn WiFi off.
 void disconnect();

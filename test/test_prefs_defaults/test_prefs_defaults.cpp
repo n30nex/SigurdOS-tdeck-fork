@@ -49,9 +49,10 @@ TEST(PrefsDefaultsTest, IdentityAndPrivacyDefaultsAreDeterministic) {
     EXPECT_STREQ("SigurdOS T-Deck", prefs.node_name);
     EXPECT_EQ('\0', prefs.node_name[sizeof(prefs.node_name) - 1]);
     EXPECT_FALSE(prefs.share_location);
-    EXPECT_TRUE(prefs.gps_enabled);
+    EXPECT_FALSE(prefs.gps_enabled);
     EXPECT_EQ(0, prefs.gps_interval);
     EXPECT_EQ(0u, prefs.device_pin);
+    EXPECT_EQ(0u, prefs.ble_pin);
 }
 
 TEST(PrefsDefaultsTest, MeshBehaviorDefaultsMatchSafeCompanionSettings) {
@@ -61,11 +62,13 @@ TEST(PrefsDefaultsTest, MeshBehaviorDefaultsMatchSafeCompanionSettings) {
     EXPECT_EQ(0, prefs.flood_max_hops);
     EXPECT_EQ(0, prefs.autoadd_max_hops);
     EXPECT_EQ(0x1E, prefs.autoadd_config);
-    EXPECT_EQ(0, prefs.advert_interval);
+    EXPECT_EQ(0, prefs.advert_interval_h);
     EXPECT_EQ(1, prefs.advert_type);
     EXPECT_FALSE(prefs.multi_acks);
     EXPECT_EQ(0, prefs.client_repeat);
     EXPECT_FALSE(prefs.ble_enabled);
+    // Default 1-byte path hash (mode 0) — backward compatible with pre-1.14 repeaters.
+    EXPECT_EQ(0, prefs.path_hash_mode);
 }
 
 TEST(PrefsDefaultsTest, DelayAndRadioAssistDefaultsAreInitialized) {
@@ -81,6 +84,7 @@ TEST(PrefsDefaultsTest, UiConnectivityAndRegionDefaultsAreInitialized) {
     const sigurdos::NodePrefs prefs = defaults_from_dirty_memory();
 
     EXPECT_EQ(127, prefs.kbd_backlight);
+    EXPECT_EQ(0, prefs.kbd_layout);
     EXPECT_EQ(200, prefs.display_brightness);
     EXPECT_EQ(30, prefs.auto_off_timeout);
     EXPECT_EQ(0, prefs.theme_id);

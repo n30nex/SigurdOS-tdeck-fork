@@ -20,6 +20,7 @@
 #include "display.h"
 #include "touch.h"
 #include "keyboard.h"
+#include "keyboard_layouts.h"
 #include "prefs.h"
 #include "trackball.h"
 #include "tdeck_pins.h"
@@ -99,6 +100,9 @@ static lv_display_t* lv_disp = nullptr;
 // Full rendering mode flushes the entire frame in one go,
 // which eliminates the multiple tear lines caused by partial flushes.
 static uint8_t* draw_buf = nullptr;
+static bool input_initialized = false;
+static constexpr uint8_t BOOT_DISPLAY_BRIGHTNESS = 200;
+static constexpr uint16_t BOOT_AUTO_OFF_TIMEOUT_SEC = 30;
 
 // ── Debug: expose last flush area for diagnostics ────────
 #if SIGURDOS_DEBUG_DISPLAY
@@ -388,9 +392,98 @@ static uint32_t keyboard_key_to_lvgl_key(int key)
     return (uint32_t)key;
 }
 
+static sigurdos::keyboard_layouts::CycleGesture layout_cycle_gesture;
+static lv_obj_t* layout_indicator = nullptr;
+
+static void reset_layout_space_tap()
+{
+    layout_cycle_gesture.reset();
+}
+
+static void show_layout_indicator()
+{
+    if (layout_indicator && lv_obj_is_valid(layout_indicator)) {
+        lv_obj_delete(layout_indicator);
+    }
+
+    layout_indicator = lv_label_create(lv_layer_top());
+    lv_obj_add_event_cb(layout_indicator, [](lv_event_t* e) {
+        if (layout_indicator == (lv_obj_t*)lv_event_get_target(e)) {
+            layout_indicator = nullptr;
+        }
+    }, LV_EVENT_DELETE, nullptr);
+    lv_label_set_text(layout_indicator,
+                      sigurdos::keyboard_layouts::name(sigurdos::keyboard_layouts::active()));
+    lv_obj_set_size(layout_indicator, 42, 20);
+    lv_obj_align(layout_indicator, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_set_style_text_align(layout_indicator, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(layout_indicator,
+                                lv_color_hex(sigurdos::theme::TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(layout_indicator, emoji_wrapped_montserrat_12, 0);
+    sigurdos::theme::apply_pixel_badge(layout_indicator);
+    lv_obj_delete_delayed(layout_indicator, 900);
+}
+
+static bool dispatch_keyboard_layout_key(int key, lv_indev_data_t* data)
+{
+    lv_obj_t* target = find_keyboard_textarea();
+    const bool valid_target = target && lv_obj_is_valid(target) &&
+                              lv_obj_check_type(target, &lv_textarea_class);
+
+    if (key == ' ' && valid_target) {
+        const uint32_t now = millis();
+        if (layout_cycle_gesture.on_space(now, reinterpret_cast<uintptr_t>(target))) {
+            // Remove the first space that LVGL inserted, consume the second,
+            // then cycle and persist the active layout.
+            lv_textarea_delete_char(target);
+            sigurdos::keyboard_layouts::cycle();
+#if SIGURDOS_DEBUG_UI
+            SIGURDOS_RUNTIME_FEAT(ui) {
+                Serial.printf("[kbd] layout: %s\n",
+                              sigurdos::keyboard_layouts::name(
+                                  sigurdos::keyboard_layouts::active()));
+            }
+#endif
+            show_layout_indicator();
+            data->state = LV_INDEV_STATE_RELEASED;
+            sigurdos_display_wake();
+            sigurdos_keyboard_consume_key();
+            return true;
+        }
+        return false;
+    }
+
+    reset_layout_space_tap();
+    if (!valid_target || key <= 0x20 || key == 0x7F) return false;
+
+    const char* mapped = sigurdos::keyboard_layouts::map_key(
+        sigurdos::keyboard_layouts::active(), key, sigurdos_keyboard_is_shift());
+    if (!mapped) return false;
+
+    // Insert the complete UTF-8 string. Some layout entries expand to two
+    // codepoints, so converting only the first codepoint would lose data.
+#if SIGURDOS_DEBUG_UI
+    SIGURDOS_RUNTIME_FEAT(ui) {
+        Serial.printf("[kbd] layout %s: 0x%02X -> %s\n",
+                      sigurdos::keyboard_layouts::name(
+                          sigurdos::keyboard_layouts::active()),
+                      static_cast<unsigned>(key), mapped);
+    }
+#endif
+    lv_textarea_add_text(target, mapped);
+    data->state = LV_INDEV_STATE_RELEASED;
+    sigurdos_display_wake();
+    sigurdos_keyboard_consume_key();
+    return true;
+}
+
 static void reset_auto_off() {
     uint16_t sec = sigurdos::prefs_get().auto_off_timeout;
     auto_off_at = (sec > 0) ? (millis() + (uint32_t)sec * 1000) : UINT32_MAX;
+}
+
+static void reset_auto_off_default() {
+    auto_off_at = millis() + (uint32_t)BOOT_AUTO_OFF_TIMEOUT_SEC * 1000;
 }
 
 static void restore_display_after_sleep()
@@ -446,11 +539,16 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
     if (sigurdos::debug::get_level() >= 2 && sigurdos::debug::feat_get_display())
 #endif
     {
-        Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
-                      (unsigned long)dbg_flush_count,
-                      (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
-                      (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1),
-                      (long)((area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1)));
+        // Non-blocking flush logging: skip if USB CDC TX buffer is near full,
+        // otherwise Serial.printf() can block indefinitely (the buffer is only
+        // ~256 bytes on ESP32-S3 and continuous full-frame flushes fill it fast).
+        if (Serial.availableForWrite() >= 96) {
+            Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
+                          (unsigned long)dbg_flush_count,
+                          (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
+                          (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1),
+                          (long)((area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1)));
+        }
     }
 #endif
     uint32_t w = area->x2 - area->x1 + 1;
@@ -541,10 +639,10 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
     sigurdos_keyboard_scan();   // force a fresh poll (catches first key after focus)
     int key = sigurdos_keyboard_get_key();
     if (key > 0 && sigurdos_keyboard_consume_event()) {
+        if (key != ' ') reset_layout_space_tap();
         // ── Global shortcut: channel quick-action menu ──
-        // Raw matrix mode maps Alt+Space to 0x0C so Alt+letter can open
-        // the character picker. Legacy key-mode C3 firmware emits 0x0C for
-        // Alt+C, so the display layer only needs to handle the event code.
+        // The keyboard HAL maps Alt+Space to 0x0C while raw modifier sampling
+        // distinguishes the C3's native Alt+C byte for the character picker.
         if (key == 0x0C) {
             lv_obj_t* ci = sigurdos::ui::chat_screen_get_input_field();
             if (ci && lv_obj_is_valid(ci) && lv_obj_get_screen(ci) == lv_scr_act()) {
@@ -577,6 +675,7 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
         // refocus heuristics below lets the scope picker's custom-scope field
         // actually receive typing instead of the message box stealing it.
         if (sigurdos::ui::chat_screen_overlay_active()) {
+            if (dispatch_keyboard_layout_key(key, data)) return;
             data->key = keyboard_key_to_lvgl_key(key);
             data->state = LV_INDEV_STATE_PRESSED;
             sigurdos_display_wake();
@@ -593,9 +692,11 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
         // The trackball (ENCODER indev) can accidentally move group
         // focus to a button — if focus isn't a textarea, find one
         // on the active screen and refocus it so keystrokes land.
-        if (key > 0x20 && key != 0x7F) {
+        if (key >= 0x20 && key != 0x7F) {
             focus_textarea(find_keyboard_textarea());
         }
+
+        if (dispatch_keyboard_layout_key(key, data)) return;
 
         data->key = keyboard_key_to_lvgl_key(key);
         data->state = LV_INDEV_STATE_PRESSED;
@@ -656,9 +757,12 @@ static void lvgl_invalidate_cb(lv_event_t* e)
 
 bool sigurdos_display_init()
 {
-    tft.init();
+    if (!tft.init()) {
+        Serial.println("[disp] FATAL: tft.init() failed");
+        return false;
+    }
     tft.setRotation(1);  // 90° CW: native portrait (240×320) → landscape (320×240)
-    tft.setBrightness(sigurdos::prefs_get().display_brightness);
+    tft.setBrightness(BOOT_DISPLAY_BRIGHTNESS);
     tft.fillScreen(TFT_BLACK);
 
     lv_init();
@@ -707,6 +811,16 @@ bool sigurdos_display_init()
     Serial.println("[debug] LVGL invalidate area tracking enabled");
 #endif
 
+    display_on = true;
+    reset_auto_off_default();
+
+    return true;
+}
+
+void sigurdos_display_init_inputs()
+{
+    if (input_initialized || !lv_disp) return;
+
     lv_indev_t* touch = lv_indev_create();
     lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touch, lvgl_touch_cb);
@@ -726,12 +840,14 @@ bool sigurdos_display_init()
     lv_indev_set_group(trackball, g);
     lv_group_set_default(g);
 
+    sigurdos::keyboard_layouts::init();
+
     // Initialize touch controller
     if (!sigurdos_touch_init()) {
         // Touch init failed — device works with keyboard only
     }
 
-    // Initialize keyboard matrix scanner
+    // Initialize the ESP32-C3 I2C keyboard driver
     if (!sigurdos_keyboard_init()) {
         // Keyboard init failed — device works with touch only
     }
@@ -739,18 +855,8 @@ bool sigurdos_display_init()
     // Initialize trackball GPIO input
     sigurdos_trackball_init();
 
-    display_on = true;
+    input_initialized = true;
     reset_auto_off();
-
-    // Backlight pulse: brief off→on to confirm display is alive
-    uint8_t saved_brightness = sigurdos::prefs_get().display_brightness;
-    tft.setBrightness(0);
-    delay(50);
-    tft.setBrightness(255);
-    // Restore saved brightness after the pulse
-    sigurdos_display_set_brightness(saved_brightness);
-
-    return true;
 }
 
 void sigurdos_display_loop()
@@ -835,10 +941,12 @@ void sigurdos_display_loop()
     }
 #endif
 
-    sigurdos_touch_loop();
-    sigurdos_keyboard_scan();
-    sigurdos_trackball_scan();
-    dispatch_trackball_events();
+    if (input_initialized) {
+        sigurdos_touch_loop();
+        sigurdos_keyboard_scan();
+        sigurdos_trackball_scan();
+        dispatch_trackball_events();
+    }
 
     if (wake_refresh_pending) {
         wake_refresh_pending = false;
@@ -860,6 +968,12 @@ void sigurdos_display_loop()
 
     uint32_t next = lv_timer_handler();
     delay(next > 5 ? 5 : next);
+}
+
+void sigurdos_display_render_now()
+{
+    if (!lv_disp) return;
+    lv_refr_now(lv_disp);
 }
 
 uint32_t sigurdos_display_millis()

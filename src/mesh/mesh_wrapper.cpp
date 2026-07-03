@@ -8,6 +8,8 @@
 #include "channel_validation.h"
 #include "public_channel.h"
 #include "message_store.h"
+#include "contact_store.h"
+#include "persistence_store.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
 #include "hal/tdeck_board.h"
@@ -23,9 +25,9 @@
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
 #define REQ_TYPE_GET_TELEMETRY_DATA  0x03
 #endif
-
+#include <SPI.h>
 #include <SPIFFS.h>
-#include <Preferences.h>
+#include <Preferences.h>  // for NVS prefs
 #include <mbedtls/base64.h>
 #include <time.h>
 #include <Mesh.h>
@@ -35,6 +37,7 @@
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
+#include "hal/spi_shared.h"
 
 using sigurdos::mesh::MeshMessage;
 
@@ -43,7 +46,6 @@ using sigurdos::mesh::MeshMessage;
 // ════════════════════════════════════════════════════
 
 static sigurdos::TDeckBoard        board;
-static SPIClass                  lora_spi(FSPI);
 static Module*                   lora_mod = nullptr;
 static CustomSX1262*             radio_module = nullptr;
 static CustomSX1262Wrapper*      radio_driver = nullptr;
@@ -164,7 +166,11 @@ static void bleValidationEmit(bool) {}
 // (sigurdos::mesh) — SigurdMeshV2 calls it as sigurdos::mesh::mesh_v2_queue_push().
 void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                          const char* text, int rssi, float snr,
-                         uint32_t sender_timestamp, uint8_t path_len) {
+                         uint32_t sender_timestamp, uint8_t path_len,
+                         const uint8_t* sender_prefix,
+                         uint8_t txt_type,
+                         const uint8_t* extra,
+                         uint8_t extra_len) {
     if (!sender || !text) return;
     if (msg_count >= MAX_QUEUED) {
         msg_drop_count++;
@@ -183,7 +189,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     m.channel[sizeof(m.channel) - 1] = '\0';
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
-    m.timestamp = rtc_clock.getCurrentTime();
+    m.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
     m.is_self = false;
     if (strcmp(sender, own_name) != 0) unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
@@ -191,7 +197,8 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
     sigurdos::mesh::pushPacketLog(sender, rssi, snr, ptype);
     storeIncomingMessageForCompanion(sender, channel, text, rssi, snr,
-                                     sender_timestamp, path_len);
+                                     sender_timestamp, path_len,
+                                     sender_prefix, txt_type, extra, extra_len);
 #if SIGURDOS_DEBUG_MESH
     SIGURDOS_RUNTIME_FEAT(mesh) {
     Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
@@ -266,26 +273,10 @@ static bool queue_pop(MeshMessage* out) {
 // Forward declarations
 namespace sigurdos { namespace mesh { bool sendChannelMessage(const char* channel_name, const char* text); }}
 
-static void onMeshMessage(const char* sender, const char* channel, const char* text) {
-    queue_push(sender, channel, text);
-#if SIGURDOS_DEBUG
-    // Auto-reply in debug mode to test full duplex
-    if (channel && channel[0]) {
-        char reply[160];
-        snprintf(reply, sizeof(reply), "%s: Roger that (%s)", own_name, text);
-        sigurdos::mesh::sendChannelMessage(channel, reply);
-    }
-#endif
-#if SIGURDOS_DEBUG_MESH
-    SIGURDOS_RUNTIME_FEAT(mesh) {
-    int rssi = (int)radio_driver->getLastRSSI();
-    float snr = radio_driver->getLastSNR();
-    Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
-                  sender, channel && channel[0] ? " in " : "",
-                  channel && channel[0] ? channel : "", text, rssi, snr);
-    }
-#endif
-}
+// onMeshMessage was removed in 2026-06 — the _message_cb callback was dead code
+// after the RX double-queue fix removed _message_cb(...) invocations from all
+// SigurdMeshV2 message handlers. The callback registration remained as a latent
+// footgun (reconnecting it would re-introduce the double-queue bug).
 
 // ════════════════════════════════════════════════════
 // Identity persistence
@@ -311,14 +302,7 @@ static bool loadIdentity(::mesh::LocalIdentity& id) {
 static void saveIdentity(::mesh::LocalIdentity& id) {
     uint8_t buf[128];
     size_t len = id.writeTo(buf, sizeof(buf));
-    File f = SPIFFS.open("/mesh_id", "w");
-    if (!f) return;
-    size_t written = f.write(buf, len);
-    f.close();
-    if (written != len) {
-        // Partial write — file may be corrupted, remove it
-        SPIFFS.remove("/mesh_id");
-    }
+    sigurdos::mesh::identityStoreSave(buf, len);
 }
 
 // ════════════════════════════════════════════════════
@@ -536,6 +520,57 @@ void clearRoomMsgFetch() {
     if (g_mesh) g_mesh->clearRoomMsgFetch();
 }
 
+// ── Room message posting ───────────────────────────
+uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
+    if (!g_mesh || !contact_name || !channel_name || !text) return 0;
+    // Format: "[channel_name] text" — embeds the channel name in the message text
+    // so the room server can identify which channel the message is for.
+    char buf[160];
+    int n = snprintf(buf, sizeof(buf), "#%s %s", channel_name, text);
+    if (n <= 0) return 0;
+    if (n >= (int)sizeof(buf)) n = sizeof(buf) - 1;
+    // Send as a peer TXT_MSG to the room server contact (like a DM).
+    return sendMessage(contact_name, buf);
+}
+
+int getLoggedInRoomServerCount() {
+    if (!g_mesh) return 0;
+    int count = 0;
+    int n = g_mesh->getContactCount();
+    ::ContactInfo tmp;
+    for (int i = 0; i < n; i++) {
+        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
+            tmp.type == ADV_TYPE_ROOM &&
+            tmp.name[0] &&
+            g_mesh->isLoggedIn(tmp.name)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+const char* getLoggedInRoomServerName(int index) {
+    if (!g_mesh || index < 0) return "";
+    int count = 0;
+    int n = g_mesh->getContactCount();
+    ::ContactInfo tmp;
+    for (int i = 0; i < n; i++) {
+        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
+            tmp.type == ADV_TYPE_ROOM &&
+            tmp.name[0] &&
+            g_mesh->isLoggedIn(tmp.name)) {
+            if (count == index) {
+                static char name_buf[32];
+                strncpy(name_buf, tmp.name, sizeof(name_buf) - 1);
+                name_buf[sizeof(name_buf) - 1] = '\0';
+                return name_buf;
+            }
+            count++;
+        }
+    }
+    return "";
+}
+
 // ── Status request (Phase 4.2) ────────────────
 bool requestStatus(const char* dest_name) {
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
@@ -735,7 +770,7 @@ bool init(bool spiffs_ok)
     // `new` returns nullptr (no exceptions). Delaying to init() time
     // and checking null avoids a silent crash when the radio starts.
     lora_mod = new Module(P_LORA_NSS, P_LORA_DIO_1,
-                          P_LORA_RESET, P_LORA_BUSY, lora_spi);
+                          P_LORA_RESET, P_LORA_BUSY, sigurdos_shared_spi());
     if (!lora_mod) {
         Serial.println("[mesh] FATAL: Radio Module allocation failed (OOM)");
         return false;
@@ -763,16 +798,18 @@ bool init(bool spiffs_ok)
     int     cr       = p.configured ? p.cr    : LORA_CR;
     int     tx_power = p.configured ? p.tx_power_dbm : LORA_TX_PWR;
 
-#if SIGURDOS_DEBUG
-    // Debug builds: override NVS with compile-time radio defaults.
+#ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
+    // Remote-test / automation builds: override NVS with compile-time radio defaults.
     // This ensures consistent behavior regardless of stale NVS values
     // from previous firmware versions or manual configuration.
+    // NOTE: NOT enabled by SIGURDOS_DEBUG — that's for diagnostic logging only.
+    // Use SIGURDOS_DEBUG_FORCE_RADIO_PARAMS in remote_test environments.
     freq = LORA_FREQ;
     bw   = LORA_BW;
     sf   = LORA_SF;
     cr   = LORA_CR;
     tx_power = LORA_TX_PWR;
-    Serial.println("[mesh] DEBUG — forcing compile-time radio params");
+    Serial.println("[mesh] DEBUG_FORCE_RADIO — overriding with compile-time params");
 #endif
 
     if (!p.configured) {
@@ -782,9 +819,11 @@ bool init(bool spiffs_ok)
     }
 
     // If still not configured (non-debug builds), keep SX1262 off.
-    // In debug builds, the SIGURDOS_DEBUG block below saves configured=true
-    // to NVS — but it can only do that if we don't early-return here.
-    // Debug builds always init the radio with compile-time defaults.
+    // In debug/remote_test builds we init the radio anyway — debug for diagnostic
+    // access, remote_test because the FORCE_RADIO_PARAMS block below writes
+    // configured=true. Debug builds without FORCE_RADIO_PARAMS will use NVS values.
+    // In production builds, we hold the radio in reset until the user configures it
+    // via Settings → Radio Setup.
 #if !SIGURDOS_DEBUG
     {
         const auto& cp = sigurdos::prefs_get();
@@ -813,11 +852,11 @@ bool init(bool spiffs_ok)
 #if SIGURDOS_DEBUG_MESH
     Serial.println("[mesh] initializing LoRa SPI bus...");
 #endif
-    lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
+    sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
 #if SIGURDOS_DEBUG_MESH
     Serial.println("[mesh] calling radio_module->std_init()...");
 #endif
-    if (!radio_module->std_init(&lora_spi)) {
+    if (!radio_module->std_init(&sigurdos_shared_spi())) {
         Serial.println("[mesh] ERROR: Radio init failed");
         return false;
     }
@@ -845,7 +884,6 @@ bool init(bool spiffs_ok)
         Serial.println("[mesh] ERROR: SigurdMeshV2 allocation failed");
         return false;
     }
-    g_mesh->setMessageCallback(onMeshMessage);
     g_mesh->setOwnName(own_name);
 
     // Generate or load identity
@@ -873,9 +911,9 @@ bool init(bool spiffs_ok)
     // even if persisted NVS contains other channels from older firmware.
     ensurePublicChannelPresent(true);
 
-    // Debug builds: auto-join the #testingsigurdos test channel for RF testing on
+    // Automation builds: auto-join the #testingsigurdos test channel for RF testing on
     // 869.525/SF10/BW250/CR5. addChannelBool() is a no-op if already present.
-#if SIGURDOS_DEBUG
+#ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
     g_mesh->addChannelBool("testingsigurdos", "Si/tjXzmnwmPBA43Fw4b3Q==");
     saveChannels();
     // is fully operational without requiring Settings → Radio Setup.
@@ -889,7 +927,7 @@ bool init(bool spiffs_ok)
             dp.cr = LORA_CR;
             dp.tx_power_dbm = LORA_TX_PWR;
             sigurdos::prefs_set(dp);
-            Serial.println("[mesh] DEBUG: forced configured=true for testing");
+            Serial.println("[mesh] DEBUG_FORCE_RADIO: forced configured=true for testing");
         }
     }
 #endif
@@ -918,6 +956,11 @@ bool init(bool spiffs_ok)
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     {
+        // Generate a random per-device BLE PIN on first boot if not configured.
+        // Replaces the old hardcoded default of 123456 with a unique 6-digit PIN
+        // derived from ESP32 hardware RNG.
+        generate_random_ble_pin();
+
         char ble_name[32];
         strncpy(ble_name, own_name, sizeof(ble_name) - 1);
         ble_name[sizeof(ble_name) - 1] = '\0';
@@ -941,20 +984,21 @@ bool init(bool spiffs_ok)
             bleValidationStartLog();
         }
     }
-#else
-    if (CompanionBridge* b = companionBridge()) b->begin(nullptr, &g_companion_host);
-#endif
-
-    // Only broadcast advert if user has explicitly configured radio params.
-    // Compile-time defaults may be illegal in some regions — transmit gating
-    // prevents first-boot broadcasts until user opens Settings → Radio Setup.
-#if SIGURDOS_DEBUG
-    g_mesh->broadcastAdvert(own_name, sigurdos::prefs_get().advert_type);
-#else
-    if (p.configured) {
-        g_mesh->broadcastAdvert(own_name, sigurdos::prefs_get().advert_type);
+#elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
+    {
+        g_usb_serial.begin(Serial);
+        if (CompanionBridge* b = companionBridge()) {
+            b->begin(&g_usb_serial, &g_companion_host);
+            b->setEnabled(true);
+        }
     }
 #endif
+
+    // Auto-advert is now exclusively duration-limited and user-enabled:
+    // the periodic loop() handler below checks advert_duration_h and only
+    // fires adverts when the user has explicitly set a non-zero duration.
+    // No boot-time one-shot advert occurs — all advert traffic must be
+    // explicitly authorised by the user via Settings → Auto-advert.
 
     initialized = true;
 #if SIGURDOS_DEBUG_MESH
@@ -965,7 +1009,7 @@ bool init(bool spiffs_ok)
     return true;
 #else
     // Remote test without SIGURDOS_REMOTE_TEST_RADIO: init SPI bus for SD card only, no LoRa radio
-    lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
+    sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
     initialized = true;
     return true;
 #endif
@@ -986,13 +1030,13 @@ void loop()
     }
     rtc_clock.tick();
 
-    // ── Periodic auto-advert ──────────────────────────────
+    // ── Periodic auto-advert (interval in hours) ──────────
     {
         static uint32_t last_auto_adv = 0;
-        uint8_t interval = sigurdos::prefs_get().advert_interval;
-        if (interval > 0) {
+        uint16_t interval_h = sigurdos::prefs_get().advert_interval_h;
+        if (interval_h > 0) {
             uint32_t now = millis();
-            uint32_t interval_ms = (uint32_t)interval * 30000u; // half-minutes
+            uint32_t interval_ms = (uint32_t)interval_h * 3600000u; // hours to ms
             if (now - last_auto_adv >= interval_ms) {
                 last_auto_adv = now;
                 sendAdvert();
@@ -1053,18 +1097,32 @@ uint32_t sendMessage(const char* dest, const char* text) {
 
 bool sendChannelMessage(const char* channel_name, const char* text) {
     if (!g_mesh) return false;
+    bool sent = false;
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
         auto* ch = g_mesh->getChannel(i);
         if (ch && strcmp(ch->name, channel_name) == 0) {
-            bool ok = g_mesh->sendGroupText(i, text);
-            if (ok) {
+            sent = g_mesh->sendGroupText(i, text);
+            if (sent) {
                 storeOutgoingMessageForCompanion(channel_name, text, getCurrentTime(), true);
                 pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
             }
-            return ok;
+            break;
         }
     }
-    return false;
+    // Also forward the message to any logged-in room server contacts.
+    // This ensures room servers receive messages posted in their channels.
+    // Skip room servers with active permissions (> guest) — they already
+    // receive the channel flood. Only guest-level room servers need the DM fallback.
+    int n_room = getLoggedInRoomServerCount();
+    for (int ri = 0; ri < n_room; ri++) {
+        const char* room_name = getLoggedInRoomServerName(ri);
+        if (room_name && room_name[0]) {
+            if (getLoginPermission(room_name) > 0) continue;
+            uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
+            if (room_ts != 0) sent = true;
+        }
+    }
+    return sent;
 }
 
 uint32_t sendMessageWithScopeKey(const char* dest_name, const char* text, const uint8_t* key16) {
@@ -1101,7 +1159,7 @@ int exportContacts(char names[][32], int max) {
     int n = 0;
     for (int i = 0; i < g_mesh->getContactCount() && n < max; i++) {
         auto* c = g_mesh->getContact(i);
-        if (c) { strncpy(names[n], c->name, 31); names[n][31] = '\0'; n++; }
+        if (c) { strncpy(names[n], c->name, sizeof(names[n]) - 1); names[n][sizeof(names[n]) - 1] = '\0'; n++; }
     }
     return n;
 }
@@ -1184,12 +1242,12 @@ void setContactFavourite(const char* name, bool favourite) {
 
 int getChannelCount() { return g_mesh ? g_mesh->getChannelCount() : 0; }
 
-int exportChannels(char names[][32], int max) {
+int exportChannels(char names[][37], int max) {
     if (!g_mesh) return 0;
     int n = 0;
     for (int i = 0; i < g_mesh->getChannelCount() && n < max; i++) {
         auto* ch = g_mesh->getChannel(i);
-        if (ch) { strncpy(names[n], ch->name, 31); names[n][31] = '\0'; n++; }
+        if (ch) { strncpy(names[n], ch->name, sizeof(names[n]) - 1); names[n][sizeof(names[n]) - 1] = '\0'; n++; }
     }
     return n;
 }
@@ -1451,43 +1509,39 @@ const PingResult* getPingResult(int i) {
 
 void saveChannels() {
     if (!g_mesh) return;
-    Preferences nvs;
-    if (!nvs.begin("sigurdos", false)) return;
     int n = g_mesh->getChannelCount();
-    nvs.putUChar("ch_cnt", (uint8_t)n);
-    for (int i = 0; i < n; i++) {
-        auto* ch = g_mesh->getChannel(i);
-        if (!ch) continue;
-        char key[16];
-        snprintf(key, sizeof(key), "ch_%d_name", i);
-        nvs.putString(key, ch->name);
-        snprintf(key, sizeof(key), "ch_%d_sec", i);
-        nvs.putBytes(key, ch->channel.secret, sizeof(ch->channel.secret));
-        snprintf(key, sizeof(key), "ch_%d_hash", i);
-        nvs.putBytes(key, ch->channel.hash, sizeof(ch->channel.hash));
-    }
-    nvs.end();
+
+    // Channel read callback for the store
+    auto read_fn = [](int idx, char* name_out, size_t name_len,
+                      uint8_t* secret_out, size_t secret_len,
+                      uint8_t* hash_out, size_t hash_len, void* ctx) -> bool {
+        auto* mesh = static_cast<mesh_impl_t*>(ctx);
+        auto* ch = mesh->getChannel(idx);
+        if (!ch) return false;
+        strncpy(name_out, ch->name, name_len);
+        name_out[name_len - 1] = '\0';
+        memcpy(secret_out, ch->channel.secret,
+               secret_len < sizeof(ch->channel.secret) ? secret_len : sizeof(ch->channel.secret));
+        memcpy(hash_out, ch->channel.hash,
+               hash_len < sizeof(ch->channel.hash) ? hash_len : sizeof(ch->channel.hash));
+        return true;
+    };
+
+    sigurdos::mesh::channelStoreSave(n, read_fn, g_mesh);
 }
 
 void loadChannels() {
     if (!g_mesh) return;
-    Preferences nvs;
-    if (!nvs.begin("sigurdos", true)) return;
-    int n = nvs.getUChar("ch_cnt", 0);
-    for (int i = 0; i < n; i++) {
-        char key[16];
-        char name[32] = {0};
-        uint8_t secret[32] = {0};
-        uint8_t hash[32] = {0};
-        snprintf(key, sizeof(key), "ch_%d_name", i);
-        if (nvs.getString(key, name, sizeof(name)) <= 0) continue;
-        snprintf(key, sizeof(key), "ch_%d_sec", i);
-        if (nvs.getBytes(key, secret, sizeof(secret)) <= 0) continue;
-        snprintf(key, sizeof(key), "ch_%d_hash", i);
-        if (nvs.getBytes(key, hash, sizeof(hash)) <= 0) continue;
-        if (name[0]) g_mesh->loadChannel(secret, sizeof(secret), hash, name);
-    }
-    nvs.end();
+
+    // Channel load callback for the store
+    auto load_fn = [](const uint8_t* secret, size_t secret_len,
+                      const uint8_t* hash, const char* name, void* ctx) -> bool {
+        auto* mesh = static_cast<mesh_impl_t*>(ctx);
+        mesh->loadChannel(secret, secret_len, hash, name);
+        return true;  // count all successfully-decoded channels
+    };
+
+    sigurdos::mesh::channelStoreLoad(load_fn, g_mesh);
 }
 
 void saveState() {
@@ -1495,59 +1549,53 @@ void saveState() {
 }
 
 // ── Contact persistence ─────────────────────────
-static const char* CONTACTS_FILE = "/contacts";
+static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, void*)
+{
+    if (!g_mesh || !out) return false;
+    ::ContactInfo c;
+    if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+
+    memcpy(out->pub_key, c.id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
+    memcpy(out->name, c.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
+    out->type = c.type;
+    out->perm = (c.flags >> 1) & 0x03;
+    return true;
+}
+
+static bool writeStoredContact(const sigurdos::mesh::StoredContact& stored, void*)
+{
+    if (!g_mesh) return false;
+
+    ::ContactInfo c{};
+    memcpy(c.id.pub_key, stored.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
+    memcpy(c.name, stored.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
+    c.type = stored.type;
+    c.flags = (c.flags & 0x01) | ((stored.perm & 0x03) << 1);
+    c.name[31] = '\0';
+    c.out_path_len = OUT_PATH_UNKNOWN;
+    c.shared_secret_valid = false;
+    g_mesh->addContact(c);
+    return true;
+}
 
 void saveContacts() {
     if (!g_mesh) return;
-    if (!SPIFFS.begin(false)) return;
     int n = g_mesh->getNumContacts();
-    if (n <= 0) { SPIFFS.remove(CONTACTS_FILE); return; }
-
-    File f = SPIFFS.open(CONTACTS_FILE, "w");
-    if (!f) return;
-
-    // Write contact count
-    f.write((uint8_t*)&n, sizeof(n));
-
-    for (int i = 0; i < n; i++) {
-        ::ContactInfo c;
-        if (!g_mesh->getContactByIdx((uint32_t)i, c)) continue;
-        f.write(c.id.pub_key, PUB_KEY_SIZE);  // 32 bytes
-        f.write((uint8_t*)c.name, 32);         // 32 bytes
-        f.write(&c.type, 1);                    // 1 byte
-        uint8_t perm = (c.flags >> 1) & 0x03;  // extract from flags bits 1-2
-        f.write(&perm, 1);                      // perm byte
-    }
-    f.close();
+    sigurdos::mesh::contactStoreSave(n, readStoredContact, nullptr);
 }
 
 void loadContacts() {
     if (!g_mesh) return;
-    if (!SPIFFS.begin(false)) return;
-    if (!SPIFFS.exists(CONTACTS_FILE)) return;
+    sigurdos::mesh::contactStoreLoad(writeStoredContact, nullptr);
+}
 
-    File f = SPIFFS.open(CONTACTS_FILE, "r");
-    if (!f) return;
-
-    int n = 0;
-    if (f.read((uint8_t*)&n, sizeof(n)) != sizeof(n) || n <= 0) { f.close(); return; }
-
-    for (int i = 0; i < n; i++) {
-        ::ContactInfo c{};
-        if (f.read(c.id.pub_key, PUB_KEY_SIZE) != PUB_KEY_SIZE) break;
-        if (f.read((uint8_t*)c.name, 32) != 32) break;
-        if (f.read(&c.type, 1) != 1) break;
-        // Read perm byte (format: [count:4][pub_key:32][name:32][type:1][perm:1])
-        uint8_t perm_byte = 0;
-        if (f.read(&perm_byte, 1) != 1) break;
-        // Pack perm into flags bits 1-2, preserving bit 0 (favourite)
-        c.flags = (c.flags & 0x01) | ((perm_byte & 0x03) << 1);
-        c.name[31] = '\0';
-        c.out_path_len = OUT_PATH_UNKNOWN;
-        c.shared_secret_valid = false;
-        g_mesh->addContact(c);
-    }
-    f.close();
+void reloadContactsAfterIdentityChange() {
+    if (!g_mesh) return;
+    // Invalidate cached ECDH shared secrets from old identity,
+    // then reload contacts from persistent storage.
+    g_mesh->reloadContactsAfterIdentityChange();
+    loadContacts();
+    saveContacts();
 }
 
 void shutdown()
@@ -1593,6 +1641,14 @@ void factoryReset()
 
     // Reformat SPIFFS to wipe identity, contacts, and any other files
     SPIFFS.format();
+
+    // Only erase SigurdOS-owned NVS namespaces — do NOT erase the full
+    // NVS partition (which would destroy PHY calibration data, BLE bonding
+    // keys, and other ESP-IDF system state). A full NVS erase requires an
+    // explicit "deep reset" action with user confirmation.
+    //
+    // Namespace-scoped erase is already done above for 'sigurdos' and
+    // 'sigurdos_pw'. No nvs_flash_erase() here — it was too broad.
 
     // Give flash writes time to complete before restart
     delay(200);
@@ -1663,12 +1719,16 @@ bool companionBleAvailable() {
 }
 
 bool companionBleSetEnabled(bool enabled) {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    CompanionBridge* b = companionBridge();
+    if (!b || !b->setEnabled(enabled)) return false;
+#endif
+    // Only persist after successful enablement to avoid state mismatch
     sigurdos::NodePrefs p = sigurdos::prefs_get();
     p.ble_enabled = enabled;
     sigurdos::prefs_set(p);
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-    CompanionBridge* b = companionBridge();
-    return b && b->setEnabled(enabled);
+    return true;
 #else
     return false;
 #endif
@@ -2023,6 +2083,34 @@ static void urlDecode(char* str) {
     *dst = '\0';
 }
 
+// Percent-encode a string for a URL query component value.
+// Unreserved characters (A-Z a-z 0-9 - _ . ~) pass through;
+// everything else is encoded as %XX.  Returns bytes written
+// (excluding NUL), or 0 on overflow.
+static size_t urlEncode(const char* in, char* out, size_t out_sz) {
+    if (!in || !out || out_sz == 0) return 0;
+    static const char ENC_HEX[] = "0123456789ABCDEF";
+    size_t w = 0;
+    for (const char* p = in; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        bool unreserved = (c >= 'A' && c <= 'Z')
+                       || (c >= 'a' && c <= 'z')
+                       || (c >= '0' && c <= '9')
+                       || c == '-' || c == '_' || c == '.' || c == '~';
+        if (unreserved) {
+            if (w + 1 >= out_sz) return 0;
+            out[w++] = (char)c;
+        } else {
+            if (w + 3 >= out_sz) return 0;
+            out[w++] = '%';
+            out[w++] = ENC_HEX[c >> 4];
+            out[w++] = ENC_HEX[c & 0x0F];
+        }
+    }
+    out[w] = '\0';
+    return w;
+}
+
 // Minimal base64 encoder — returns output length.
 // Caller must provide out buffer sized at least ((inLen + 2) / 3) * 4 + 1.
 static int encodeBase64(const uint8_t* in, int inLen, char* out) {
@@ -2259,6 +2347,10 @@ void setSendUnscopedOnce(bool v) {
     if (g_mesh) {
         g_mesh->setSendUnscopedOnce(v);
     }
+}
+
+size_t urlEncodeQueryValue(const char* in, char* out, size_t out_sz) {
+    return urlEncode(in, out, out_sz);
 }
 
 } // namespace mesh

@@ -51,7 +51,8 @@ inline char sigurdos_keyboard_char_picker_base(uint32_t key)
 bool sigurdos_keyboard_init();
 
 // Poll the keyboard for new keypresses (call each frame).
-// Uses raw matrix mode when available, with legacy one-byte ASCII fallback.
+// Uses the C3's model-independent ASCII key mode as the primary path and brief
+// raw samples only for host-side Alt/Mic/Sym compatibility features.
 void sigurdos_keyboard_scan();
 
 // Get the key code of the last keypress (ASCII/LVGL Unicode codepoint, 0 if none)
@@ -85,6 +86,11 @@ bool sigurdos_keyboard_is_alt();
 // Useful for testing and on device wake from deep sleep.
 void sigurdos_keyboard_reset_scan_state();
 
+// Reset the static initialized flag. Used by tests to isolate
+// warm-handoff retry tests from other keyboard init tests.
+// No-op in production builds — the flag is never reset at runtime.
+void sigurdos_keyboard_reset_init_for_test();
+
 // Consume/clear the current key event (used by LVGL indev after reporting a press).
 // Prevents the same character from being fed again on the next read.
 void sigurdos_keyboard_consume_key();
@@ -96,3 +102,7 @@ void sigurdos_keyboard_inject(uint8_t key_code);
 // Inject a simulated Unicode codepoint (for tests and future remote input).
 // The display input bridge encodes non-ASCII values for LVGL textareas.
 void sigurdos_keyboard_inject_codepoint(uint32_t key_code);
+
+// Get the count of keyboard events silently overwritten when the
+// ring buffer was full. Useful for diagnostics and input stress testing.
+uint32_t sigurdos_keyboard_overwrite_count();

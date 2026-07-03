@@ -38,6 +38,8 @@ bool prefs_load(NodePrefs& p) {
     if (p.tx_power_dbm > 22) p.tx_power_dbm = 22;
     p.configured    = nvs.getBool("cfg", false);
     p.kbd_backlight = nvs.getUChar("kbd_bl", 127);
+    p.kbd_layout = nvs.getUChar("kbd_layout", 0);
+    if (p.kbd_layout >= 12) p.kbd_layout = 0;
     p.display_brightness = nvs.getUChar("disp_bl", 200);
     // Clamp recovered brightness to safe range (0 = dead screen, >240 may wrap)
     if (p.display_brightness < 20) p.display_brightness = 20;
@@ -54,12 +56,14 @@ bool prefs_load(NodePrefs& p) {
     p.direct_tx_delay_factor = nvs.getFloat("dir_tx", 1.0f);
     p.rx_boosted_gain = nvs.getBool("rx_boost", false);
     p.duty_cycle = nvs.getUChar("duty_cyc", 0);
-    p.advert_interval = nvs.getUChar("adv_int", 0);
+    p.advert_interval_h = nvs.getUShort("adv_dur", 0);
     p.advert_type = nvs.getUChar("adv_type", 1);
     p.theme_id = nvs.getUChar("theme", 0);
+    p.path_hash_mode = nvs.getUChar("phash_mode", 0);
+    if (p.path_hash_mode > 2) p.path_hash_mode = 0;  // clamp (mode 3 reserved)
     p.multi_acks = nvs.getBool("multi_ack", false);
     p.buzzer_quiet = nvs.getBool("buzz_q", false);
-    p.gps_enabled = nvs.getBool("gps_en", true);
+    p.gps_enabled = nvs.getBool("gps_en", false);
     p.gps_interval = nvs.getUShort("gps_int", 0);
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
@@ -68,18 +72,30 @@ bool prefs_load(NodePrefs& p) {
     // saved user preference still controls later boots.
     p.ble_enabled = nvs.getBool("ble_en", DEFAULT_BLE_ENABLED);
     p.device_pin = nvs.getULong("dev_pin", 0);
-    // WiFi credentials (GitHub OTA)
+    p.ble_pin = nvs.getULong("ble_pin", 0);
+    p.telemetry_modes = nvs.getUChar("tele_mod", 0);
+    p.manual_add_contacts = nvs.getUChar("man_add", 0);
+    // default scope key (hex-encoded)
+    size_t dsk_len = nvs.getString("scope_key", p.default_scope_key_hex, sizeof(p.default_scope_key_hex));
+    if (dsk_len == 0 || dsk_len > sizeof(p.default_scope_key_hex)) { p.default_scope_key_hex[0] = '\0'; }
+    else { p.default_scope_key_hex[sizeof(p.default_scope_key_hex) - 1] = '\0'; }
+    // WiFi credentials (GitHub OTA) — use getString guard matching node_name pattern
     size_t ssid_len = nvs.getString("wifi_ssid", p.wifi_ssid, sizeof(p.wifi_ssid));
-    if (ssid_len == 0) p.wifi_ssid[0] = '\0';
+    if (ssid_len == 0 || ssid_len > sizeof(p.wifi_ssid)) { p.wifi_ssid[0] = '\0'; }
+    else { p.wifi_ssid[sizeof(p.wifi_ssid) - 1] = '\0'; }
     size_t pw_len = nvs.getString("wifi_pw", p.wifi_password, sizeof(p.wifi_password));
-    if (pw_len == 0) p.wifi_password[0] = '\0';
+    if (pw_len == 0 || pw_len > sizeof(p.wifi_password)) { p.wifi_password[0] = '\0'; }
+    else { p.wifi_password[sizeof(p.wifi_password) - 1] = '\0'; }
     // Region (flood scope)
     size_t reg_len = nvs.getString("act_reg", p.active_region, sizeof(p.active_region));
-    if (reg_len == 0) p.active_region[0] = '\0';
+    if (reg_len == 0 || reg_len > sizeof(p.active_region)) { p.active_region[0] = '\0'; }
+    else { p.active_region[sizeof(p.active_region) - 1] = '\0'; }
     // OTA release channel
     size_t ota_br_len = nvs.getString("ota_br", p.ota_branch, sizeof(p.ota_branch));
-    if (ota_br_len == 0) {
+    if (ota_br_len == 0 || ota_br_len > sizeof(p.ota_branch)) {
         strncpy(p.ota_branch, "main", sizeof(p.ota_branch) - 1);
+        p.ota_branch[sizeof(p.ota_branch) - 1] = '\0';
+    } else {
         p.ota_branch[sizeof(p.ota_branch) - 1] = '\0';
     }
     p.ota_allow_prerelease = nvs.getBool("ota_pre", false);
@@ -97,9 +113,10 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putFloat("bw", p.bw);
     nvs.putUChar("sf", p.sf);
     nvs.putUChar("cr", p.cr);
-    nvs.putChar("txpwr", p.tx_power_dbm < 2 ? (int8_t)2 : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
+    nvs.putChar("txpwr", p.tx_power_dbm < -9 ? (int8_t)(-9) : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
     nvs.putBool("cfg", p.configured);
     nvs.putUChar("kbd_bl", p.kbd_backlight);
+    nvs.putUChar("kbd_layout", p.kbd_layout);
     nvs.putUChar("disp_bl", p.display_brightness);
     nvs.putUShort("auto_off", p.auto_off_timeout);
     nvs.putUShort("chat_cap", p.chat_msg_cap);
@@ -113,9 +130,10 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putFloat("dir_tx", p.direct_tx_delay_factor);
     nvs.putBool("rx_boost", p.rx_boosted_gain);
     nvs.putUChar("duty_cyc", p.duty_cycle);
-    nvs.putUChar("adv_int", p.advert_interval);
+    nvs.putUShort("adv_dur", p.advert_interval_h);
     nvs.putUChar("adv_type", p.advert_type);
     nvs.putUChar("theme", p.theme_id);
+    nvs.putUChar("phash_mode", p.path_hash_mode);
     nvs.putBool("multi_ack", p.multi_acks);
     nvs.putBool("buzz_q", p.buzzer_quiet);
     nvs.putBool("gps_en", p.gps_enabled);
@@ -125,6 +143,10 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("clirep", p.client_repeat);
     nvs.putBool("ble_en", p.ble_enabled);
     nvs.putULong("dev_pin", p.device_pin);
+    nvs.putULong("ble_pin", p.ble_pin);
+    nvs.putUChar("tele_mod", p.telemetry_modes);
+    nvs.putUChar("man_add", p.manual_add_contacts);
+    nvs.putString("scope_key", p.default_scope_key_hex);
     nvs.putString("wifi_ssid", p.wifi_ssid);
     nvs.putString("wifi_pw", p.wifi_password);
     nvs.putString("act_reg", p.active_region);
@@ -192,7 +214,7 @@ bool saveRepeaterPassword(const char* name, const char* password) {
     for (uint8_t i = 0; i < count; i++) {
         char key[10];
         makePasswordStoreKey(key, sizeof(key), "name", i);
-        char existing[32];
+        char existing[32] = {0};
         size_t len = nvs.getString(key, existing, sizeof(existing));
         if (len > 0 && strcmp(existing, name) == 0) {
             slot = i;
@@ -230,7 +252,7 @@ bool loadRepeaterPassword(const char* name, char* password, size_t max_len) {
     for (uint8_t i = 0; i < count; i++) {
         char key[10];
         makePasswordStoreKey(key, sizeof(key), "name", i);
-        char existing[32];
+        char existing[32] = {0};
         size_t len = nvs.getString(key, existing, sizeof(existing));
         if (len > 0 && strcmp(existing, name) == 0) {
             char pwkey[10];
@@ -254,7 +276,7 @@ void removeRepeaterPassword(const char* name) {
     for (uint8_t i = 0; i < count; i++) {
         char key[10];
         makePasswordStoreKey(key, sizeof(key), "name", i);
-        char existing[32];
+        char existing[32] = {0};
         size_t len = nvs.getString(key, existing, sizeof(existing));
         if (len > 0 && strcmp(existing, name) == 0) {
             char nk[10], pk[10];

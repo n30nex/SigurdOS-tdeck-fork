@@ -4,10 +4,13 @@
 // WiFi OTA implementation — WebServer-based firmware upload.
 
 #include "wifi_ota.h"
+#include "../diagnostics/log.h"
+#include "launcher_env.h"
 #include "prefs.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <esp_random.h>
 
 namespace sigurdos {
 namespace ota {
@@ -15,69 +18,31 @@ namespace ota {
 static WebServer* server = nullptr;
 static bool active = false;
 static char server_ip[16] = "";
-
-static const char OTA_HTML[] PROGMEM = R"rawliteral(
-<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SigurdOS OTA</title>
-<style>
-body{background:#0F0F0F;color:#00BFFF;font-family:monospace;text-align:center;padding:20px}
-h1{font-size:20px;margin-bottom:10px}
-input[type=file],input[type=password]{margin:20px 0;padding:10px;background:#1A1A2E;color:#00BFFF;border:2px solid #00BFFF;width:80%;max-width:300px;box-sizing:border-box}
-input[type=password]::placeholder{color:#4A4A6E}
-input[type=submit]{padding:10px 30px;background:#00BFFF;color:#0F0F0F;border:none;font-weight:bold;cursor:pointer}
-#progress{width:80%;height:20px;background:#1A1A2E;border:2px solid #00BFFF;margin:20px auto;display:none}
-#bar{width:0;height:100%;background:#00BFFF}
-#status{margin-top:10px;font-size:14px}
-#error{color:#FF4444;margin-top:10px;display:none}
-</style></head><body>
-<h1>SigurdOS Firmware Update</h1>
-<p>Enter device PIN and select firmware.bin.</p>
-<form method="POST" action="/update" enctype="multipart/form-data" id="otaform">
-<input type="password" name="pin" placeholder="Device PIN" required><br>
-<input type="file" name="firmware" accept=".bin" required><br>
-<input type="submit" value="Update">
-</form>
-<div id="progress"><div id="bar"></div></div>
-<div id="error"></div>
-<div id="status"></div>
-<script>
-document.getElementById('otaform').addEventListener('submit',function(e){
-e.preventDefault();
-var pin=document.querySelector('input[name=pin]').value;
-var file=document.querySelector('input[type=file]').files[0];
-if(!file||!pin)return;
-var formData=new FormData();
-formData.append('pin',pin);
-formData.append('firmware',file);
-var xhr=new XMLHttpRequest();
-xhr.open('POST','/update',true);
-xhr.onload=function(){
-if(xhr.status==200){
-document.getElementById('status').textContent='Update OK — rebooting...';
-}else{
-document.getElementById('error').textContent='Update FAILED: '+xhr.responseText;
-document.getElementById('error').style.display='block';
-}
-};
-xhr.onerror=function(){
-document.getElementById('error').textContent='Network error';
-document.getElementById('error').style.display='block';
-};
-xhr.send(formData);
-});
-</script></body></html>
-)rawliteral";
+static String csrf_token;  // regenerated per OTA session
 
 bool start(const char* ssid, const char* password) {
     if (active) return true;
+
+    if (sigurdos_is_under_launcher()) {
+        SIG_LOGW("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
+        return false;
+    }
+
+    // Require a device PIN — it is the only authentication on the upload
+    // endpoint. Without one, the AP-mode path below is an open network with an
+    // unauthenticated firmware-flash endpoint (#687). Refuse to start so the
+    // exposure can never be opened by default.
+    if (prefs_get().device_pin == 0) {
+        SIG_LOGW("[ota] REFUSED: no device PIN set — set a PIN before using WiFi OTA");
+        return false;
+    }
 
     IPAddress ip;
     if (wifi_sta::isConnected()) {
         // Already connected to a WiFi network — keep STA, bind on local IP
         ip = WiFi.localIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-        Serial.printf("[ota] Using STA IP: %s\n", server_ip);
+        SIG_LOGW("[ota] Using STA IP: %s", server_ip);
     } else {
         // Not connected — start AP mode
         WiFi.mode(WIFI_AP);
@@ -89,16 +54,77 @@ bool start(const char* ssid, const char* password) {
 
         ip = WiFi.softAPIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-        Serial.printf("[ota] WiFi AP started: %s @ %s\n", ssid, server_ip);
+        SIG_LOGW("[ota] WiFi AP started: %s @ %s", ssid, server_ip);
     }
 
     // Set up web server
     server = new WebServer(80);
 
-    // Root page — OTA upload form
+    // Root page — OTA upload form with CSRF token
     server->on("/", HTTP_GET, []() {
         server->sendHeader("Connection", "close");
-        server->send(200, "text/html", OTA_HTML);
+        // Regenerate CSRF token per session (ESP32 hardware RNG)
+        csrf_token = "";
+        for (int i = 0; i < 16; i++) {
+            char hex[3];
+            snprintf(hex, sizeof(hex), "%02x", (uint8_t)esp_random());
+            csrf_token += hex;
+        }
+        // Build page dynamically with embedded CSRF token
+        String html = F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>SigurdOS OTA</title>"
+            "<style>"
+            "body{background:#0F0F0F;color:#00BFFF;font-family:monospace;text-align:center;padding:20px}"
+            "h1{font-size:20px;margin-bottom:10px}"
+            "input[type=file],input[type=password]{margin:20px 0;padding:10px;background:#1A1A2E;color:#00BFFF;border:2px solid #00BFFF;width:80%;max-width:300px;box-sizing:border-box}"
+            "input[type=password]::placeholder{color:#4A4A6E}"
+            "input[type=submit]{padding:10px 30px;background:#00BFFF;color:#0F0F0F;border:none;font-weight:bold;cursor:pointer}"
+            "#progress{width:80%;height:20px;background:#1A1A2E;border:2px solid #00BFFF;margin:20px auto;display:none}"
+            "#bar{width:0;height:100%;background:#00BFFF}"
+            "#status{margin-top:10px;font-size:14px}"
+            "#error{color:#FF4444;margin-top:10px;display:none}"
+            "</style></head><body>"
+            "<h1>SigurdOS Firmware Update</h1>"
+            "<p>Enter device PIN and select firmware.bin.</p>"
+            "<form method=\"POST\" action=\"/update\" enctype=\"multipart/form-data\" id=\"otaform\">");
+        html += F("<input type=\"hidden\" name=\"csrf\" value=\"");
+        html += csrf_token;
+        html += F("\">"
+            "<input type=\"password\" name=\"pin\" placeholder=\"Device PIN\" required><br>"
+            "<input type=\"file\" name=\"firmware\" accept=\".bin\" required><br>"
+            "<input type=\"submit\" value=\"Update\">"
+            "</form>"
+            "<div id=\"progress\"><div id=\"bar\"></div></div>"
+            "<div id=\"error\"></div>"
+            "<div id=\"status\"></div>"
+            "<script>"
+            "document.getElementById('otaform').addEventListener('submit',function(e){"
+            "e.preventDefault();"
+            "var pin=document.querySelector('input[name=pin]').value;"
+            "var file=document.querySelector('input[type=file]').files[0];"
+            "if(!file||!pin)return;"
+            "var formData=new FormData();"
+            "formData.append('pin',pin);"
+            "formData.append('csrf',document.querySelector('input[name=csrf]').value);"
+            "formData.append('firmware',file);"
+            "var xhr=new XMLHttpRequest();"
+            "xhr.open('POST','/update',true);"
+            "xhr.onload=function(){"
+            "if(xhr.status==200){"
+            "document.getElementById('status').textContent='Update OK — rebooting...';"
+            "}else{"
+            "document.getElementById('error').textContent='Update FAILED: '+xhr.responseText;"
+            "document.getElementById('error').style.display='block';"
+            "}};"
+            "xhr.onerror=function(){"
+            "document.getElementById('error').textContent='Network error';"
+            "document.getElementById('error').style.display='block';"
+            "};"
+            "xhr.send(formData);"
+            "});"
+            "</script></body></html>");
+        server->send(200, "text/html", html);
     });
 
     // Firmware upload handler
@@ -121,37 +147,41 @@ bool start(const char* ssid, const char* password) {
                 // Validate device PIN before accepting upload
                 const NodePrefs& p = prefs_get();
                 String pin_arg = server->arg("pin");
-                bool pin_valid = false;
-                if (p.device_pin != 0 && pin_arg.length() > 0) {
-                    pin_valid = ((uint32_t)pin_arg.toInt() == p.device_pin);
-                } else if (p.device_pin == 0) {
-                    // No PIN configured — accept upload (PIN field is ignored)
-                    pin_valid = true;
+                // CSRF token must match the token served with the form
+                String csrf_arg = server->arg("csrf");
+                if (csrf_arg.length() == 0 || csrf_arg != csrf_token) {
+                    SIG_LOGW("[ota] Upload rejected: invalid CSRF token");
+                    Update.abort();
+                    return;
                 }
+                // A PIN is mandatory: start() refuses to run without one, so
+                // device_pin is always non-zero here. Treat a missing/zero PIN
+                // as unauthenticated rather than silently accepting (#687).
+                bool pin_valid = otaPinAccepts(p.device_pin, pin_arg.c_str());
                 if (!pin_valid) {
-                    Serial.printf("[ota] Upload rejected: invalid PIN\n");
+                    SIG_LOGW("[ota] Upload rejected: invalid PIN");
                     // Reject by setting a zero-length update so the write/end
                     // callbacks become no-ops. The completion handler will
                     // report the error.
                     Update.abort();
                     return;
                 }
-                Serial.printf("[ota] Update start: %s (%u bytes)\n",
-                              upload.filename.c_str(), upload.totalSize);
+                SIG_LOGD("[ota] Update start: %s (%u bytes)",
+                         upload.filename.c_str(), upload.totalSize);
                 if (!Update.begin(upload.totalSize)) {
-                    Serial.printf("[ota] Update.begin failed: %s\n", Update.errorString());
+                    SIG_LOGW("[ota] Update.begin failed: %s", Update.errorString());
                     Update.printError(Serial);
                 }
             } else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-                    Serial.printf("[ota] Update.write failed: %s\n", Update.errorString());
+                    SIG_LOGW("[ota] Update.write failed: %s", Update.errorString());
                     Update.printError(Serial);
                 }
             } else if (upload.status == UPLOAD_FILE_END) {
                 if (Update.end(true)) {
-                    Serial.printf("[ota] Update success: %u bytes\n", upload.totalSize);
+                    SIG_LOGW("[ota] Update success: %u bytes", upload.totalSize);
                 } else {
-                    Serial.printf("[ota] Update.end failed: %s\n", Update.errorString());
+                    SIG_LOGW("[ota] Update.end failed: %s", Update.errorString());
                     Update.printError(Serial);
                 }
             }
@@ -255,7 +285,7 @@ void beginConnect(const char* ssid, const char* password) {
     s_conn_start = millis();
     s_connected = false;
     s_rssi = 0;
-    Serial.printf("[wifi-sta] connecting to %s...\n", ssid);
+    SIG_LOGD("[wifi-sta] connecting to %s...", ssid);
 }
 
 Status getStatus() {
@@ -265,7 +295,7 @@ Status getStatus() {
         s_status = Status::Connected;
         s_connected = true;
         s_rssi = WiFi.RSSI();
-        Serial.printf("[wifi-sta] connected! (%d dBm)\n", s_rssi);
+        SIG_LOGD("[wifi-sta] connected! (%d dBm)", s_rssi);
         return Status::Connected;
     }
 
@@ -276,37 +306,11 @@ Status getStatus() {
         s_status = Status::Failed;
         s_connected = false;
         s_rssi = 0;
-        Serial.printf("[wifi-sta] connection timed out\n");
+        SIG_LOGW("[wifi-sta] connection timed out");
         return Status::Failed;
     }
 
     return Status::Connecting;
-}
-
-bool connect(const char* ssid, const char* password) {
-    if (!ssid || !ssid[0]) return false;
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-
-    // Wait up to 15 seconds for connection
-    unsigned long start = millis();
-    while (millis() - start < 15000) {
-        if (WiFi.status() == WL_CONNECTED) {
-            s_connected = true;
-            s_rssi = WiFi.RSSI();
-            Serial.printf("[wifi-sta] connected to %s (%d dBm)\n", ssid, s_rssi);
-            return true;
-        }
-        delay(200);
-    }
-
-    WiFi.disconnect();
-    WiFi.mode(WIFI_OFF);
-    s_connected = false;
-    s_rssi = 0;
-    Serial.printf("[wifi-sta] failed to connect to %s\n", ssid);
-    return false;
 }
 
 void disconnect() {
@@ -352,13 +356,13 @@ void loop() {
         s_connected = true;
         s_rssi = WiFi.RSSI();
         s_status = Status::Connected;
-        Serial.printf("[wifi-sta] reconnected externally (%d dBm)\n", s_rssi);
+        SIG_LOGD("[wifi-sta] reconnected externally (%d dBm)", s_rssi);
     } else if (!hw && (s_connected || s_status == Status::Connected)) {
         // Was connected, now not.
         s_connected = false;
         s_rssi = 0;
         s_status = Status::Idle;
-        Serial.printf("[wifi-sta] disconnected\n");
+        SIG_LOGW("[wifi-sta] disconnected");
     }
 
     // ── Auto-reconnect ──────────────────────────────────────
@@ -370,8 +374,8 @@ void loop() {
             last_reconnect = millis();
             const NodePrefs& p = sigurdos::prefs_get();
             if (p.wifi_ssid[0]) {
-                Serial.printf("[wifi-sta] auto-reconnecting to %s...\n",
-                              p.wifi_ssid);
+                SIG_LOGD("[wifi-sta] auto-reconnecting to %s...",
+                         p.wifi_ssid);
                 beginConnect(p.wifi_ssid, p.wifi_password);
             }
         }

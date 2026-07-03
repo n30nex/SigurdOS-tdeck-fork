@@ -18,6 +18,7 @@
 
 
 #include "touch.h"
+#include "i2c_bus.h"
 #include "tdeck_pins.h"
 #include <Wire.h>
 #include <Arduino.h>
@@ -28,8 +29,8 @@
 // ════════════════════════════════════════════════════════
 // GT911 Register Constants
 // ════════════════════════════════════════════════════════
-static constexpr uint8_t  GT911_ADDR1          = 0x5D;   // primary I2C addr
-static constexpr uint8_t  GT911_ADDR2          = 0x14;   // alternate
+static constexpr uint8_t  GT911_ADDR1          = sigurdos::i2c::TOUCH_ADDR_PRIMARY;
+static constexpr uint8_t  GT911_ADDR2          = sigurdos::i2c::TOUCH_ADDR_ALTERNATE;
 static constexpr uint16_t GT911_REG_CONFIG     = 0x8047;
 static constexpr uint16_t GT911_REG_STATUS     = 0x814E;
 static constexpr int      GT911_MAX_POINTS     = (int)SIGURDOS_TOUCH_GT911_MAX_POINTS;
@@ -40,11 +41,14 @@ static constexpr uint32_t GT911_POLL_INTERVAL  = 10;     // ms between full scan
 // ── State ────────────────────────────────────────────────
 static uint8_t  i2c_addr       = GT911_ADDR1;
 static bool     initialized    = false;
+static bool     init_attempted = false;
 static int      last_x         = -1;
 static int      last_y         = -1;
 static bool     pressed        = false;
 static uint32_t last_poll      = 0;
 static bool     was_pressed     = false;   // for edge detection
+static int      touch_i2c_errors = 0;   // consecutive I2C read failures
+static constexpr int TOUCH_MAX_CONSECUTIVE_ERRORS = 5;
 
 // ── Helpers ───────────────────────────────────────────────
 static bool i2c_write_reg(uint16_t reg, uint8_t val)
@@ -72,7 +76,14 @@ static bool i2c_read_bytes(uint16_t reg, uint8_t* out, size_t len)
     Wire.write(reg & 0xFF);
     if (Wire.endTransmission(false) != 0) return false;
 
-    Wire.requestFrom(i2c_addr, len);
+    const size_t received = Wire.requestFrom(i2c_addr, len);
+    if (received != len) {
+#if defined(SIGURDOS_DEBUG)
+        Serial.printf("[touch] I2C read 0x%04X: %u/%u bytes\n",
+                      reg, (unsigned)received, (unsigned)len);
+#endif
+        return false;
+    }
     if (Wire.available() < (int)len) return false;
 
     for (size_t i = 0; i < len; i++) {
@@ -84,8 +95,7 @@ static bool i2c_read_bytes(uint16_t reg, uint8_t* out, size_t len)
 // ── Probe I2C bus ─────────────────────────────────────────
 static bool probe_i2c(uint8_t addr)
 {
-    Wire.beginTransmission(addr);
-    return Wire.endTransmission() == 0;
+    return sigurdos::i2c::probe_target(addr);
 }
 
 // ── Reset GT911 via INT pin ───────────────────────────────
@@ -106,10 +116,13 @@ static void gt911_reset()
 bool sigurdos_touch_init()
 {
     if (initialized) return true;
+    if (init_attempted) return false;
+    init_attempted = true;
 
-    // I2C bus is already initialized by TDeckBoard::begin()
-    // with correct pins and 400kHz clock
-    Wire.setClock(400000);  // GT911 supports 400 kHz
+    // TDeckBoard::begin() normally applies this once. Reassert it here so the
+    // driver contract remains safe in isolation and after Launcher handoff.
+    sigurdos::i2c::configure_runtime();
+    // Initialize GT911 with correct pins
 
     // Configure INT pin
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
@@ -161,6 +174,14 @@ bool sigurdos_touch_init()
     return true;
 }
 
+void sigurdos_touch_reset_init_for_test()
+{
+    initialized = false;
+    init_attempted = false;
+    i2c_addr = GT911_ADDR1;
+    touch_i2c_errors = 0;
+}
+
 void sigurdos_touch_loop()
 {
     if (!initialized) return;
@@ -169,9 +190,7 @@ void sigurdos_touch_loop()
     if (now - last_poll < GT911_POLL_INTERVAL) return;
     last_poll = now;
 
-    // Ensure I2C clock is 400kHz for GT911 touch controller
-    // (keyboard scan may have set it to 100kHz)
-    Wire.setClock(400000);
+    // I2C clock is set once at init (200kHz compromise for shared bus)
 
     // Check INT pin — GT911 pulls it LOW when new data is ready.
     // When HIGH, there may be no new data, but the GT911 can buffer
@@ -197,8 +216,14 @@ void sigurdos_touch_loop()
     // Read status register
     uint8_t status = 0;
     if (!i2c_read_bytes(GT911_REG_STATUS, &status, 1)) {
+        touch_i2c_errors++;
+        if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) {
+            // Touch controller may need re-init — clear stale state
+            if (pressed) { pressed = false; was_pressed = true; }
+        }
         return;
     }
+    touch_i2c_errors = 0;  // successful read, reset error counter
 
     // Bit 7 = buffer status (1 = ready, 0 = no data)
     if (!(status & 0x80)) return;
@@ -217,6 +242,12 @@ void sigurdos_touch_loop()
     // Read touch point data (all 5 points, 8 bytes each = 40 bytes)
     static uint8_t point_data[GT911_MAX_POINTS * GT911_POINT_SIZE];  // static avoids repeated stack alloc
     if (!i2c_read_bytes(GT911_REG_STATUS + 1, point_data, sizeof(point_data))) {
+        touch_i2c_errors++;
+        // Clear status to acknowledge even on partial read failure
+        i2c_write_reg(GT911_REG_STATUS, 0);
+        if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS && pressed) {
+            pressed = false; was_pressed = true;
+        }
         return;
     }
 

@@ -26,6 +26,8 @@
 #endif
 #ifdef SIGURDOS_TDECK
 #include "tdeck_pins.h"
+#include "battery.h"
+#include "i2c_bus.h"
 #include <helpers/ESP32Board.h>
 #endif
 
@@ -57,8 +59,7 @@ public:
         pinMode(PIN_PERIPH_PWR, OUTPUT);
         digitalWrite(PIN_PERIPH_PWR, HIGH);
 
-        // Trackball button as input (T-Deck has external pull-up on GPIO 0)
-        pinMode(PIN_TRACKBALL, INPUT);
+        // Trackball button as input with internal pull-up (GPIO 0 shared with BOOT)\n        pinMode(PIN_TRACKBALL, INPUT_PULLUP);
 
         // LoRa DIO1 pullup
         pinMode(PIN_LORA_DIO1, INPUT_PULLUP);
@@ -67,8 +68,9 @@ public:
         analogReadResolution(12);
         adcAttachPin(PIN_BAT_ADC);
 
-        // I2C for touch / RTC
-        Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
+        // Recover before Wire owns the pins, then start the shared bus with a
+        // bounded transaction timeout for touch and keyboard traffic.
+        i2c::begin();
 
         // Detect wake from deep sleep (matches MeshCore TDeckBoard pattern)
         esp_reset_reason_t reason = esp_reset_reason();
@@ -94,12 +96,9 @@ public:
     }
 
     uint16_t getBattMilliVolts() override {
-        uint32_t raw = 0;
-        for (int i = 0; i < 8; i++) {
-            raw += analogRead(PIN_BAT_ADC);
-        }
-        raw /= 8;
-        return (uint16_t)((BAT_ADC_MULT * (float)raw) / 4096.0f);
+        // Delegate to sigurdos_battery_mv() for consistent efuse-calibrated
+        // ADC reading. Previously had duplicated analogReadMilliVolts logic.
+        return sigurdos_battery_mv();
     }
 
     float getMCUTemperature() override {

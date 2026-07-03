@@ -31,9 +31,16 @@ namespace mesh {
 // path-length byte through to the companion bridge so the phone app shows the
 // correct time and hop count. Defaults (0 / 0xFF) suit callers without a packet:
 // the timestamp falls back to the local clock and 0xFF means "direct/unknown".
+// sender_prefix (6 bytes) is the exact pubkey prefix from packet metadata —
+// null falls back to a name-based lookup. txt_type, extra, and extra_len
+// preserve the MeshCore companion text type and signed-message extra.
 void mesh_v2_queue_push(const char* sender, const char* channel,
                          const char* text, int rssi, float snr,
-                         uint32_t sender_timestamp = 0, uint8_t path_len = 0xFF);
+                         uint32_t sender_timestamp = 0, uint8_t path_len = 0xFF,
+                         const uint8_t* sender_prefix = nullptr,
+                         uint8_t txt_type = 0,
+                         const uint8_t* extra = nullptr,
+                         uint8_t extra_len = 0);
 
 // Forwards a delivery ACK to the companion bridge so the phone app marks a
 // message it sent (via the device) as confirmed. ack is the 4-byte ACK hash the
@@ -115,7 +122,7 @@ bool isContactFavourite(const char* name);
 void setContactFavourite(const char* name, bool favourite);
 
 int  getChannelCount();
-int  exportChannels(char names[][32], int max);
+int  exportChannels(char names[][37], int max);
 bool addChannel(const char* name, const char* psk_base64);
 bool addHashtagChannel(const char* name);
 bool joinPublicChannel();
@@ -155,6 +162,7 @@ uint32_t companionBlePin();
 // ── Contact persistence ─────────────────────────
 void saveContacts();
 void loadContacts();
+void reloadContactsAfterIdentityChange();  // after private key import
 
 // RTC time for UI comparisons
 uint32_t getCurrentTime();
@@ -236,6 +244,17 @@ bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,
                           char* channel_out, int channel_sz,
                           uint32_t* timestamp_out);
 void clearRoomMsgFetch();
+
+// Send a text message to a room server contact as a peer TXT_MSG.
+// Returns the timestamp used for ACK tracking, or 0 on failure.
+uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text);
+
+// Count room server contacts that are currently logged in.
+int getLoggedInRoomServerCount();
+
+// Get the name of a logged-in room server contact by index (0..count-1).
+// Returns the contact name or empty string if not found.
+const char* getLoggedInRoomServerName(int index);
 
 // ── Status request (Phase 4.2) ────────────────
 #define NODE_STATUS_RESPONSE_SIZE  56  // size of RepeaterStats binary blob
@@ -422,6 +441,11 @@ const char* getActiveRegion();
 
 // Temporarily send the next message unscoped (resets after one use).
 void setSendUnscopedOnce(bool v);
+
+// Percent-encode a string for a URL query-component value.
+// Returns bytes written (excluding NUL), or 0 on overflow.
+// Worst case: every byte becomes %XX (3x expansion + NUL).
+size_t urlEncodeQueryValue(const char* in, char* out, size_t out_sz);
 
 } // namespace mesh
 } // namespace sigurdos

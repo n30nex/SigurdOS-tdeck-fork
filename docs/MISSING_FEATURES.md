@@ -154,7 +154,7 @@ struct SigurdRegion {
 ### Design decisions (call these out in the PR)
 
 - **Adverts & path-returns:** adverts stay **unscoped** (discovery must cross regions). Return-path replies and ACKs ride through `sendFloodScoped`, so they inherit the active scope — consistent with upstream `MyMesh`.
-- **`path_hash_mode`:** upstream passes `_prefs.path_hash_mode + 1` as `path_hash_size`. SigurdOS uses the default `1` everywhere today; keep `path_hash_size = 1` unless/until a `path_hash_mode` pref is also added (out of scope here).
+- **`path_hash_mode`:** implemented. `NodePrefs.path_hash_mode` (0/1/2 → 1/2/3-byte path hash) is passed as `_prefs.path_hash_mode + 1` to `sendFlood()` for originated adverts and messages via `SigurdMeshV2::sendScopedImpl()` (matching upstream `MyMesh::sendFloodScoped`). Default is `0` (1 byte) for pre-1.14 repeater compatibility; configurable in Settings → Radio Setup and over the companion protocol (`CMD_SET_PATH_HASH_MODE`).
 - **Opt-in:** empty `active_region` ⇒ wildcard flood ⇒ byte-identical to current firmware. No silent behaviour change.
 - **Private key entry:** validate decoded length is exactly 16 bytes; reject otherwise. Never log raw keys (debug builds).
 
@@ -311,11 +311,22 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 
 ---
 
-### Launcher compatibility — M
+### Launcher compatibility — M → ✅
 
-A niche build target for running under `bmorcelli/Launcher`. Not relevant to the standalone companion experience. (See `KNOWN_ISSUES.md`.)
+Implemented. SigurdOS can be installed as an app under [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) v2.7.2+.
 
-*(No MeshCore reference — local build/HAL.)*
+**Delivered:**
+- Launcher install via `SigurdOS-tdeck-launcher.bin` (byte-identical to `firmware-merged.bin`)
+- Runtime Launcher detection (C3) — gates self-OTA to prevent flash corruption
+- Boot-time diagnostics (C5) — warns about app-only install persistence
+- Documentation (C2/C7) — install guide and migration caveats in `firmware/README.md`
+- CI artifact (C1) — `SigurdOS-tdeck-launcher.bin` in every release
+
+**Remaining work (Phase 3 — requires bench hardware):**
+- Warm-handoff peripheral-state root cause (RC3) and keyboard-init hardening (C6)
+- LauncherHub catalog listing (O1)
+
+See [`docs/LAUNCHER_ROADMAP.md`](LAUNCHER_ROADMAP.md) and [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md).
 
 ---
 

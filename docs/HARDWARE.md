@@ -93,13 +93,19 @@ The GT911 touch controller and keyboard MCU share a single I2C bus on pins 18
 
 | Device     | Address | Speed       | Driver     |
 |------------|---------|-------------|------------|
-| Touch      | 0x5D    | 400 kHz     | GT911      |
-| Keyboard   | 0x55    | 100 kHz     | ESP32-C3   |
+| Touch      | 0x5D / 0x14 | 400 kHz | GT911      |
+| Keyboard   | 0x55    | 400 kHz     | ESP32-C3   |
 
-> **Clock contention:** Each driver re-asserts its preferred clock speed before
-> every transaction (`Wire.setClock(...)`) because the other device changes it.
-> Touch `loop()` calls `Wire.setClock(400000)`; keyboard `scan()` calls
-> `Wire.setClock(100000)`.
+`TDeckBoard::begin()` recovers the lines before `Wire.begin()`, then owns shared
+bus setup at 400 kHz with a 20 ms transaction timeout. Recovery releases SCL as
+open drain for at most nine clocks and emits a STOP only after SDA is released;
+it never bit-bangs pins while the Wire controller is active. Startup is
+process-wide idempotent because the application and mesh layer each own a
+`TDeckBoard`; the second call only reasserts the clock and timeout.
+
+Discovery is deliberately limited to keyboard `0x55` and GT911 `0x5D`/`0x14`.
+There is no full-address scan. Touch and keyboard cache their first completed
+initialization result, avoiding repeated probes after a confirmed failure.
 
 ---
 
@@ -207,10 +213,10 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 
 ### Init Sequence
 
-1. Set I2C clock to 400 kHz
+1. Reassert the shared 400 kHz clock and 20 ms timeout
 2. Configure INT pin as `INPUT_PULLUP`
 3. Hardware reset via INT: LOW (1 ms) → HIGH (10 ms) → INPUT_PULLUP
-4. Probe both addresses (0x5D, then 0x14)
+4. Probe only the two valid GT911 addresses (0x5D, then 0x14)
 5. Read config (186 bytes) from register `0x8047` and write it back
 6. Clear status register `0x814E`
 
@@ -232,10 +238,10 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 | Main MCU           | ESP32-S3 (I2C master)         |
 | Interface          | I2C (shared bus)              |
 | I2C Address        | **0x55**                      |
-| Bus Speed          | **100 kHz**                   |
+| Bus Speed          | **400 kHz** (shared with touch) |
 | Protocol           | LilyGo T-Deck Keyboard_ESP32C3 (MIT) |
-| Operating Mode     | **Raw mode** (bitmask per column) |
-| Key mode           | Legacy fallback (ASCII)       |
+| Operating Mode     | **Key mode** (pre-decoded ASCII) |
+| Raw mode           | 20 ms modifier-only sampler   |
 | Poll Interval      | 5 ms                          |
 | Backlight Default  | 127 (mid-brightness)          |
 | Matrix             | 5 columns × 7 rows            |
@@ -251,8 +257,7 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 
 ### I2C Read (Master ← Slave)
 
-- Raw mode: `Wire.requestFrom(0x55, 5)` returns one 7-bit row mask per column.
-- Legacy key mode: `Wire.requestFrom(0x55, 1)` returns one byte:
+- Key mode (primary): `Wire.requestFrom(0x55, 1)` returns one byte:
 
 | Value          | Meaning                        |
 |----------------|--------------------------------|
@@ -262,6 +267,11 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 | `0x09`         | Tab                            |
 | `0x0C`         | Channel-menu shortcut event    |
 | `0x20`–`0x7E`  | ASCII printable character      |
+
+- Raw mode (compatibility sample): `Wire.requestFrom(0x55, 5)` returns one
+  7-bit row mask per column. The host enters this mode briefly after each ASCII
+  byte and every 20 ms for modifier-only taps, then immediately restores key
+  mode.
 
 ### Key Matrix (5 × 7)
 
@@ -276,14 +286,34 @@ Row5   SPC      z        c        n        m
 Row6   Mic      LShift   f        j        k
 ```
 
-### Host Raw-Mode Key Layers
+### Host Compatibility Key Layers
 
-- `Sym` opens the symbol layer; tapping `Sym` arms it for one key.
+- Normal characters, Shift, and held `Sym` are decoded by the keyboard MCU,
+  so physical matrix differences between T-Deck models stay inside the C3.
+- Raw samples preserve the host-only layers without decoding ordinary keys
+  from the model-specific matrix.
+- Tapping `Sym` arms it for one key; Shift+Sym output is repaired for the
+  published C3 firmware's ASCII subtraction behavior.
 - `Alt` opens an on-screen character picker for the pressed base key; tapping
   `Alt` arms the picker for one key.
 - `Mic` is a fast extended-character alias for common accented characters.
 - `Alt+Space` emits the channel-menu shortcut event (`0x0C`).
 - `Alt+B` remains handled by the keyboard MCU for backlight toggling.
+- Each key-mode byte is paired with a raw modifier sample, preventing a chord
+  from producing both its base character and transformed character.
+
+### International Layouts
+
+- The active physical-key layout is stored in NVS as `kbd_layout` and restored
+  when input initializes.
+- Double-tapping Space in the same text field within 250 ms removes the first
+  space, cycles to the next layout, and briefly shows its two-letter code.
+- Available layouts, in cycle order: EN, BG, RU, UK, SR, EL, AR, FR, NL, DE,
+  ES, IT.
+- Mappings are inserted as complete UTF-8 strings, including multi-codepoint
+  entries such as Arabic lam-alef and Dutch `ij`.
+- The LVGL font fallback includes Greek, Cyrillic, Arabic, and contextual Arabic
+  presentation forms. Bidi ordering and Arabic shaping are enabled globally.
 
 ### Backlight Control
 
@@ -298,17 +328,20 @@ Row6   Mic      LShift   f        j        k
 
 ### Init Sequence
 
-1. Set I2C clock to 100 kHz
-2. Probe: request 1 byte from address 0x55 (must ACK)
-3. Send `CMD_BRIGHTNESS` (0x01) with stored value
-4. Send `CMD_DEFAULT_BRIGHTNESS` (0x02) with min(30) clamping
-5. Send `CMD_MODE_RAW` (0x03) to expose Sym, Shift, Alt, and Mic layers
+1. Reassert the shared 400 kHz clock and 20 ms timeout
+2. Probe only address 0x55, with up to eight 100 ms-spaced cold-boot attempts
+3. Request 1 byte after selecting key mode to confirm the C3 is ready
+4. Send `CMD_BRIGHTNESS` (0x01) with stored value
+5. Send `CMD_DEFAULT_BRIGHTNESS` (0x02) with min(30) clamping
+6. Send `CMD_MODE_KEY` (0x04) and keep it as the primary operating mode
+7. During polling, use bounded `CMD_MODE_RAW` (0x03) samples for Alt/Mic/Sym,
+   then restore `CMD_MODE_KEY` before the next ASCII read
 
 ### Known Limitations
 
 - Ctrl state is not available from the current keyboard matrix.
-- Legacy key-mode fallback has best-effort modifier state only because the MCU
-  sends pre-processed ASCII bytes instead of raw scancodes.
+- C3 firmware without raw-mode commands remains usable in key-only mode, but
+  cannot expose the host-side Alt/Mic/Sym one-shot extensions.
 
 ---
 
@@ -363,9 +396,11 @@ Row6   Mic      LShift   f        j        k
 
 ### Voltage Calculation
 
+The driver uses `analogReadMilliVolts()` (efuse-calibrated) and compensates
+for the 2x voltage divider:
+
 ```c
-raw_adc = analogRead(PIN_BAT_ADC);         // 0–4095
-voltage_mv = (6600.0f * raw_adc) / 4096.0f; // 2× divider compensation
+voltage_mv = analogReadMilliVolts(PIN_BAT_ADC) * 2;  // efuse-calibrated, 2x divider
 ```
 
 ### Battery Percentage
@@ -443,7 +478,7 @@ pct = ((mv - 3000) * 100) / (4200 - 3000);
 | SPI Speed          | **4 MHz** (`SD.begin(..., 4000000)`) |
 | Filesystem         | FATFS via Arduino SD library     |
 | VFS Mountpoint     | **`/sdcard`** (`SIGURDOS_SD_MOUNTPOINT`) |
-| Init Retries       | 3 attempts, 500 ms apart         |
+| Init Strategy     | Single attempt at boot (`sigurdos_sdcard_init()`) + lazy retry<br>via `sigurdos_sdcard_retry()` capped at 3 total attempts |
 | Capacity           | Exposed via `sigurdos_sdcard_capacity_bytes()` |
 
 ### Shared Bus Note
@@ -456,15 +491,21 @@ with the shared pins; the other drivers manage their own bus configuration.
 ### Init Order
 
 SD card must be initialised **after** the LoRa radio, because the LoRa/SPI init
-(`mesh::init()`) sets up the shared bus pins and calls `lora_spi.begin()`.
+(`mesh::init()`) sets up the shared bus pins and calls `sigurdos_shared_spi_begin()`.
 If the SD card is initialised first with unconfigured pins, FATFS returns
 `FR_NOT_READY`.
+
+`sigurdos_sdcard_init()` makes only a **single attempt** at boot for fast startup.
+Consumers (e.g., the map renderer) call **`sigurdos_sdcard_retry()`** lazily when
+they need the card. The retry is capped at 3 total attempts to avoid unbounded
+re-probing of a broken or absent card.
 
 ### API
 
 | Function                             | Purpose                   |
 |--------------------------------------|---------------------------|
-| `sigurdos_sdcard_init()`              | Mount SD card (3 retries) |
+| `sigurdos_sdcard_init()`              | Mount SD card (single attempt, fast boot) |
+| `sigurdos_sdcard_retry()`             | Lazy retry (capped at 3), called by consumers |
 | `sigurdos_sdcard_mounted()`           | Check mount status        |
 | `sigurdos_sdcard_capacity_bytes()`    | Total card capacity       |
 | `sigurdos_sdcard_free_bytes()`        | Free space                |
@@ -535,8 +576,8 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 1. **Hard reset SX1262** via RST pin: LOW 100 µs → HIGH, then wait 10 ms for
    TCXO stabilisation. This prevents bootloop if BUSY is stuck HIGH from a
    previous crash.
-2. Initialise SPI bus via `lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)`
-3. Call `radio_module.std_init(&lora_spi)`
+2. Initialise SPI bus via `sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)`
+3. Call `radio_module.std_init(&sigurdos_shared_spi())`
 4. Apply radio parameters: `setFrequency`, `setBandwidth`, `setSpreadingFactor`,
    `setCodingRate`, `setOutputPower`
 
@@ -553,11 +594,23 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 | Property | Value              |
 |----------|--------------------|
 | Pin      | **46**             |
-| Type     | Active-low buzzer  |
-| Default  | HIGH (off)         |
+| Type     | Active-high buzzer (GPIO output - no PWM tone generation) |
+| Default  | LOW (off)          |
 
-> The buzzer is driven as a simple GPIO output. Pull LOW to activate, HIGH to
-> silence. No PWM tone generation is implemented in the current firmware.
+> The buzzer is driven as a GPIO output - no PWM tone generation is implemented.
+> **Non-blocking loop-driven playback:** `buzzer_loop()` is called once per
+> main-loop iteration (`main.cpp:189`) and advances through the active pattern's
+> step table (`src/hal/buzzer.h`). Each `BuzzerPatternStep` has a `level_high`
+> (bool) and `duration_ms` field. Steps with `duration_ms = 0` are terminal
+> markers that apply the level and then idle LOW until the next pattern starts.
+> Starting a new beep while one is playing replaces it immediately (restart
+> semantics — no overlap occurs as only the message-arrival path in `ui.cpp`
+> triggers beeps). A `buzzer_quiet` preference in `NodePrefs` mutes
+> message-arrival beeps.
+
+> **API:** `buzzer_init()` configures the GPIO; `buzzer_beep_short()` triggers
+> a ~100 ms pulse (DM arrival); `buzzer_beep_double()` fires two 60 ms pulses
+> 60 ms apart (channel message arrival); `buzzer_loop()` advances playback.
 
 ---
 
@@ -607,33 +660,72 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
 ## Appendix A — Boot Sequence
 
+Numbers in brackets are the `[boot] step N` markers printed by debug builds.
+The splash screen shows a status label updated by `boot_status()`, which calls
+`sigurdos::ui::set_boot_status(...)` and flushes the display after each step.
+
 ```
-1. Serial.begin(115200)
-2. TDeckBoard::begin()
-     → PIN_PERIPH_PWR HIGH
-     → Trackball GPIO INPUT
-     → LoRa DIO1 INPUT_PULLUP
-     → ADC resolution 12-bit
-     → Wire.begin(18, 8)
-     → Deep sleep wake detection
-3. sigurdos_battery_init()
-4. SPIFFS.begin()
-5. sigurdos_gps_init()
-6. sigurdos_display_init()
-     → LovyanGFX init (rotation 1, 320×240)
-     → LVGL init
-     → Touch init (GT911 I2C)
-     → Keyboard init (ESP32-C3 I2C)
-     → Trackball init (GPIO)
-7. sigurdos::mesh::init()
-     → LoRa SPI bus init
-     → SX1262 hard reset + std_init
-     → Radio config from prefs or defaults
-     → MeshCore SigurdMeshV2 init
-8. sigurdos::ui::init()
-9. sigurdos_sdcard_init()
-10. sigurdos_map_init()
+ 1. Serial.begin(115200)                 [step 1]
+ 2. TDeckBoard::begin()                  [step 2]
+      → PIN_PERIPH_PWR HIGH
+      → Trackball GPIO INPUT
+      → LoRa DIO1 INPUT_PULLUP
+      → ADC resolution 12-bit
+      → Wire.begin(18, 8)
+      → Deep sleep wake detection
+ 3. sigurdos_battery_init() + buzzer_init()
+ 4. sigurdos_display_init()              [step 3]  ◄─ moved BEFORE SPIFFS/GPS
+      → LovyanGFX init (rotation 1, 320×240)
+      → LVGL init
+      → Draw-buffer alloc (PSRAM or DRAM)
+      → On failure: restart (no hang)
+ 5. sigurdos::ui::init()                 [step 4]
+      → Splash screen with status label
+      → boot_status("Starting SigurdOS...")
+ 6. SPIFFS.begin()                       [step 5]
+      → boot_status("Mounting storage...")
+      → Launcher-aware warning if the mount fails
+      → boot_status("Storage ready" / "Storage unavailable")
+ 7. Load NodePrefs, apply theme,
+      display brightness, reset auto-off
+      → boot_status("Loading settings...")
+ 8. sigurdos_display_init_inputs()        [step 6]  ◄─ input INITIALISATION deferred
+      → GT911 touch init (I2C)
+      → Keyboard init (ESP32-C3 I2C)
+      → Trackball init (GPIO)
+      → boot_status("Starting input...")
+      → boot_status("Input ready")
+ 9. sigurdos_gps_init() (if GPS enabled) [step 7]
+      → boot_status("Starting GPS...")
+10. sigurdos::mesh::init()               [step 8]
+      → Shared SPI bus init
+      → SX1262 hard reset + std_init
+      → Radio config from prefs or defaults
+      → MeshCore SigurdMeshV2 init
+      → boot_status("Starting radio...")
+      → boot_status("Radio ready" / "Radio unavailable")
+11. sigurdos::ui::load_persisted_state()
+      → boot_status("Loading chats...")
+      → boot_status("Chats ready")
+12. Debug diagnostics (debug builds)     [step 9]
+13. sigurdos_sdcard_init()               [step 10]
+      → boot_status("Checking SD card...")
+      → boot_status("SD card ready" / "No SD card")
+14. sigurdos_map_init()
+      → boot_status("Preparing map...")
+15. boot_status("Ready")                 [step 11]
+16. WiFi STA auto-connect (non-blocking beginConnect(), if credentials saved)
+17. telemetry::init() (telemetry builds)
 ```
+
+**Key changes from pre-PR-625 boot order:**
+
+| Change | Before | After |
+|--------|--------|-------|
+| Display init | After SPIFFS & GPS (step 6) | **Before** SPIFFS & GPS (step 4) |
+| Input init | Inline in display init | **Deferred** via `sigurdos_display_init_inputs()` (step 8), after prefs loaded |
+| Splash status | Static splash | Live status label via `boot_status()` |
+| SPIFFS error | Serial-only warning | Also shown on splash status label |
 
 ---
 

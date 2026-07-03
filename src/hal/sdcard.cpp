@@ -19,6 +19,7 @@
 
 #include "sdcard.h"
 #include "tdeck_pins.h"
+#include "spi_shared.h"
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
@@ -29,27 +30,47 @@
 // FSPI (SPI2_HOST) is used here; the display also uses SPI2_HOST (via
 // LovyanGFX), and the LoRa radio uses SPI2_HOST (via RadioLib). All three
 // devices share the same SPI host and bus pins with different CS lines.
-static SPIClass sd_spi(FSPI);
+// We use the shared singleton SPIClass from spi_shared.h to avoid reinitialising
+// SPI2_HOST independently from the LoRa radio.
+static SPIClass& sd_spi = sigurdos_shared_spi();
 
 static bool mounted = false;
 static uint64_t capacity_bytes = 0;
 static uint64_t free_bytes = 0;
 
+static int sdcard_retry_count = 0;  // total additional retry attempts
+
 bool sigurdos_sdcard_init()
 {
-    sd_spi.begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
+    sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
 
-    for (int attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) delay(500);
-        if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
-            capacity_bytes = (uint64_t)SD.totalBytes();
-            free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
-            mounted = true;
-            return true;
-        }
+    // Single attempt at boot — retries are lazy via sigurdos_sdcard_retry()
+    if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
+        capacity_bytes = (uint64_t)SD.totalBytes();
+        free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
+        mounted = true;
+        sdcard_retry_count = 0;
+        return true;
     }
 
     mounted = false;
+    return false;
+}
+
+bool sigurdos_sdcard_retry()
+{
+    if (mounted) return true;  // already mounted
+    if (sdcard_retry_count >= 3) return false;  // cap: 3 total retries
+
+    sdcard_retry_count++;
+
+    if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
+        capacity_bytes = (uint64_t)SD.totalBytes();
+        free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
+        mounted = true;
+        return true;
+    }
+
     return false;
 }
 
@@ -107,7 +128,8 @@ size_t sigurdos_sdcard_read(const char* path, uint8_t* buf, size_t max_len)
 
 bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
 {
-    if (!mounted || !sigurdos_sdcard_path_valid(path) || !data || len == 0) return false;
+    if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
+    if (len > 0 && !data) return false;  // data required only for non-empty writes
 
     // SD.begin() with FILE_WRITE opens for append — remove first so we replace the file
     if (SD.exists(path)) {
@@ -117,7 +139,12 @@ bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
     File f = SD.open(path, FILE_WRITE);
     if (!f) return false;
 
-    size_t written = f.write(data, len);
+    if (len > 0) {
+        size_t written = f.write(data, len);
+        f.close();
+        return written == len;
+    }
+    // Zero-length write — create/truncate an empty file
     f.close();
-    return written == len;
+    return true;
 }

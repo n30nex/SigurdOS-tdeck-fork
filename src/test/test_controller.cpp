@@ -36,6 +36,7 @@
 #include "ui/chat_screen.h"
 #include "fonts/emoji_font.h"
 #include "fonts/emoji_data.h"
+#include <lvgl.h>
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
@@ -95,7 +96,11 @@ static const ScreenEntry screen_table[] = {
     {"system",          sigurdos::ui::Screen::SettingsSystem},
     {"wifinetworks",    sigurdos::ui::Screen::WiFiNetworks},
     {"nodestats",       sigurdos::ui::Screen::NodeStats},
-    {"regions",        sigurdos::ui::Screen::Regions},
+    {"regions",         sigurdos::ui::Screen::Regions},
+    {"s-display",       sigurdos::ui::Screen::SettingsDisplay},
+    {"s-radio",         sigurdos::ui::Screen::SettingsRadio},
+    {"s-gps",           sigurdos::ui::Screen::SettingsGPS},
+    {"bluetooth",       sigurdos::ui::Screen::Bluetooth},
 };
 
 static const char* screen_name(sigurdos::ui::Screen s) {
@@ -178,13 +183,29 @@ static void cmd_navigate(const char* arg) {
     }
     // Support "repeaterdetail <name>" to open the repeater detail screen (login + post-login sections)
     if (strncmp(arg, "repeaterdetail ", 15) == 0) {
-        const char* name = arg + 15;
-        if (name[0]) {
-
-            bool skip = (sigurdos::mesh::getLoginStatus(name) == 2);
-            sigurdos::ui::repeater_detail_screen_show(name, skip);
-
-            return;
+        const char* raw = arg + 15;
+        if (raw[0]) {
+            char name[64];
+            if (raw[0] == '"') {
+                const char* endq = strchr(raw + 1, '"');
+                if (endq) {
+                    size_t nlen = endq - (raw + 1);
+                    if (nlen > 63) nlen = 63;
+                    memcpy(name, raw + 1, nlen);
+                    name[nlen] = 0;
+                } else {
+                    strncpy(name, raw, sizeof(name) - 1);
+                    name[sizeof(name) - 1] = 0;
+                }
+            } else {
+                strncpy(name, raw, sizeof(name) - 1);
+                name[sizeof(name) - 1] = 0;
+            }
+            if (name[0]) {
+                bool skip = (sigurdos::mesh::getLoginStatus(name) == 2);
+                sigurdos::ui::repeater_detail_screen_show(name, skip);
+                return;
+            }
         }
     }
     sigurdos::ui::Screen s = screen_from_name(arg);
@@ -429,9 +450,15 @@ static void cmd_screen() {
 }
 
 static void cmd_status() {
-    Serial.printf("[test] heap=%u psram=%u\n",
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    Serial.printf("[test] heap=%u psram=%u lvmem_used_pct=%u lvmem_free=%u lvmem_total=%u lvmem_frag=%u\n",
                   (unsigned)ESP.getFreeHeap(),
-                  (unsigned)ESP.getFreePsram());
+                  (unsigned)ESP.getFreePsram(),
+                  (unsigned)mon.used_pct,
+                  (unsigned)mon.free_size,
+                  (unsigned)mon.total_size,
+                  (unsigned)mon.frag_pct);
 }
 
 static void cmd_contactstats() {
@@ -1177,10 +1204,54 @@ static bool dispatch(const char* line) {
         bool ok = sigurdos::mesh::sendLogin(name, pw_start);
         Serial.printf("[test] login %s: %s\n", name, ok ? "OK" : "FAILED");
 
-    } else if (strcmp(cmd, "setlogin") == 0) {
-        if (!arg) { Serial.println("[test] setlogin: usage: setlogin <name>"); return true; }
-        sigurdos::mesh::forceLoginState(arg, 2, 1);  // LOGIN_OK + admin permission
-        Serial.printf("[test] setlogin %s: OK\n", arg);
+    } else if (strcmp(cmd, "setlogin") == 0 || strcmp(cmd, "setloginguest") == 0) {
+        if (!arg) { Serial.println("[test] setlogin: usage: setlogin <name> [perm] or setloginguest <name>"); return true; }
+        uint8_t perm = 1; // default: admin
+        if (strcmp(cmd, "setloginguest") == 0) {
+            perm = 2; // guest
+        } else {
+            // Check for optional permission parameter (space-separated after name)
+            if (arg[0] != '"') {
+                const char* sp = strchr(arg, ' ');
+                if (sp) {
+                    perm = (uint8_t)atoi(sp + 1);
+                }
+            }
+        }
+        // Parse name (handle quoted names)
+        char name[64];
+        if (arg[0] == '"') {
+            const char* endq = strchr(arg + 1, '"');
+            if (endq) {
+                size_t nlen = endq - (arg + 1);
+                if (nlen > 63) nlen = 63;
+                memcpy(name, arg + 1, nlen);
+                name[nlen] = 0;
+                // For quoted names, check for perm after the closing quote
+                if (strcmp(cmd, "setlogin") == 0) {
+                    const char* sp = strchr(endq, ' ');
+                    if (sp) {
+                        perm = (uint8_t)atoi(sp + 1);
+                    }
+                }
+            } else {
+                strncpy(name, arg, sizeof(name) - 1);
+                name[sizeof(name) - 1] = 0;
+            }
+        } else {
+            const char* sp2 = strchr(arg, ' ');
+            if (sp2) {
+                size_t nlen = sp2 - arg;
+                if (nlen > 63) nlen = 63;
+                memcpy(name, arg, nlen);
+                name[nlen] = 0;
+            } else {
+                strncpy(name, arg, sizeof(name) - 1);
+                name[sizeof(name) - 1] = 0;
+            }
+        }
+        sigurdos::mesh::forceLoginState(name, 2, perm);
+        Serial.printf("[test] setlogin %s: OK (perm=%d)\n", name, perm);
     } else if (strcmp(cmd, "screen") == 0) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
@@ -1208,9 +1279,25 @@ static bool dispatch(const char* line) {
         sigurdos::ui::admin_cmd_show(arg);
     } else if (strcmp(cmd, "loginstat") == 0) {
         if (!arg) { Serial.println("[test] loginstat: missing name"); return true; }
-        uint8_t st = sigurdos::mesh::getLoginStatus(arg);
-        uint8_t perm = sigurdos::mesh::getLoginPermission(arg);
-        Serial.printf("[test] loginstat %s: status=%d perm=%d\n", arg, (int)st, (int)perm);
+        char name[64];
+        if (arg[0] == '"') {
+            const char* endq = strchr(arg + 1, '"');
+            if (endq) {
+                size_t nlen = endq - (arg + 1);
+                if (nlen > 63) nlen = 63;
+                memcpy(name, arg + 1, nlen);
+                name[nlen] = 0;
+            } else {
+                strncpy(name, arg, sizeof(name) - 1);
+                name[sizeof(name) - 1] = 0;
+            }
+        } else {
+            strncpy(name, arg, sizeof(name) - 1);
+            name[sizeof(name) - 1] = 0;
+        }
+        uint8_t st = sigurdos::mesh::getLoginStatus(name);
+        uint8_t perm = sigurdos::mesh::getLoginPermission(name);
+        Serial.printf("[test] loginstat %s: status=%d perm=%d\n", name, (int)st, (int)perm);
     } else if (strcmp(cmd, "tree") == 0) {
         cmd_tree();
     } else if (strcmp(cmd, "widgets") == 0) {

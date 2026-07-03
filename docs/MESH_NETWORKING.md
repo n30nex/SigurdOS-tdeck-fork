@@ -106,8 +106,8 @@ main.cpp
        ├─ Hard-reset SX1262 via RST pin      [line 212-216]
        │    ├─ RST LOW for 100µs
        │    ├─ RST HIGH then 10ms wait (TCXO stabilization)
-       ├─ lora_spi.begin(SCK, MISO, MOSI)   [line 221]
-       ├─ radio_module.std_init(&lora_spi)   [line 225]
+       ├─ sigurdos_shared_spi_begin(SCK, MISO, MOSI) [line 221]
+       ├─ radio_module.std_init(&sigurdos_shared_spi())  [line 225]
        ├─ radio_module.setFrequency(freq)
        ├─ radio_module.setBandwidth(bw)
        ├─ radio_module.setSpreadingFactor(sf)
@@ -145,10 +145,16 @@ The LoRa radio, display (ST7789), and microSD card all share the **same SPI bus*
 SPI is **not** initialised globally with a single `SPI.begin()`. Each driver initialises the bus independently from its own entry point:
 
 1. **Display init** (`sigurdos_display_init`) — configures SPI for the ST7789 via LovyanGFX
-2. **Mesh init** (`sigurdos::mesh::init`) — calls `lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)` for the SX1262
+2. **Mesh init** (`sigurdos::mesh::init`) — calls `sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)` for the SX1262
 3. **SD card init** (`sigurdos_sdcard_init`) — SPI is already configured from step 1 or 2
 
-The mesh init **must happen after display init** (display init is at step 5 in main.cpp, mesh at step 7). In remote test mode (`SIGURDOS_REMOTE_TEST`), `mesh::init()` still calls `lora_spi.begin()` so the SPI bus is available for SD card, even though the radio is not used.
+The mesh init **must happen after display init** (display init is at step 5 in main.cpp, mesh at step 7). In remote test mode (`SIGURDOS_REMOTE_TEST`), `mesh::init()` still calls `sigurdos_shared_spi_begin()` so the SPI bus is available for SD card, even though the radio is not used.
+
+> **`wifi_sta::connect()` removed.** The blocking `wifi_sta::connect()` method
+> has been deprecated and removed. Only **`beginConnect()`** (non-blocking start)
+> and **`getStatus()`** (poll for completion) remain. Callers must use the
+> async pattern: `beginConnect(ssid, password)` → poll `getStatus()` →
+> `Status::Connected` or `Status::Failed`. See `src/hal/wifi_ota.h`.
 
 ---
 
@@ -197,6 +203,29 @@ static sigurdos::mesh::SigurdMeshV2*   g_mesh = nullptr;
 | `onControlDataRecv(pkt)` | `sigurd_mesh_v2.h:324` | Handle PING/PONG control packets |
 | `onRawDataRecv(pkt)` | `sigurd_mesh_v2.h:393` | Stub — reserved for future use |
 | `logRx(pkt, ...)` | `sigurd_mesh_v2.h:398` | Log every received packet to the circular packet log |
+
+### ACK Tracking
+
+SigurdMeshV2 maintains a `_pending_acks[]` array (`MAX_PENDING_ACKS = 16`) to
+match incoming ACK packets against recently sent messages. Each `PendingAck`
+struct carries **in-class default initializers** so the array is fully zeroed
+on construction — without them, `dest_name`, `timestamp`, `expected_ack`, and
+`sent_at_ms` would hold garbage until first write, which is fragile for ACK
+matching:
+
+```cpp
+struct PendingAck {
+    char     dest_name[32]  = {};
+    uint32_t timestamp      = 0;
+    uint32_t expected_ack   = 0;
+    uint32_t sent_at_ms     = 0;
+    bool     in_use         = false;
+};
+```
+
+`addPendingAck(name, ts, expected_ack)` registers an entry; `processAck(data)`
+(from `BaseChatMesh`) walks the array and returns the matching `ContactInfo*`
+or `nullptr`.
 
 ---
 
@@ -322,18 +351,14 @@ This cooldown is enforced at the wrapper level (not in `SigurdMeshV2`) so it pro
 
 Adverts are **only broadcast on boot** if the user has explicitly configured radio parameters via Settings → Radio Setup. Compile-time defaults do not trigger a boot advert, preventing accidental transmissions on potentially illegal frequencies.
 
-### Contact List (64-entry LRU)
+### Contact List (350-entry, BaseChatMesh-managed)
 
-`onAdvertRecv(pkt, id, timestamp, app_data, len)` (`sigurd_mesh_v2.h:124`):
+Contacts now live in BaseChatMesh's contact table (capacity `-D MAX_CONTACTS=350` in `platformio.ini`) rather than a separate SigurdOS-side array. `SigurdMeshV2` configures the behavior through BaseChatMesh overrides (`src/mesh/sigurd_mesh_v2.h`):
 
-1. **Parse** advert using `AdvertDataParser` to extract the node name. Falls back to `"node_<pub_key[0]>"` hex format if no name.
-2. **Deduplicate** — linear scan for matching `Identity`; if found, update `last_seen`, `last_rssi`, and name.
-3. **Add if space** — if `_nContacts < SLOP_MAX_CONTACTS`, append to array.
-4. **LRU eviction** — if the list is full (`_nContacts >= SLOP_MAX_CONTACTS`), evict the contact with the **oldest** `last_seen` timestamp. The evicted slot is overwritten in-place.
-
-```cpp
-static constexpr int SLOP_MAX_CONTACTS = 64;  // sigurd_mesh_v2.h:22
-```
+1. **Auto-add** — `isAutoAddEnabled()` returns true; `shouldAutoAddContactType()` and `getAutoAddMaxHops()` (from `NodePrefs`) gate which adverts become contacts.
+2. **Discovery hook** — `onDiscoveredContact(contact, is_new, path_len, path)` updates UI state and persistence when an advert is parsed.
+3. **Eviction** — `shouldOverwriteWhenFull()` returns true, so a full table overwrites the oldest entry; `onContactsFull()` additionally pushes a companion notification.
+4. **Persistence** — contacts are saved through the versioned contact store (`src/mesh/contact_store.cpp`, magic header + bounds checks).
 
 Each BaseChatMesh `ContactInfo` plus SigurdOS wrapper metadata stores:
 
@@ -395,7 +420,7 @@ After a ping completes (or its 3-second window expires), `pingOnCooldown()` retu
 
 ### Usage
 
-The Finder screen (`src/ui/screens.cpp:564`) provides the "Ping Nearby" UI:
+The Finder screen (`src/ui/screens/screen_finder.cpp`) provides the "Ping Nearby" UI:
 - Button to initiate a ping
 - Shows active listening state during the 3-second window
 - Displays results sorted by RSSI
@@ -464,7 +489,7 @@ The wrapper layer (`mesh_wrapper.cpp:512`) maintains a monotonic `trace_tag_coun
 
 ### UI — Trace Screen
 
-The Trace screen (`src/ui/screens.cpp:1436`) presents:
+The Trace screen (`src/ui/screens/screen_trace.cpp`) presents:
 - A list of contacts with known paths (marked with path indicator)
 - Tapping a contact sends a trace probe
 - The returned path is displayed as hop-by-hop SNR values and node hashes
@@ -518,7 +543,7 @@ Each `PacketLogEntry` stores:
 
 ### UI — Heard Screen
 
-The Heard screen (also called Packets screen, `heard_screen_show()` at `screens.cpp:411`) renders a live-updating list:
+The Heard screen (also called Packets screen, `heard_screen_show()` in `src/ui/screens/screen_packets.cpp`) renders a live-updating list:
 - Timestamp column
 - Source column (node name or "RADIO")
 - RSSI column (dBm)
@@ -541,7 +566,7 @@ Navigated to via `Screen::Network`, calls `finder_screen_show()`. Shows:
 
 ### Signal Screen
 
-`signal_screen_show()` (in `screens.cpp`) provides real-time radio metrics:
+`signal_screen_show()` (in `src/ui/screens/screen_signal.cpp`) provides real-time radio metrics:
 
 | Metric | API | Description |
 |--------|-----|-------------|
@@ -583,6 +608,22 @@ Each channel stores three NVS keys:
 | `ch_<N>_hash` | Bytes — 32-byte channel hash |
 
 Channel count is stored as `ch_cnt` (uint8_t). On boot, `loadChannels()` is called during `init()` after `g_mesh->begin()` to restore all previously joined channels.
+
+### Persistence Store Module (`persistence_store.h/cpp`)
+
+The `sigurdos::mesh::persistence_store` module provides the low-level NVS and
+SPIFFS access functions that the wrapper layer uses for channel and identity
+persistence:
+
+| Function | Backend | Purpose |
+|----------|---------|---------|
+| `channelStoreSave(count, read, ctx)` | NVS (`"sigurdos"` namespace) | Save all channels via caller-provided `ChannelReadFn` |
+| `channelStoreLoad(load, ctx)` | NVS | Load channels via caller-provided `ChannelLoadFn`; returns count loaded |
+| `identityStoreSave(data, len)` | SPIFFS (`/mesh_id`) | Save raw identity bytes |
+| `identityStoreLoad(buf, buf_len, out_len)` | SPIFFS | Load raw identity bytes |
+
+These are called by `saveChannels()` / `loadChannels()` and `saveIdentity()` /
+`loadIdentity()` respectively in `mesh_wrapper.cpp`.
 
 ### Chat History Persistence
 
@@ -661,6 +702,30 @@ Radio parameters are stored in `NodePrefs` (NVS-backed) and can be changed via t
 | TX Power | 2–22 dBm | Transmission power |
 
 See `src/hal/prefs.h` for the full `NodePrefs` struct.
+
+### Debug/Test Override: `SIGURDOS_DEBUG_FORCE_RADIO_PARAMS`
+
+Defined in `platformio.ini` for remote-test and automation builds, this flag
+**overrides** NVS-stored radio parameters with the compile-time defaults
+(`LORA_FREQ`, `LORA_BW`, `LORA_SF`, `LORA_CR`, `LORA_TX_PWR`) to ensure
+consistent RF behaviour regardless of stale NVS values from prior firmware
+versions or manual configuration:
+
+```cpp
+// mesh_wrapper.cpp:799
+#ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
+    freq = LORA_FREQ;
+    bw   = LORA_BW;
+    sf   = LORA_SF;
+    // ...
+#endif
+```
+
+This is **not** enabled by `SIGURDOS_DEBUG` — that flag is for diagnostic
+logging only. `SIGURDOS_DEBUG_FORCE_RADIO_PARAMS` is intended for CI/remote-test
+environments. When defined, it also auto-joins the `#testingsigurdos` test channel
+(on frequency 869.525/SF10/BW250/CR5) so the device is fully operational without
+requiring Settings → Radio Setup.
 
 ### SX1262 Hard Reset
 

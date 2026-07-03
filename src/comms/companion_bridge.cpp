@@ -83,6 +83,16 @@ bool CompanionBridge::setEnabled(bool enabled)
 void CompanionBridge::loop()
 {
     if (!_serial || !_host || !_serial->isEnabled()) return;
+
+    // Clear in-progress signing state on BLE disconnect to prevent
+    // cross-session signature injection (#712).  Check before we
+    // consume frames so a disconnect + reconnect + malicious FINISH
+    // sees a clean slate.
+    if (_was_connected && !_serial->isConnected()) {
+        _sign_active = false;
+        _sign_len = 0;
+    }
+    _was_connected = _serial->isConnected();
     size_t len = _serial->checkRecvFrame(_cmd_frame);
     if (len > 0) {
         handleFrame(_cmd_frame, len);
@@ -168,7 +178,7 @@ bool CompanionBridge::offlineFrameExists(const uint8_t* frame, size_t len) const
     return false;
 }
 
-bool CompanionBridge::addToOfflineQueue(const uint8_t* frame, size_t len)
+bool CompanionBridge::addToOfflineQueue(uint32_t store_id, const uint8_t* frame, size_t len)
 {
     if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
     if (offlineFrameExists(frame, len)) return false;
@@ -176,15 +186,17 @@ bool CompanionBridge::addToOfflineQueue(const uint8_t* frame, size_t len)
         for (int i = 1; i < _offline_len; i++) _offline[i - 1] = _offline[i];
         _offline_len--;
     }
+    _offline[_offline_len].store_id = store_id;
     _offline[_offline_len].len = (uint8_t)len;
     std::memcpy(_offline[_offline_len].buf, frame, len);
     _offline_len++;
     return true;
 }
 
-int CompanionBridge::getFromOfflineQueue(uint8_t* frame)
+int CompanionBridge::getFromOfflineQueue(uint8_t* frame, uint32_t* store_id)
 {
     if (!frame || _offline_len <= 0) return 0;
+    if (store_id) *store_id = _offline[0].store_id;
     int len = _offline[0].len;
     std::memcpy(frame, _offline[0].buf, len);
     for (int i = 1; i < _offline_len; i++) _offline[i - 1] = _offline[i];
@@ -220,7 +232,7 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
         }
         out[i++] = channel_idx;
         out[i++] = msg.path_len;
-        out[i++] = COMPANION_TXT_PLAIN;
+        out[i++] = msg.txt_type;
         std::memcpy(&out[i], &msg.timestamp, 4);
         i += 4;
     } else {
@@ -235,7 +247,13 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
         std::memcpy(&out[i], msg.sender_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
         i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
         out[i++] = msg.path_len;
-        out[i++] = COMPANION_TXT_PLAIN;
+        out[i++] = msg.txt_type;
+        // Signed-plain messages carry a 4-byte sender prefix between the
+        // txt_type and the timestamp (exactly as upstream MyMesh queues).
+        if (msg.txt_type == COMPANION_TXT_SIGNED_PLAIN && msg.extra_len >= 4) {
+            std::memcpy(&out[i], msg.extra, 4);
+            i += 4;
+        }
         std::memcpy(&out[i], &msg.timestamp, 4);
         i += 4;
     }
@@ -266,13 +284,15 @@ void CompanionBridge::seedOfflineQueueFromStore()
         if (recent[idx].is_self) continue;
         uint8_t frame[MAX_FRAME_SIZE];
         size_t len = 0;
-        if (buildMessageFrame(recent[idx], frame, &len) && addToOfflineQueue(frame, len)) {
+        if (buildMessageFrame(recent[idx], frame, &len) &&
+            addToOfflineQueue(recent[idx].store_id, frame, len)) {
             added_any = true;
         }
     }
     std::free(recent);
-    // Mark all as sent so they're not re-queued on reboot/reconnect.
-    if (n > 0) sigurdos::mesh::messageStoreMarkAllCompanionSent();
+    // Do NOT mark any records as sent here. Records are marked individually
+    // only when CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the
+    // app (see the SYNC_NEXT_MESSAGE handler below).
     if (added_any && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         _serial->writeFrame(&tickle, 1);
@@ -286,11 +306,11 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     uint8_t frame[MAX_FRAME_SIZE];
     size_t len = 0;
     if (!buildMessageFrame(msg, frame, &len)) return false;
-    bool added = addToOfflineQueue(frame, len);
+    bool added = addToOfflineQueue(msg.store_id, frame, len);
     if (added) {
-        // Persistently mark the message as companion-sent so it never gets
-        // re-queued after a reboot or reconnect.
-        sigurdos::mesh::messageStoreMarkAllCompanionSent();
+        // The record is NOT marked companion_sent here — that happens only when
+        // CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the app. This
+        // prevents data loss if the app disconnects before draining the queue.
         if (isConnected()) {
             uint8_t tickle = PUSH_CODE_MSG_WAITING;
             _serial->writeFrame(&tickle, 1);
@@ -325,7 +345,7 @@ bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
         i += (int)payload_len;
     }
 
-    bool added = addToOfflineQueue(_out_frame, (size_t)i);
+    bool added = addToOfflineQueue(0, _out_frame, (size_t)i);
     if (added && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         _serial->writeFrame(&tickle, 1);
@@ -416,6 +436,14 @@ bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success
     _out_frame[i++] = success ? (is_admin ? 1 : permission) : 0;
     std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
     i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
+    // Extended fields: server timestamp tag (4 bytes), ACL (4 bytes), firmware level (1 byte)
+    // These are always appended when the login succeeds — official clients detect them by frame length.
+    if (success) {
+        uint32_t zero = 0;
+        std::memcpy(&_out_frame[i], &zero, 4);  i += 4;  // server tag (0 = local login)
+        std::memcpy(&_out_frame[i], &zero, 4);  i += 4;  // ACL bitmask (0 = no ACL)
+        _out_frame[i++] = SIGURDOS_COMPANION_FIRMWARE_VER_CODE;  // firmware protocol level
+    }
     return _serial->writeFrame(_out_frame, i) == (size_t)i;
 }
 
@@ -557,9 +585,16 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     if (cmd == CMD_SYNC_NEXT_MESSAGE) {
         _last_sync_time = _host->currentTime();
-        int out_len = getFromOfflineQueue(_out_frame);
+        uint32_t store_id = 0;
+        int out_len = getFromOfflineQueue(_out_frame, &store_id);
         if (out_len > 0) {
-            _serial->writeFrame(_out_frame, out_len);
+            // Only mark the record as delivered if writeFrame succeeds. If BLE
+            // is busy/disconnected and writeFrame returns 0, the frame stays in
+            // the queue and the record remains unsent for the next sync attempt.
+            size_t written = _serial->writeFrame(_out_frame, out_len);
+            if (written == (size_t)out_len && store_id != 0) {
+                sigurdos::mesh::messageStoreMarkCompanionSent(store_id);
+            }
         } else {
             writeNoMoreMessages();
         }
@@ -1028,16 +1063,56 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     }
 
     if (cmd == CMD_GET_CUSTOM_VARS) {
-        // SigurdOS exposes no companion-settable sensor variables — reply with an
-        // empty (but well-formed) list so the app doesn't treat it as an error.
+        int n = _host->getCustomVars((char*)_out_frame + 1, MAX_FRAME_SIZE - 1);
         _out_frame[0] = RESP_CODE_CUSTOM_VARS;
-        _serial->writeFrame(_out_frame, 1);
+        _serial->writeFrame(_out_frame, (size_t)(1 + ((n > 0) ? n : 0)));
+        return true;
+    }
+
+    if (cmd == CMD_SET_CUSTOM_VAR && len >= 3) {
+        const char* varname = (const char*)&_cmd_frame[1];
+        const char* value = varname + strlen(varname) + 1;
+        if ((size_t)(value - (const char*)_cmd_frame) >= len) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        if (_host->setCustomVar(varname, value)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        }
         return true;
     }
 
     if (cmd == CMD_GET_ADVERT_PATH && len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
-        // No advert-path history table on SigurdOS yet.
-        writeErrFrame(ERR_CODE_NOT_FOUND);
+        // Look up stored advert path for this contact's pubkey
+        uint8_t path_buf[SIGURDOS_COMPANION_PATH_SIZE];
+        uint32_t timestamp = 0;
+        uint8_t plen = _host->getAdvertPath(&_cmd_frame[2], path_buf,
+                                            sizeof(path_buf), &timestamp);
+        if (plen == 0) {
+            writeErrFrame(ERR_CODE_NOT_FOUND);
+            return true;
+        }
+        int i = 0;
+        _out_frame[i++] = RESP_CODE_ADVERT_PATH;
+        _out_frame[i++] = plen;
+        if (plen > 0) {
+            std::memcpy(&_out_frame[i], path_buf, plen);
+            i += plen;
+        }
+        std::memcpy(&_out_frame[i], &timestamp, 4);
+        i += 4;
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
+    if (cmd == CMD_SEND_PATH_DISCOVERY_REQ && len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        // Initiate path discovery for a contact — sends a flood telemetry request
+        // Results arrive later via onContactPathRecv and are pushed as
+        // PUSH_CODE_PATH_DISCOVERY_RESPONSE.
+        CompanionSendResult r = _host->sendPathDiscovery(&_cmd_frame[2]);
+        writeSentOrErr(r);
         return true;
     }
 
@@ -1189,6 +1264,25 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             writeErrFrame(ERR_CODE_TABLE_FULL);
         }
         return true;
+    }
+
+    // ── Stub handlers for upstream commands not yet implemented ──
+    // These are recognized command IDs but return unsupported error until
+    // full implementations are added. Added for protocol coverage parity.
+    if (cmd == CMD_SEND_RAW_DATA) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_BINARY_REQ) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_CONTROL_DATA) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_ANON_REQ) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_RAW_PACKET) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }
 
     writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);

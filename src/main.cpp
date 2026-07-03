@@ -2,7 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include <Arduino.h>
-#include <SPIFFS.h>
+#include "hal/storage.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/display.h"
@@ -12,6 +12,7 @@
 #include "hal/wifi_ota.h"
 #include "hal/github_ota.h"
 #include "hal/prefs.h"
+#include "hal/launcher_env.h"
 #include "hal/buzzer.h"
 #include "app/map_renderer.h"
 #include "mesh/mesh_wrapper.h"
@@ -30,96 +31,141 @@
 
 static sigurdos::TDeckBoard board;
 
-void setup()
-{
-    delay(250);  // Let WebSerial port close before claiming USB CDC endpoint
-    Serial.begin(115200);
-    delay(500);
 #if SIGURDOS_DEBUG_UI
-    Serial.println("SigurdOS T-Deck — booting...");
-    Serial.println("[boot] step 1: serial OK");
+static void boot_log(const char* msg)
+{
+    Serial.printf("[boot] +%lums %s\n", (unsigned long)millis(), msg);
+}
+#else
+static void boot_log(const char*) {}
 #endif
 
-    board.begin();
-#if SIGURDOS_DEBUG_UI
-    Serial.println("[boot] step 2: board init OK");
+static void boot_status(const char* status)
+{
+    sigurdos::ui::set_boot_status(status);
+    sigurdos_display_render_now();
+    boot_log(status);
+}
+
+void setup()
+{
+    Serial.begin(115200);
+#if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
+    Serial.println("[boot] HELLO FROM REMOTE_TEST BUILD -v2");
 #endif
+    boot_log("serial OK");
+
+    board.begin();
+    boot_log("board init OK");
     sigurdos_battery_init();
     sigurdos::hal::buzzer_init();
 
-    bool spiffs_ok = SPIFFS.begin(true);
-    if (!spiffs_ok)
-        Serial.println("[boot] WARNING: SPIFFS mount failed — identity/contacts won't persist across reboots");
-#if SIGURDOS_DEBUG_UI
-    else
-        Serial.println("[boot] step 3: SPIFFS mounted");
-#endif
-
-    if (sigurdos::prefs_get().gps_enabled) {
-        sigurdos_gps_init();
-    }
-#if SIGURDOS_DEBUG_UI
-    Serial.println("[boot] step 4: GPS init done");
-#endif
+    // Track display init failures across reboots to detect boot loops.
+    // RTC_NOINIT_ATTR persists through software resets (ESP.restart()).
+    static RTC_NOINIT_ATTR uint8_t display_failures = 0;
+    static constexpr uint8_t MAX_DISPLAY_FAILURES = 3;
 
     if (!sigurdos_display_init()) {
-        Serial.println("[boot] FATAL: Display init failed");
-        while (1) delay(1000);
+        display_failures++;
+        Serial.printf("[boot] FATAL: Display init failed (%u/%u attempts)\n",
+                      display_failures, MAX_DISPLAY_FAILURES);
+        if (display_failures >= MAX_DISPLAY_FAILURES) {
+            Serial.println("[boot] SAFE MODE: Too many display failures - staying alive for serial/USB recovery.");
+            Serial.println("[boot] Connect via serial or USB to recover. Reset to retry.");
+            // Stay alive - don't reboot. Serial/USB/BLE remain functional for recovery.
+            while (true) { delay(1000); }
+        }
+        Serial.printf("[boot] Restarting in 5s...\n");
+        delay(5000);
+        ESP.restart();
     }
-#if SIGURDOS_DEBUG_UI
-    Serial.println("[boot] step 6: display init OK");
-#endif
+    display_failures = 0;  // success - reset counter
+    boot_log("display core init OK");
 
-    {
-        const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        sigurdos::mesh::setOwnName(p.node_name);
-        sigurdos::theme::theme_apply(p.theme_id);
+    sigurdos::ui::init();
+    boot_status("Starting SigurdOS...");
+    boot_log("first splash frame flushed");
+
+    boot_status("Mounting storage...");
+    // Safe SPIFFS init — auto-formats an erased partition (clean flash)
+    // but leaves corrupt data alone (user must factory-reset to recover).
+    bool spiffs_ok = sigurdos::storage_init();
+    if (!spiffs_ok) {
+        if (sigurdos_is_under_launcher()) {
+            Serial.println("[boot] WARNING: SPIFFS mount failed — installed app-only under Launcher. Reinstall from the Launcher/merged image (SigurdOS-tdeck-launcher.bin) for persistence.");
+        } else {
+            Serial.println("[boot] WARNING: SPIFFS mount failed — identity/contacts won't persist across reboots. Use factory reset to reformat and recover.");
+        }
     }
+    boot_status(spiffs_ok ? "Storage ready" : "Storage unavailable");
+
+    boot_status("Loading settings...");
+    const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+    sigurdos::mesh::setOwnName(p.node_name);
+    sigurdos::theme::theme_apply(p.theme_id);
+    sigurdos_display_set_brightness(p.display_brightness);
+    sigurdos_display_reset_auto_off();
+    boot_log("settings loaded");
+
+    boot_status("Starting input...");
+    sigurdos_display_init_inputs();
+    boot_status("Input ready");
+
+    if (p.gps_enabled) {
+        boot_status("Starting GPS...");
+        sigurdos_gps_init();
+        boot_log("GPS init done");
+    } else {
+        boot_log("GPS disabled");
+    }
+
+    boot_status("Starting radio...");
+    const char* radio_status = "Radio ready";
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
 #if defined(SIGURDOS_REMOTE_TEST_RADIO) && SIGURDOS_REMOTE_TEST_RADIO
     Serial.println("[boot] REMOTE TEST MODE — LoRa radio enabled (test controller + mesh)");
+    if (!sigurdos::mesh::init(spiffs_ok)) {
+        radio_status = "Radio unavailable";
+    }
 #else
     // Remote test mode — no LoRa radio initialised, but the shared SPI bus
     // (pins 40/38/41) must be initialised before SD card init or the card
-    // fails with FR_NOT_READY. mesh::init() handles this via lora_spi.begin().
+    // fails with FR_NOT_READY. mesh::init() handles this via sigurdos_shared_spi_begin().
     Serial.println("[boot] REMOTE TEST MODE — LoRa radio disabled");
-#endif
+    radio_status = "Radio disabled";
     sigurdos::mesh::init(spiffs_ok);
+#endif
     sigurdos_test_controller_init();
 #else
-    if (!sigurdos::mesh::init(spiffs_ok))
+    if (!sigurdos::mesh::init(spiffs_ok)) {
         Serial.println("[boot] WARNING: Radio init failed");
-#if SIGURDOS_DEBUG_UI
-    else
-        Serial.println("[boot] step 7: mesh radio initialized");
+        radio_status = "Radio unavailable";
+    }
 #endif
-#endif
+    boot_status(radio_status);
 
-    sigurdos::ui::init();
-#if SIGURDOS_DEBUG_UI
-    Serial.println("[boot] step 8: UI splash screen shown");
-#endif
+    boot_status("Loading chats...");
+    sigurdos::ui::load_persisted_state();
+    boot_status("Chats ready");
+
 #if SIGURDOS_DEBUG_DIAG
     sigurdos::debug::init();
-    Serial.println("[boot] step 9: debug diagnostics enabled");
+    boot_log("debug diagnostics enabled");
 #endif
 
     // SD card init after radio init so SPI bus is already configured
+    boot_status("Checking SD card...");
     if (!sigurdos_sdcard_init()) {
-#if SIGURDOS_DEBUG_UI
-        Serial.println("[boot] step 10: no SD card detected");
-#endif
+        boot_status("No SD card");
     } else {
-#if SIGURDOS_DEBUG_UI
-        Serial.println("[boot] step 10: SD card mounted");
-#endif
+        boot_status("SD card ready");
     }
 
+    boot_status("Preparing map...");
     sigurdos_map_init();
 
-#if SIGURDOS_DEBUG_UI
-    Serial.println("[boot] === SigurdOS T-Deck ready ===");
-#endif
+    boot_status("Ready");
+    boot_log("SigurdOS T-Deck ready");
 
     // Auto-connect WiFi if credentials are saved
     {
@@ -153,10 +199,17 @@ void loop()
 
     // Process display/LVGL first so UI stays responsive during mesh ops
     sigurdos_display_loop();
+    sigurdos::hal::buzzer_loop();  // non-blocking beep pattern playback
     sigurdos::ota::loop();         // WiFi OTA web server
     sigurdos::github_ota::loop();  // GitHub OTA downloader
     sigurdos::wifi_sta::loop();    // WiFi STA maintenance
-    sigurdos::ui::update_wifi_status();  // bottom bar WiFi icon
+    {   // WiFi icon refresh — 1 Hz is plenty for an RSSI readout
+        static uint32_t last_wifi_ui = 0;
+        if (millis() - last_wifi_ui >= 1000) {
+            last_wifi_ui = millis();
+            sigurdos::ui::update_wifi_status();  // bottom bar WiFi icon
+        }
+    }
     {   // GPS enabled + interval gate
         static uint32_t last_gps_poll = 0;
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();

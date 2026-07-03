@@ -1,16 +1,23 @@
 # SigurdOS T-Deck End-To-End Audit
 
-Date: 2026-06-04
-Refreshed: 2026-06-06 source review against `020195e4581ec7b83147bab09af07e5c902b8ae5`
-Validation refreshed: 2026-06-06 current-dev release build, BLE build, and native suite
+> **Historical note (2026-06-11):** the dedicated BLE build environment
+> `SigurdOS_TDeck_ble` cited in the validation tables below no longer exists —
+> BLE was folded into the default env (`[env:SigurdOS_TDeck]` sets
+> `-D SIGURDOS_COMPANION_BLE=1`); only `SigurdOS_TDeck_ble_validation` remains
+> as a separate env. Historical command citations are preserved exactly as
+> they were run at audit time.
 
-This audit covers the SigurdOS T-Deck MeshCore firmware at commit `97fb805fbb63fcbae19ed8e199e9f3659b8b331b`, with MeshCore submodule `9a888541efaf57c38dfb886c1c1e4702f371baf1`. The review focused on stability, performance, tests, debug tooling, and feature parity against core MeshCore field workflows.
+Date: 2026-06-07
+Refreshed: 2026-06-07 source review against `f74ee234c5a1f0f5ad5ad3a8f1ef17e3b7c2f5f5`
+Validation refreshed: 2026-06-07 upstream-aligned release build, BLE build, and native suite
 
-No physical hardware test was performed during the original audit. Findings are
-based on source review, documentation review, native test execution, and release
-build execution. Later 2026-06-06 follow-up work added COM8 GPS, COM8 remote
-UI/telemetry, local USB BLE pairing, current-dev release build, BLE build, and
-native-suite evidence in the validation docs.
+This audit covers the SigurdOS T-Deck MeshCore firmware at commit `f74ee234c5a1f0f5ad5ad3a8f1ef17e3b7c2f5f5`, with MeshCore submodule `07a3ca9e05b0ab23b878200b2c44b04e08131972`. The review focused on stability, performance, tests, debug tooling, and feature parity against core MeshCore field workflows.
+
+No physical hardware test was performed during the original baseline audit. Findings
+were based on source review, documentation review, native test execution, and
+release build execution. Later follow-up work added COM8 GPS, COM8 remote smoke,
+local USB BLE pairing, current-dev release build, BLE build, and native-suite
+evidence in the validation docs.
 
 ## Executive Summary
 
@@ -33,7 +40,7 @@ Commands run during the audit:
 
 | Check | Result |
 | --- | --- |
-| `git submodule update --init --recursive` | MeshCore submodule checked out at `9a888541efaf57c38dfb886c1c1e4702f371baf1` |
+| `git submodule update --init --recursive` | MeshCore submodule checked out at `07a3ca9e05b0ab23b878200b2c44b04e08131972` |
 | `pio --version` | PlatformIO Core 6.1.18 |
 | `pio test -e native_test -v` | 397 test cases collected; 396 succeeded; 1 skipped; duration 00:04:31.818 |
 | `pio run -e SigurdOS_TDeck` | Success; duration 00:10:29.676 |
@@ -46,7 +53,7 @@ Current-dev validation refreshed on 2026-06-06:
 
 | Check | Result |
 | --- | --- |
-| Base | `origin/dev` at `58e5fc5` |
+| Base | `origin/dev` at `f74ee234c5a1f0f5ad5ad3a8f1ef17e3b7c2f5f5` |
 | `pio run -e SigurdOS_TDeck` | Success; duration 00:01:32.604 |
 | Release build RAM | 110,812 of 327,680 bytes used, 33.8% |
 | Release build flash | 1,973,701 of 6,553,600 bytes used, 30.1% |

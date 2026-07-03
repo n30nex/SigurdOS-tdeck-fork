@@ -6,13 +6,34 @@ This document tracks currently open known issues, bugs, and missing features in 
 
 ## Launcher Compatibility
 
-### SigurdOS doesn't work under bmorcelli/Launcher
+### Supported — bmorcelli/Launcher (v2.7.2+)
 
-[Launcher](https://github.com/bmorcelli/Launcher) is an ESP32 app launcher with explicit T-Deck support (display, touch, keyboard, SD card). A user tried running SigurdOS as a Launcher-launched app and ran into problems — the keyboard doesn't work properly, and many other things break.
+SigurdOS can now be installed as a Launcher app. See [`firmware/README.md`](../firmware/README.md) for the full installation guide and caveats.
 
-**Root cause:** SigurdOS is built as standalone firmware that expects full hardware control at boot. Launcher initialises the display, keyboard, I2C, SPI, and LoRa pins before handing off, which leaves GPIOs, peripheral registers, and I2C bus state in an incompatible state when SigurdOS starts.
+**What's implemented (Phase 1/4):**
+- ✅ Launcher install via SD, WebUI, or direct GitHub URL — use `SigurdOS-tdeck-launcher.bin`
+- ✅ Runtime Launcher detection (probes for test-subtype app partition)
+- ✅ Self-OTA gated with on-screen explanation when under Launcher
+- ✅ Boot-time diagnostics when app-only install loses persistence
+- ✅ Self-OTA disabled to prevent flash corruption of co-installed apps
+- ✅ SPIFFS partition created for persistence (when using merged image)
 
-**Status:** Not planned. SigurdOS is designed as standalone firmware, not a Launcher app. Fixing this would require deep changes to every HAL driver to detect and handle pre-initialised peripherals.
+**Phase 2a — Detection validated on hardware (2026-06-10):**
+- ✅ Launcher detection tested via custom `test`-subtype partition
+- ✅ `sigurdos_is_under_launcher()` returns `true` when Launcher partition exists
+- ✅ Boot env diagnostic confirms `"bmorcelli/Launcher"` vs `"standalone"`
+- ✅ Launcher installed on T-Deck (awaiting physical button press to proceed to handoff test)
+
+**Phase 3 / C6 — Keyboard warm-handoff hardening ✅ merged with #573 follow-up:**
+- ✅ Retry loop: keyboard init now retries 3× with 100ms delay instead of single-NACK-abort
+- ✅ Mode reset: sends `CMD_MODE_KEY` (0x04) before each probe to reset C3 to known state
+- ✅ 2 new native tests covering transient-NACK recovery and exhaustion
+- ✅ 748/748 native tests pass, release build clean
+
+**Remaining gaps (Phase 2b/5/6):**
+- 🔜 Phase 2b: Actual Launcher boot handoff (T4/T9) — requires physical SD card or WebUI interaction on T-Deck
+- ⏳ Phase 5: Full regression matrix (T1–T14) — standalone rows (T1–T3) pass, Launcher rows (T4–T13) need physical hardware
+- ❌ Not yet listed in LauncherHub catalog (requires maintainer coordination)
 
 ---
 

@@ -474,7 +474,7 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
             if (mx_y > c.max_y) c.max_y = mx_y;
         }
 
-        if ((++scanned % 16) == 0) delay(0);
+        if ((++scanned % 16) == 0) delay(1);
     }
     closedir(xd);
 
@@ -500,7 +500,7 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
             have_sample = true;
         }
 
-        if ((++scanned % 16) == 0) delay(0);
+        if ((++scanned % 16) == 0) delay(1);
     }
 
     if (!have_sample) return false;
@@ -510,8 +510,11 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
 
 static void discover_tiles() {
     if (!sigurdos_sdcard_mounted()) {
-        MAP_DEBUG_PRINTLN("[map] discover: SD not mounted");
-        return;
+        // Lazy retry — SD may have been absent at boot but inserted since
+        if (!sigurdos_sdcard_retry()) {
+            MAP_DEBUG_PRINTLN("[map] discover: SD not mounted");
+            return;
+        }
     }
 
     reset_tile_coverage();
@@ -563,7 +566,10 @@ static void discover_tiles() {
 
 // ── Metadata auto-center (from metadata.json, fallback to discover) ──
 static void load_metadata() {
-    if (!sigurdos_sdcard_mounted()) return;
+    if (!sigurdos_sdcard_mounted()) {
+        // Lazy retry — SD may have been absent at boot but inserted since
+        if (!sigurdos_sdcard_retry()) return;
+    }
 
     // Always discover tiles first — this correctly sets zoom_level = best_zoom
     discover_tiles();
@@ -608,6 +614,9 @@ static bool delete_cb_registered = false;
 
 void sigurdos_map_init() {
     if (initialized) return;
+
+    // Reset monotonic clock for fresh cache entries
+    cache_clock = 0;
 
     // Allocate draw buffer (320×240×2 = 153KB for RGB565).
     // PSRAM first: DRAM is scarce (~320KB free) and a 153KB allocation there

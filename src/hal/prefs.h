@@ -21,6 +21,7 @@ struct NodePrefs {
     int8_t  tx_power_dbm;   // dBm (2-22)
     bool    configured;     // false until user explicitly saves settings
     uint8_t kbd_backlight;      // 0-255, keyboard backlight brightness
+    uint8_t kbd_layout;         // KeyboardLayoutId (0=English, 1-11 alternate layouts)
     uint8_t display_brightness; // 0-255, display backlight brightness
     uint16_t auto_off_timeout;  // seconds, auto-off timeout (0=off, default 30)
     uint16_t chat_msg_cap;      // Per-channel in-memory message history cap
@@ -34,18 +35,23 @@ struct NodePrefs {
     float    direct_tx_delay_factor; // 0-2.0, TX direct retransmit delay multiplier
     bool     rx_boosted_gain;        // enable SX1262 boosted RX sensitivity mode
     uint8_t  duty_cycle;             // 0-100, duty cycle budget percent (0 = disabled)
-    uint8_t  advert_interval;        // 0=disabled, 1-255=interval in half-minutes (e.g. 10=5min)
+    uint16_t advert_interval_h;      // 0=disabled, 24/72/168=hours between adverts (one per period)
     uint8_t  advert_type;            // ADV_TYPE_CHAT(1)/REPEATER(2)/ROOM(3)/SENSOR(4)
     bool     gps_enabled;            // GPS polling enabled
     uint16_t gps_interval;           // GPS read interval in seconds (0 = every loop)
     uint8_t  autoadd_config;         // bitmask: bit1=chat, bit2=repeater, bit3=room, bit4=sensor
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
+    uint8_t  path_hash_mode;          // 0=1-byte, 1=2-byte, 2=3-byte path hash for originated adverts/messages
     bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
     bool     buzzer_quiet;            // mute message-arrival buzzer
     uint8_t  client_repeat;           // 0=no forwarding, !=0=opportunistic relay (client-repeat mode)
     bool     ble_enabled;             // BLE companion advertising enabled in BLE build
     uint32_t device_pin;               // 4-6 digit device PIN (0 = disabled)
+    uint32_t ble_pin;                  // random per-device BLE pairing PIN (0 = not generated yet)
+    uint8_t  telemetry_modes;          // bitmask for companion telemetry modes
+    uint8_t  manual_add_contacts;      // companion manual-add-contacts mode (0=auto, 1=prompt)
+    char     default_scope_key_hex[33];  // hex-encoded 16-byte private flood-scope key (empty if none)
     char     wifi_ssid[33];            // WiFi STA SSID for GitHub OTA (empty = not set)
     char     wifi_password[64];        // WiFi STA password
     char     active_region[31];        // active flood scope region name (empty = wildcard/unscoped)
@@ -63,6 +69,7 @@ struct NodePrefs {
         tx_power_dbm = 0;
         configured = false;
         kbd_backlight = 127;
+        kbd_layout = 0;
         display_brightness = 200;
         auto_off_timeout = 30;
         chat_msg_cap = 200;
@@ -76,18 +83,23 @@ struct NodePrefs {
         direct_tx_delay_factor = 1.0f; // default TX direct delay factor
         rx_boosted_gain = false;      // default: normal sensitivity mode
         duty_cycle = 0;               // 0 = disabled
-        advert_interval = 0;          // 0 = disabled
+        advert_interval_h = 0;        // 0 = disabled
         advert_type = 1;              // 1 = ADV_TYPE_CHAT (default: chat companion)
-        gps_enabled = true;           // GPS on by default
+        gps_enabled = false;          // GPS off by default (privacy, battery)
         gps_interval = 0;             // 0 = poll every loop
         autoadd_config = 0x1E;        // auto-add: chat|repeater|room|sensor (bits 1-4), no overwrite (bit 0)
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
+        path_hash_mode = 0;           // default: 1-byte path hash (backward compatible with pre-1.14 repeaters)
         multi_acks = false;           // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
         client_repeat = 0;            // default: no forwarding
         ble_enabled = false;          // default: BLE companion off
         device_pin = 0;               // default: no PIN
+        ble_pin = 0;                  // default: not generated (will generate on first BLE boot)
+        telemetry_modes = 0;          // default: no telemetry sharing
+        manual_add_contacts = 0;      // default: auto-add contacts
+        default_scope_key_hex[0] = '\0';  // default: no private scope key
         wifi_ssid[0] = '\0';          // default: no WiFi
         wifi_password[0] = '\0';
         active_region[0] = '\0';       // default: wildcard (unscoped flood)

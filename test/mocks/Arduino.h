@@ -52,6 +52,9 @@ typedef bool boolean;
 namespace arduino_mock {
     extern unsigned long current_millis;
     extern int pin_states[64];       // digital pin states
+    extern int pin_mode_calls[64];   // number of pinMode calls per pin
+    extern int forced_read_value[64]; // digitalRead override value
+    extern int forced_read_count[64]; // remaining overridden reads
     extern int analog_values[16];    // analog pin readings
     extern bool serial_output[1024]; // serial TX buffer
     extern int serial_output_len;
@@ -67,19 +70,35 @@ inline void delayMicroseconds(unsigned int us) { arduino_mock::current_millis +=
 
 // ── Digital I/O ──────────────────────────────────────────
 inline void pinMode(uint8_t pin, uint8_t mode) {
-    if (pin < 64) arduino_mock::pin_states[pin] = mode;
+    if (pin < 64) {
+        arduino_mock::pin_states[pin] = mode;
+        arduino_mock::pin_mode_calls[pin]++;
+    }
 }
 inline void digitalWrite(uint8_t pin, uint8_t val) {
     if (pin < 64) arduino_mock::pin_states[pin] = val;
 }
 inline int digitalRead(uint8_t pin) {
-    return (pin < 64) ? arduino_mock::pin_states[pin] : 0;
+    if (pin >= 64) return 0;
+    if (arduino_mock::forced_read_count[pin] > 0) {
+        arduino_mock::forced_read_count[pin]--;
+        return arduino_mock::forced_read_value[pin];
+    }
+    return arduino_mock::pin_states[pin];
 }
 
 // ── Analog I/O ───────────────────────────────────────────
 inline void analogReadResolution(int bits) { (void)bits; }
 inline int analogRead(uint8_t pin) {
     return (pin < 16) ? arduino_mock::analog_values[pin] : 0;
+}
+inline int analogReadMilliVolts(uint8_t pin) {
+    // Simulate calibrated mV from raw value.
+    // Real ESP32-S3 applies efuse-based per-chip calibration;
+    // mock approximates as raw * 3300 / 4095.
+    return (pin < 16)
+        ? (arduino_mock::analog_values[pin] * 3300) / 4095
+        : 0;
 }
 inline void adcAttachPin(uint8_t pin) { (void)pin; }
 
@@ -208,9 +227,18 @@ extern HardwareSerial Serial1;
 // ── I2C ──────────────────────────────────────────────────
 class TwoWire {
 public:
-    void begin() {}
-    void begin(int, int) {}
-    void setClock(uint32_t) {}
+    void begin() {
+        _begun = true;
+        _begin_count++;
+    }
+    void begin(int sda, int scl) {
+        _begun = true;
+        _begin_count++;
+        _begin_sda = sda;
+        _begin_scl = scl;
+    }
+    void setClock(uint32_t clock) { _clock = clock; }
+    void setTimeOut(uint16_t timeout_ms) { _timeout_ms = timeout_ms; }
 
     // Master write
     void beginTransmission(uint8_t addr) {
@@ -221,8 +249,24 @@ public:
         if (_tx_len < 32) _tx_buf[_tx_len++] = val;
         return 1;
     }
+    size_t write(const uint8_t* data, size_t len) {
+        if (!data) return 0;
+        size_t written = 0;
+        while (written < len && _tx_len < sizeof(_tx_buf)) {
+            _tx_buf[_tx_len++] = data[written++];
+        }
+        return written;
+    }
     uint8_t endTransmission(bool stopBit = true) {
         (void)stopBit;
+        if (_address_count < sizeof(_address_history)) {
+            _address_history[_address_count++] = _tx_addr;
+        }
+        _end_count++;
+        if (_nack_remaining > 0) {
+            _nack_remaining--;
+            return 1;  // NACK — simulate I2C no-ACK for warm-handoff testing
+        }
         return _end_error;
     }
 
@@ -236,7 +280,12 @@ public:
         for (uint8_t i = 0; i < actual; i++) {
             _rx_buf[i] = _q_buf[i];
         }
-        _q_len = 0;  // consume queue
+        // Preserve bytes queued for a subsequent transaction. Keyboard scans
+        // read one key-mode byte and then a five-byte raw modifier sample.
+        for (size_t i = actual; i < _q_len; i++) {
+            _q_buf[i - actual] = _q_buf[i];
+        }
+        _q_len -= actual;
         return _rx_len;
     }
     int available() { return (int)(_rx_len - _rx_pos); }
@@ -247,6 +296,9 @@ public:
 
     // ── Test control ──────────────────────────────────
     void mock_set_error(uint8_t err) { _end_error = err; }
+    // How many endTransmission calls to NACK before allowing success.
+    // Used to test warm-handoff retry logic after Launcher handoff.
+    void mock_set_nack_count(uint8_t n) { _nack_count = n; _nack_remaining = n; }
     void mock_queue_rx_byte(uint8_t val) {
         if (_q_len < 32) _q_buf[_q_len++] = val;
     }
@@ -255,12 +307,34 @@ public:
         return (i >= 0 && i < (int)_tx_len) ? _tx_buf[i] : 0;
     }
     int mock_tx_len() const { return (int)_tx_len; }
+    bool mock_was_begun() const { return _begun; }
+    int mock_begin_count() const { return _begin_count; }
+    int mock_begin_sda() const { return _begin_sda; }
+    int mock_begin_scl() const { return _begin_scl; }
+    uint32_t mock_clock() const { return _clock; }
+    uint16_t mock_timeout_ms() const { return _timeout_ms; }
+    size_t mock_end_count() const { return _end_count; }
+    size_t mock_address_count() const { return _address_count; }
+    uint8_t mock_address_at(size_t index) const {
+        return index < _address_count ? _address_history[index] : 0;
+    }
 
 private:
+    bool _begun = false;
+    int _begin_count = 0;
+    int _begin_sda = -1;
+    int _begin_scl = -1;
+    uint32_t _clock = 0;
+    uint16_t _timeout_ms = 0;
     uint8_t _tx_addr = 0;
     uint8_t _tx_buf[32] = {};
     size_t  _tx_len = 0;
     uint8_t _end_error = 0;
+    uint8_t _nack_count = 0;
+    uint8_t _nack_remaining = 0;
+    size_t _end_count = 0;
+    uint8_t _address_history[64] = {};
+    size_t _address_count = 0;
 
     uint8_t _rx_addr = 0;
     uint8_t _rx_buf[32] = {};
@@ -278,7 +352,11 @@ extern TwoWire Wire;
 
 class SPIClass {
 public:
+    SPIClass() {}
+    SPIClass(uint8_t) {}  // host number (FSPI=1, VSPI=2)
     void begin() {}
+    void begin(int sck, int miso, int mosi) { (void)sck; (void)miso; (void)mosi; }
+    void begin(int sck, int miso, int mosi, int cs) { (void)sck; (void)miso; (void)mosi; (void)cs; }
 };
 extern SPIClass SPI;
 

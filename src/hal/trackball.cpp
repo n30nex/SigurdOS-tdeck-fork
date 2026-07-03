@@ -4,12 +4,16 @@
 #include "trackball.h"
 #include "tdeck_pins.h"
 #include <Arduino.h>
+#ifdef ESP32_PLATFORM
+#include <driver/gpio.h>
+#endif
 #if SIGURDOS_TELEMETRY
 #include "../diagnostics/telemetry.h"
 #endif
 
 static constexpr uint32_t CLICK_DEBOUNCE_MS = 20;
 static constexpr uint32_t DIRECTION_DEADTIME_MS = 150;
+static constexpr uint32_t LEFT_DEADTIME_MS = 80;  // shorter for responsive back-navigation
 static constexpr uint32_t DIRECTION_SETTLE_MS = 250;
 static constexpr uint8_t EVENT_QUEUE_SIZE = 8;
 
@@ -32,7 +36,7 @@ struct ButtonState {
 static ButtonState buttons[] = {
     {PIN_TRACKBALL_UP,    SigurdOSTrackballEvent::Up,    true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
     {PIN_TRACKBALL_DOWN,  SigurdOSTrackballEvent::Down,  true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
-    {PIN_TRACKBALL_LEFT,  SigurdOSTrackballEvent::Left,  true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
+    {PIN_TRACKBALL_LEFT,  SigurdOSTrackballEvent::Left,  true,  HIGH, false, false, 0, 0, LEFT_DEADTIME_MS},
     {PIN_TRACKBALL_RIGHT, SigurdOSTrackballEvent::Right, true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
     {PIN_TRACKBALL_BTN,   SigurdOSTrackballEvent::Click, false, HIGH, false, false, 0, 0, CLICK_DEBOUNCE_MS},
 };
@@ -201,6 +205,7 @@ static void scan_click(ButtonState& btn, uint32_t now)
         btn.stable_active = raw;
         if (btn.stable_active) {
             queue_event(btn.event);
+            btn.last_event_at = now;
         }
         return;
     }
@@ -217,6 +222,23 @@ static void scan_button(ButtonState& btn, uint32_t now)
 
 bool sigurdos_trackball_init()
 {
+    // Detach any ISRs left by Launcher's warm-handoff (ESP.restart()).
+    // Launcher registers FALLING-edge ISRs on every trackball GPIO
+    // (UP=3, DOWN=15, LEFT=1, RIGHT=2, CLICK=0). After ESP.restart()
+    // the GPIO interrupt-enable bits survive in hardware even though
+    // the ISR service is reset. detachInterrupt() can't work because
+    // gpio_isr_handler_remove() returns early when the ISR service
+    // isn't installed — so we use gpio_intr_disable() directly to
+    // clear the hardware interrupt-enable bits before reconfiguring
+    // the pins. This is a no-op on cold boot (pins start disabled).
+#ifdef ESP32_PLATFORM
+    gpio_intr_disable((gpio_num_t)PIN_TRACKBALL_UP);
+    gpio_intr_disable((gpio_num_t)PIN_TRACKBALL_DOWN);
+    gpio_intr_disable((gpio_num_t)PIN_TRACKBALL_LEFT);
+    gpio_intr_disable((gpio_num_t)PIN_TRACKBALL_RIGHT);
+    gpio_intr_disable((gpio_num_t)PIN_TRACKBALL_BTN);
+#endif
+
     for (ButtonState& btn : buttons) {
         pinMode(btn.pin, INPUT_PULLUP);
     }

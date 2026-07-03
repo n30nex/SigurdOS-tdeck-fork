@@ -124,7 +124,12 @@ static constexpr int LIST_ROW_H  = 44;
 
 // ── Channel state ──────────────────────────────────────────
 static constexpr int MAX_CHANNELS = 16;
-static char  dyn_channels[MAX_CHANNELS][32];
+// Row width of the channel-name table: "DM: " (4) + contact name (31) + null
+// = 36 → 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
+// this constant — a stride mismatch silently corrupts the channel-state snapshot
+// taken in refresh_channels() (see issue #686).
+static constexpr int CHANNEL_NAME_CAP = 37;
+static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
@@ -329,13 +334,17 @@ static void refresh_channels()
 {
     // Cache old channel state so we can clean up + rebuild without flicker
     // NOTE: static to avoid ~1.9KB stack allocation in LVGL event handler context
-    static char old_names[MAX_CHANNELS][32] = {{0}};
+    static char old_names[MAX_CHANNELS][CHANNEL_NAME_CAP] = {{0}};
     static ChannelMeta old_meta[MAX_CHANNELS] = {};
     static uint16_t old_counts[MAX_CHANNELS] = {0};
     static ChannelMessage* old_msgs[MAX_CHANNELS] = {nullptr};
     static uint16_t old_caps[MAX_CHANNELS] = {0};
+    // The flat memcpy below relies on old_names having the same row stride as
+    // dyn_channels; assert it so the two can never silently diverge again (#686).
+    static_assert(sizeof(old_names) == sizeof(dyn_channels),
+                  "old_names must mirror dyn_channels row stride");
     int old_count = dyn_count;
-    char active_name[32] = "";
+    char active_name[CHANNEL_NAME_CAP] = "";
 
     // Remember the name of the currently active channel so we can
     // find it again after remapping.
@@ -363,8 +372,8 @@ static void refresh_channels()
             dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_CHANNELS);
         }
         if (dyn_count == 0) {
-            strncpy(dyn_channels[0], "#general", 31);
-            dyn_channels[0][31] = '\0';
+            strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
+            dyn_channels[0][sizeof(dyn_channels[0]) - 1] = '\0';
             dyn_count = 1;
         }
     }
@@ -378,7 +387,10 @@ static void refresh_channels()
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
             if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
-                if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
+                if (keep < i) {
+                    strncpy(dyn_channels[keep], dyn_channels[i], sizeof(dyn_channels[keep]) - 1);
+                    dyn_channels[keep][sizeof(dyn_channels[keep]) - 1] = '\0';
+                }
                 keep++;
             }
         }
@@ -394,7 +406,10 @@ static void refresh_channels()
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
             if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
-                if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
+                if (keep < i) {
+                    strncpy(dyn_channels[keep], dyn_channels[i], sizeof(dyn_channels[keep]) - 1);
+                    dyn_channels[keep][sizeof(dyn_channels[keep]) - 1] = '\0';
+                }
                 keep++;
             }
         }
@@ -409,8 +424,8 @@ static void refresh_channels()
     if (dyn_count == 0) {
         if (chat_filter_mode == 1) {
             // Channels filter: add a synthetic fallback if mesh is unavailable.
-            strncpy(dyn_channels[0], "#general", 31);
-            dyn_channels[0][31] = '\0';
+            strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
+            dyn_channels[0][sizeof(dyn_channels[0]) - 1] = '\0';
             dyn_count = 1;
         }
         // DMs filter with no DMs: leave empty (user can start one from Contacts)
@@ -452,8 +467,8 @@ static void refresh_channels()
                 continue;
             }
             int new_idx = dyn_count++;
-            strncpy(dyn_channels[new_idx], old_names[old_idx], 31);
-            dyn_channels[new_idx][31] = '\0';
+            strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
+            dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
             ch_msgs[new_idx] = old_msgs[old_idx];
             ch_msg_capacity[new_idx] = old_caps[old_idx];
             ch_msg_count[new_idx] = old_counts[old_idx];
@@ -704,7 +719,7 @@ static void populate_channel_rows(lv_obj_t* list) {
 
 static int find_channel_idx(const char* channel)
 {
-    if (!channel || !channel[0]) return active_channel;
+    if (!channel || !channel[0]) return -1;  // reject empty/null — don't silently route to active channel
     for (int i = 0; i < dyn_count; i++) {
         if (strcmp(dyn_channels[i], channel) == 0) return i;
     }
@@ -735,7 +750,11 @@ static void append_channel_message(int idx, const char* sender, const char* text
     ensure_channel_buffer(idx);
     if (!has_channel_buffer(idx)) return;
 
-    const uint16_t cap = chat_msg_cap();
+    const uint16_t user_cap = chat_msg_cap();
+    const uint16_t buf_cap = ch_msg_capacity[idx];
+    // Use actual buffer capacity if it's smaller than the user-configured cap
+    // Prevents OOB write when PSRAM exhausted and DRAM fallback provides only CHAT_MSGS_MIN_CAP (#542)
+    const uint16_t cap = (buf_cap > 0 && buf_cap < user_cap) ? buf_cap : user_cap;
     trim_channel_history(idx, cap);
 
     uint16_t pos = ch_msg_count[idx];
@@ -1797,6 +1816,8 @@ static void open_channel_messaging(int idx)
         search_bar = nullptr;
         search_input = nullptr;
         search_active = false;
+        search_match_count = 0;
+        search_current_match = -1;
     }, LV_EVENT_DELETE, nullptr);
 
     // Reset search state
@@ -2412,14 +2433,15 @@ void chat_screen_open_dm(const char* contact_name)
     navigate_to(Screen::Chat);
     refresh_channels();
 
-    char dm_name[32];
+    // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
+    char dm_name[CHANNEL_NAME_CAP];
     snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
 
     int idx = find_channel_idx(dm_name);
     if (idx < 0 && dyn_count < MAX_CHANNELS) {
         idx = dyn_count;
-        strncpy(dyn_channels[idx], dm_name, 31);
-        dyn_channels[idx][31] = '\0';
+        strncpy(dyn_channels[idx], dm_name, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
     }
 
@@ -2433,7 +2455,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     uint32_t now = sigurdos::mesh::getCurrentTime();
 
     // Map DM messages (empty channel) to "DM: <sender>" conversation
-    char dm_buf[32];
+    char dm_buf[CHANNEL_NAME_CAP];
     if (!channel || !channel[0]) {
         snprintf(dm_buf, sizeof(dm_buf), "DM: %s", sender);
         channel = dm_buf;
@@ -2443,8 +2465,8 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     if (idx < 0) {
         if (dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
-            strncpy(dyn_channels[idx], channel, 31);
-            dyn_channels[idx][31] = '\0';
+            strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
+            dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
             dyn_count++;
         } else {
             return;
@@ -2465,7 +2487,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     const uint16_t cap = chat_msg_cap();
     if (lv_obj_get_child_cnt(msg_list) > cap)
-        lv_obj_del(lv_obj_get_child(msg_list, 0));
+        lv_obj_del_async(lv_obj_get_child(msg_list, 0));
 
     // Only auto-scroll if user was already at the bottom
     if (at_bottom) {
@@ -2542,13 +2564,13 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
             return true;
         case SigurdOSTrackballEvent::Right:
-            if (input_field) {
+            if (input_field && lv_obj_is_valid(input_field)) {
                 lv_group_t* g = lv_group_get_default();
                 if (g) lv_group_focus_obj(input_field);
             }
             return true;
         case SigurdOSTrackballEvent::Click:
-            if (input_field) {
+            if (input_field && lv_obj_is_valid(input_field)) {
                 lv_group_t* g = lv_group_get_default();
                 if (g) lv_group_focus_obj(input_field);
             }
@@ -2678,7 +2700,13 @@ static constexpr size_t   MSG_MAX_FILE_SIZE =
 
 void chat_save_messages()
 {
-    if (!SPIFFS.begin(false)) return;
+    {
+        static bool mounted = false;
+        if (!mounted) {
+            if (!SPIFFS.begin(false)) return;
+            mounted = true;
+        }
+    }
     File f = SPIFFS.open("/msgs", "w");
     if (!f) return;
 
@@ -2738,9 +2766,15 @@ void chat_load_messages()
         }
     }
 
-    if (!SPIFFS.begin(false)) {
-        chat_load_companion_messages();
-        return;
+    {
+        static bool mounted = false;
+        if (!mounted) {
+            if (!SPIFFS.begin(false)) {
+                chat_load_companion_messages();
+                return;
+            }
+            mounted = true;
+        }
     }
     if (!SPIFFS.exists("/msgs")) {
         chat_load_companion_messages();
@@ -2778,8 +2812,8 @@ void chat_load_messages()
         // so they won't be found in dyn_channels. Create them on demand.
         if (idx < 0 && strncmp(ch_name, "DM: ", 4) == 0 && dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
-            strncpy(dyn_channels[idx], ch_name, 31);
-            dyn_channels[idx][31] = '\0';
+            strncpy(dyn_channels[idx], ch_name, sizeof(dyn_channels[idx]) - 1);
+            dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
             dyn_count++;
         }
 
