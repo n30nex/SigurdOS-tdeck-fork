@@ -19,6 +19,7 @@ struct NodePrefs {
     uint8_t sf;             // LoRa spreading factor (6-12)
     uint8_t cr;             // coding rate denominator (5=4/5, 6=4/6, etc.)
     int8_t  tx_power_dbm;   // dBm (2-22)
+    char    radio_profile[16]; // profile id, or "custom" for manual RF
     bool    configured;     // false until user explicitly saves settings
     uint8_t kbd_backlight;      // 0-255, keyboard backlight brightness
     uint8_t kbd_layout;         // KeyboardLayoutId (0=English, 1-11 alternate layouts)
@@ -67,6 +68,7 @@ struct NodePrefs {
         sf   = 0;
         cr   = 0;
         tx_power_dbm = 0;
+        radio_profile[0] = '\0';
         configured = false;
         kbd_backlight = 127;
         kbd_layout = 0;

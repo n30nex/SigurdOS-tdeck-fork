@@ -40,6 +40,7 @@ TEST(PrefsDefaultsTest, RadioDefaultsStayNonTransmittingUntilConfigured) {
     EXPECT_EQ(0, prefs.sf);
     EXPECT_EQ(0, prefs.cr);
     EXPECT_EQ(0, prefs.tx_power_dbm);
+    EXPECT_EQ('\0', prefs.radio_profile[0]);
     EXPECT_EQ(0, prefs.duty_cycle);
 }
 

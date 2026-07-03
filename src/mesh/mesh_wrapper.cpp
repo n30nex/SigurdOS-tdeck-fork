@@ -915,8 +915,9 @@ bool init(bool spiffs_ok)
     // 869.525/SF10/BW250/CR5. addChannelBool() is a no-op if already present.
 #ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
     g_mesh->addChannelBool("testingsigurdos", "Si/tjXzmnwmPBA43Fw4b3Q==");
-    saveChannels();
-    // is fully operational without requiring Settings → Radio Setup.
+    // Keep the automation-only channel in RAM. Persisting it leaks test
+    // artifacts into normal firmware after a reboot or firmware swap.
+    // Force a test RF tuple so automation can run without Settings → Radio Setup.
     {
         sigurdos::NodePrefs dp = sigurdos::prefs_get();
         if (!dp.configured) {

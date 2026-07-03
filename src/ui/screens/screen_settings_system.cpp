@@ -28,6 +28,7 @@
 #include "../../hal/wifi_ota.h"
 #include "../../hal/github_ota.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../diagnostics/build_info.h"
 #include "../../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <lvgl.h>
@@ -42,6 +43,49 @@ using namespace responsive;
 
 static lv_obj_t* g_date_row = nullptr;   // for live update after setting time
 static lv_obj_t* g_time_row = nullptr;
+
+static void show_build_info_dialog(lv_obj_t* parent)
+{
+    const auto& info = sigurdos::build::info();
+    auto dlg_sz = dialog_size(284, 190);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(dlg, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Build Info");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    char body[384];
+    snprintf(body, sizeof(body),
+             "Version: %s\nGit: %s%s\nMeshCore: %s\nEnv: %s\nPartitions: %s\nBoard: %s\nMCU: %s",
+             info.firmware_version, info.git_sha, info.git_dirty ? " dirty" : "",
+             info.meshcore_sha, info.build_env, info.partitions, info.board, info.mcu);
+    lv_obj_t* text = lv_label_create(dlg);
+    lv_label_set_text(text, body);
+    lv_obj_set_width(text, dlg_sz.w - 18);
+    lv_obj_set_style_text_color(text, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(text, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(text, LV_ALIGN_TOP_LEFT, 9, 32);
+
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 88, 26);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(close_btn, 0, 0);
+    lv_obj_t* cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "Close");
+    lv_obj_center(cl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* ev) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
+    }, LV_EVENT_CLICKED, nullptr);
+}
 
 struct DateTimeDialogCtx {
     lv_obj_t* input;
@@ -825,6 +869,19 @@ void settings_system_show()
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
     row++;
+    {
+        const auto& info = sigurdos::build::info();
+        snprintf(buf, sizeof(buf), "  Build: %s / %s", info.git_sha, info.build_env);
+        lv_obj_t* rb = lv_list_add_btn(list, LV_SYMBOL_HOME, buf);
+        lv_obj_set_style_bg_color(rb, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(rb, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(rb, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(rb, [](lv_event_t* e) {
+            show_build_info_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
     snprintf(buf, sizeof(buf), "  SigurdOS " SIGURDOS_VERSION);
     lv_obj_t* rv = lv_list_add_btn(list, LV_SYMBOL_HOME, buf);
     lv_obj_set_style_bg_color(rv, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);

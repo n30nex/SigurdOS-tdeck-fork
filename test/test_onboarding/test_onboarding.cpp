@@ -44,6 +44,20 @@ TEST(OnboardingValidation, DateRejectsInvalidValues) {
     EXPECT_FALSE(onboarding_date_valid(2025, 2, 29));
 }
 
+TEST(OnboardingValidation, ClampDayHandlesMonthAndLeapChanges) {
+    EXPECT_EQ(29, onboarding_clamp_day(2024, 2, 31));
+    EXPECT_EQ(28, onboarding_clamp_day(2025, 2, 31));
+    EXPECT_EQ(30, onboarding_clamp_day(2025, 4, 31));
+    EXPECT_EQ(1, onboarding_clamp_day(2025, 13, 31));
+    EXPECT_EQ(1, onboarding_clamp_day(2025, 1, 0));
+}
+
+TEST(OnboardingValidation, WrapRangeMovesAcrossBounds) {
+    EXPECT_EQ(12, onboarding_wrap_range(0, 1, 12));
+    EXPECT_EQ(1, onboarding_wrap_range(13, 1, 12));
+    EXPECT_EQ(5, onboarding_wrap_range(5, 1, 12));
+}
+
 TEST(OnboardingValidation, TimeAcceptsValidBoundaries) {
     EXPECT_TRUE(onboarding_time_valid(0, 0));
     EXPECT_TRUE(onboarding_time_valid(12, 34));

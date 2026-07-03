@@ -133,6 +133,7 @@ static void print_help() {
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  sendchannel <ch> <text>          Send on a channel        ║"));
     Serial.println(F("║  addchannel <name> [psk]          Add channel              ║"));
+    Serial.println(F("║  removechannel <idx|name>         Remove a saved channel   ║"));
     Serial.println(F("║  addrepeater <name>           Add test repeater contact  ║"));
 
     Serial.println(F("║  addroomserver <name>        Add test room server    ║"));
@@ -141,6 +142,7 @@ static void print_help() {
 
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  keydiag     Dump keyboard diagnostics║"));
     Serial.println(F("║  contactstats Show contact counters ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
@@ -1001,6 +1003,71 @@ static void cmd_addchannel(const char* arg) {
     }
 }
 
+// ── Remove channel ───────────────────────────────────
+static void cmd_removechannel(const char* arg) {
+    if (!arg || arg[0] == '\0') {
+        Serial.println("[test] removechannel: usage: removechannel <idx|name>");
+        return;
+    }
+
+    int idx = -1;
+    bool numeric = true;
+    for (const char* p = arg; *p; ++p) {
+        if (!isdigit((unsigned char)*p)) {
+            numeric = false;
+            break;
+        }
+    }
+    if (numeric) {
+        idx = atoi(arg);
+    } else {
+        char names[8][37] = {};
+        const int n = sigurdos::mesh::exportChannels(names, 8);
+        const char* wanted = arg[0] == '#' ? arg + 1 : arg;
+        for (int i = 0; i < n; ++i) {
+            const char* have = names[i][0] == '#' ? names[i] + 1 : names[i];
+            if (strcmp(have, wanted) == 0) {
+                idx = i;
+                break;
+            }
+        }
+    }
+
+    if (idx < 0) {
+        Serial.printf("[test] removechannel FAILED: %s not found\n", arg);
+        return;
+    }
+
+    bool ok = sigurdos::mesh::removeChannel(idx);
+    Serial.printf("[test] removechannel %s: idx=%d %s\n", arg, idx, ok ? "OK" : "FAILED");
+}
+
+// ── Keyboard diagnostics ───────────────────────────────
+static void cmd_keydiag() {
+    SigurdOSKeyboardDiag d{};
+    bool ok = sigurdos_keyboard_get_diag(&d);
+    char key_char = (d.last_key_mode_byte >= 0x20 && d.last_key_mode_byte < 0x7F)
+        ? (char)d.last_key_mode_byte
+        : '.';
+    char out_char = (d.last_output_codepoint >= 0x20 && d.last_output_codepoint < 0x7F)
+        ? (char)d.last_output_codepoint
+        : '.';
+    Serial.printf("[test] keydiag: ok=%d init=%d raw_supported=%d raw_unavailable=%d raw_valid=%d layout=%u\n",
+                  ok ? 1 : 0, d.initialized ? 1 : 0, d.raw_supported ? 1 : 0,
+                  d.raw_unavailable ? 1 : 0, d.raw_valid ? 1 : 0, d.layout);
+    Serial.printf("[test] keydiag: keymode=0x%02X '%c' output=U+%04lX '%c' events=%lu overwrites=%lu last_ms=%lu\n",
+                  d.last_key_mode_byte, key_char,
+                  (unsigned long)d.last_output_codepoint, out_char,
+                  (unsigned long)d.event_count,
+                  (unsigned long)d.overwrite_count,
+                  (unsigned long)d.last_event_ms);
+    Serial.printf("[test] keydiag: raw=%02X %02X %02X %02X %02X shift=%d ctrl=%d alt=%d sym=%d mic=%d\n",
+                  d.raw_matrix[0], d.raw_matrix[1], d.raw_matrix[2],
+                  d.raw_matrix[3], d.raw_matrix[4],
+                  d.shift ? 1 : 0, d.ctrl ? 1 : 0, d.alt ? 1 : 0,
+                  d.sym_down ? 1 : 0, d.mic_down ? 1 : 0);
+}
+
 static void dump_focused_widget() {
     lv_group_t* g = lv_group_get_default();
     if (!g) { Serial.println("[test] focus: no default group"); return; }
@@ -1167,6 +1234,10 @@ static bool dispatch(const char* line) {
     } else if (strcmp(cmd, "addchannel") == 0 || strcmp(cmd, "addchan") == 0) {
         if (!arg) { Serial.println("[test] addchannel: missing args"); return true; }
         cmd_addchannel(arg);
+    } else if (strcmp(cmd, "removechannel") == 0 || strcmp(cmd, "rmchannel") == 0 ||
+               strcmp(cmd, "removechan") == 0 || strcmp(cmd, "rmchan") == 0) {
+        if (!arg) { Serial.println("[test] removechannel: missing args"); return true; }
+        cmd_removechannel(arg);
     } else if (strcmp(cmd, "addrepeater") == 0) {
         if (!arg) { Serial.println("[test] addrepeater: missing name"); return true; }
         bool ok = sigurdos::mesh::addTestRepeater(arg);
@@ -1256,6 +1327,8 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "keydiag") == 0 || strcmp(cmd, "kbddiag") == 0) {
+        cmd_keydiag();
     } else if (strcmp(cmd, "contactstats") == 0) {
         cmd_contactstats();
     } else if (strcmp(cmd, "debug") == 0) {
