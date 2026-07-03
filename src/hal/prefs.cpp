@@ -43,6 +43,7 @@ bool prefs_load(NodePrefs& p) {
     p.kbd_backlight = nvs.getUChar("kbd_bl", 127);
     p.kbd_layout = nvs.getUChar("kbd_layout", 0);
     if (p.kbd_layout >= 12) p.kbd_layout = 0;
+    p.kbd_raw_overlay = nvs.getBool("kbd_raw", false);
     p.display_brightness = nvs.getUChar("disp_bl", 200);
     // Clamp recovered brightness to safe range (0 = dead screen, >240 may wrap)
     if (p.display_brightness < 20) p.display_brightness = 20;
@@ -121,6 +122,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putBool("cfg", p.configured);
     nvs.putUChar("kbd_bl", p.kbd_backlight);
     nvs.putUChar("kbd_layout", p.kbd_layout);
+    nvs.putBool("kbd_raw", p.kbd_raw_overlay);
     nvs.putUChar("disp_bl", p.display_brightness);
     nvs.putUShort("auto_off", p.auto_off_timeout);
     nvs.putUShort("chat_cap", p.chat_msg_cap);

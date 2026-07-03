@@ -117,6 +117,22 @@ TEST_F(PrefsTest, KeyboardLayoutRoundTripsThroughPrefs) {
     EXPECT_EQ(9, loaded.kbd_layout);
 }
 
+TEST_F(PrefsTest, KeyboardRawOverlayDefaultsOffAndRoundTrips) {
+    sigurdos::NodePrefs defaults;
+    defaults.set_defaults();
+    EXPECT_FALSE(defaults.kbd_raw_overlay);
+
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.kbd_raw_overlay = true;
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_TRUE(loaded.kbd_raw_overlay);
+}
+
 TEST_F(PrefsTest, RadioProfileRoundTripsThroughPrefs) {
     sigurdos::NodePrefs saved;
     saved.set_defaults();

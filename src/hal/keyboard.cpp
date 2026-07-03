@@ -51,9 +51,9 @@
 //
 // Key mode is the primary path. It lets the keyboard MCU own the physical
 // matrix mapping, which is required for T-Deck variants with different
-// matrices. A short raw sample accompanies each ASCII byte and also runs every
-// 20 ms for modifier-only taps. This recovers the host-side Alt/Mic/Sym features
-// that the MCU's ASCII protocol cannot express without raw-decoding normal keys.
+// matrices. Raw sampling is kept as an opt-in compatibility layer for the
+// older host-side Alt/Mic/Sym features because the raw matrix can differ
+// between keyboard variants and corrupt normal English/NA typing.
 //
 // Keymap (col × row, 5×7 matrix):
 //   Col0: q w sym a ALT SPC Mic
@@ -270,6 +270,11 @@ static bool set_keyboard_mode(uint8_t command)
     Wire.beginTransmission(KB_I2C_ADDR);
     Wire.write(command);
     return Wire.endTransmission() == 0;
+}
+
+static bool raw_overlay_enabled()
+{
+    return sigurdos::prefs_get().kbd_raw_overlay;
 }
 
 static const RawKeyDef* active_raw_key(const uint8_t matrix[KB_RAW_COLS])
@@ -556,7 +561,9 @@ bool sigurdos_keyboard_init()
     }
 
     key_mode_ready = true;
-    raw_sampler_support = RawSamplerSupport::Unknown;
+    raw_sampler_support = raw_overlay_enabled()
+        ? RawSamplerSupport::Unknown
+        : RawSamplerSupport::Unavailable;
     raw_single_byte_samples = 0;
     last_raw_sample_ms = millis();
     initialized = true;
@@ -575,14 +582,17 @@ void sigurdos_keyboard_scan()
     last_poll_ms = now;
 
     // I2C clock is set once in TDeckBoard::begin().
-    if (raw_sampler_support != RawSamplerSupport::Unavailable &&
+    if (raw_overlay_enabled() &&
+        raw_sampler_support != RawSamplerSupport::Unavailable &&
         now - last_raw_sample_ms >= KB_RAW_SAMPLE_INTERVAL_MS) {
         last_raw_sample_ms = now;
         sample_raw_modifiers();
         return;
     }
 
-    if (poll_key_mode() && raw_sampler_support != RawSamplerSupport::Unavailable) {
+    if (poll_key_mode() &&
+        raw_overlay_enabled() &&
+        raw_sampler_support != RawSamplerSupport::Unavailable) {
         // Correlate the ASCII byte with the matrix state while the physical
         // chord is still held. Periodic samples remain necessary for a tapped
         // modifier that produces no ASCII byte of its own.
@@ -675,7 +685,9 @@ void sigurdos_keyboard_reset_scan_state()
     mic_combo_used  = false;
     pending_key_valid = false;
     pending_key = 0;
-    raw_sampler_support = RawSamplerSupport::Unknown;
+    raw_sampler_support = raw_overlay_enabled()
+        ? RawSamplerSupport::Unknown
+        : RawSamplerSupport::Unavailable;
     raw_single_byte_samples = 0;
     diag_last_key_mode_byte = 0;
     memset(diag_raw_matrix, 0, sizeof(diag_raw_matrix));
@@ -718,6 +730,7 @@ bool sigurdos_keyboard_get_diag(SigurdOSKeyboardDiag* out)
     out->shift = shift_held;
     out->ctrl = ctrl_held;
     out->alt = alt_held;
+    out->raw_overlay_enabled = raw_overlay_enabled();
     out->sym_down = sym_sample_down;
     out->mic_down = mic_sample_down;
     out->layout = sigurdos::prefs_get().kbd_layout;

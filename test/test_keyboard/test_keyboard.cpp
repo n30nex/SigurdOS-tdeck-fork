@@ -32,6 +32,7 @@
 #include "hal/tdeck_pins.h"
 #include "hal/i2c_bus.h"
 #include "hal/keyboard.h"
+#include "hal/prefs.h"
 #include "Arduino.h"
 #include <cstdint>
 #include <initializer_list>
@@ -44,7 +45,11 @@ protected:
     void SetUp() override {
         arduino_mock::reset();
         Wire = TwoWire();
+        sigurdos::NodePrefs prefs;
+        prefs.set_defaults();
+        sigurdos::prefs_set(prefs);
         sigurdos_keyboard_reset_init_for_test();
+        raw_overlay_enabled_ = false;
     }
 
     void init_with_ack() {
@@ -101,9 +106,18 @@ protected:
         std::initializer_list<std::pair<uint8_t, uint8_t>> pressed = {}) {
         arduino_mock::current_millis += 6;
         Wire.mock_queue_rx_byte(key_byte);
-        queue_raw(pressed);
+        if (raw_overlay_enabled_) queue_raw(pressed);
         sigurdos_keyboard_scan();
     }
+
+    void enable_raw_overlay() {
+        auto prefs = sigurdos::prefs_get();
+        prefs.kbd_raw_overlay = true;
+        sigurdos::prefs_set(prefs);
+        raw_overlay_enabled_ = true;
+    }
+
+    bool raw_overlay_enabled_ = false;
 };
 
 // ════════════════════════════════════════════════════════
@@ -418,7 +432,21 @@ TEST_F(KeyboardTest, KeyModeAcceptsC3SymbolLayerCharacters) {
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 
+TEST_F(KeyboardTest, FactoryModeDoesNotEnterRawModeByDefault) {
+    init_with_ack();
+    scan_key_and_sample('q', {{3, 0}});
+
+    SigurdOSKeyboardDiag diag{};
+    EXPECT_TRUE(sigurdos_keyboard_get_diag(&diag));
+    EXPECT_FALSE(diag.raw_overlay_enabled);
+    EXPECT_TRUE(diag.raw_unavailable);
+    EXPECT_FALSE(diag.raw_valid);
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'q');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
 TEST_F(KeyboardTest, RawSampleRepairsC3ShiftSymbolEncoding) {
+    enable_raw_overlay();
     init_with_ack();
     // Published C3 firmware subtracts 32 from the unshifted symbol. The raw
     // sample identifies F so the host restores the matrix driver's '^'.
@@ -429,6 +457,7 @@ TEST_F(KeyboardTest, RawSampleRepairsC3ShiftSymbolEncoding) {
 }
 
 TEST_F(KeyboardTest, RawSampleKeepsMicUsableAsZeroOnSymLayer) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample('0', {{0, 2}, {0, 6}});
 
@@ -437,6 +466,7 @@ TEST_F(KeyboardTest, RawSampleKeepsMicUsableAsZeroOnSymLayer) {
 }
 
 TEST_F(KeyboardTest, RawSampleRepairsShiftSymMicEncoding) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample(0x10, {{0, 2}, {0, 6}, {1, 6}});
 
@@ -445,6 +475,7 @@ TEST_F(KeyboardTest, RawSampleRepairsShiftSymMicEncoding) {
 }
 
 TEST_F(KeyboardTest, RawSampleMapsAltCToCharacterPicker) {
+    enable_raw_overlay();
     init_with_ack();
     // The C3 encodes held Alt+C as 0x0C; raw modifier state disambiguates it
     // from the fallback channel-menu event.
@@ -455,6 +486,7 @@ TEST_F(KeyboardTest, RawSampleMapsAltCToCharacterPicker) {
 }
 
 TEST_F(KeyboardTest, RawSampleMapsShiftAltCToUpperCharacterPicker) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample(0x0C, {{0, 4}, {1, 6}, {2, 5}});
 
@@ -463,6 +495,7 @@ TEST_F(KeyboardTest, RawSampleMapsShiftAltCToUpperCharacterPicker) {
 }
 
 TEST_F(KeyboardTest, RawSampleMapsAltSpaceToChannelShortcut) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample(' ', {{0, 4}, {0, 5}});
 
@@ -471,6 +504,7 @@ TEST_F(KeyboardTest, RawSampleMapsAltSpaceToChannelShortcut) {
 }
 
 TEST_F(KeyboardTest, C3RetainsAltBBacklightOwnership) {
+    enable_raw_overlay();
     init_with_ack();
     sample_raw({{0, 4}, {3, 4}}); // C3 deliberately emits no key byte
 
@@ -484,6 +518,7 @@ TEST_F(KeyboardTest, C3RetainsAltBBacklightOwnership) {
 }
 
 TEST_F(KeyboardTest, KeyModeMapsEnterAndBackspace) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample(0x0D, {{3, 3}});
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x0D);
@@ -497,6 +532,7 @@ TEST_F(KeyboardTest, KeyModeMapsEnterAndBackspace) {
 }
 
 TEST_F(KeyboardTest, KeyModeMapsDedicatedDollarKey) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample('$', {{4, 4}});
 
@@ -505,6 +541,7 @@ TEST_F(KeyboardTest, KeyModeMapsDedicatedDollarKey) {
 }
 
 TEST_F(KeyboardTest, RawSampleMapsMicLayerToAccentedLatin) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample('u', {{0, 6}, {3, 0}});
 
@@ -513,6 +550,7 @@ TEST_F(KeyboardTest, RawSampleMapsMicLayerToAccentedLatin) {
 }
 
 TEST_F(KeyboardTest, RawSampleMapsShiftMicLayerToUpperAccentedLatin) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample('U', {{0, 6}, {1, 6}, {3, 0}});
 
@@ -521,6 +559,7 @@ TEST_F(KeyboardTest, RawSampleMapsShiftMicLayerToUpperAccentedLatin) {
 }
 
 TEST_F(KeyboardTest, RawSampleCoversFrenchAccentExamples) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample('t', {{0, 6}, {2, 2}});
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00EA);
@@ -540,6 +579,7 @@ TEST_F(KeyboardTest, RawSampleCoversFrenchAccentExamples) {
 }
 
 TEST_F(KeyboardTest, RawSampleSupportsOneShotMicLayer) {
+    enable_raw_overlay();
     init_with_ack();
     sample_raw({{0, 6}});
     EXPECT_FALSE(sigurdos_keyboard_has_event());
@@ -551,6 +591,7 @@ TEST_F(KeyboardTest, RawSampleSupportsOneShotMicLayer) {
 }
 
 TEST_F(KeyboardTest, RawSampleSupportsOneShotAltLayer) {
+    enable_raw_overlay();
     init_with_ack();
     sample_raw({{0, 4}});
     EXPECT_FALSE(sigurdos_keyboard_has_event());
@@ -562,6 +603,7 @@ TEST_F(KeyboardTest, RawSampleSupportsOneShotAltLayer) {
 }
 
 TEST_F(KeyboardTest, ModifierTransformDoesNotDuplicateBaseCharacter) {
+    enable_raw_overlay();
     init_with_ack();
     scan_key_and_sample('u', {{0, 6}, {3, 0}});
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00FC);
@@ -571,6 +613,7 @@ TEST_F(KeyboardTest, ModifierTransformDoesNotDuplicateBaseCharacter) {
 }
 
 TEST_F(KeyboardTest, LegacyC3WithoutRawModeFallsBackToImmediateKeyMode) {
+    enable_raw_overlay();
     init_with_ack();
     sample_legacy_single_byte(0x00);
     sample_legacy_single_byte(0x00);
@@ -582,6 +625,7 @@ TEST_F(KeyboardTest, LegacyC3WithoutRawModeFallsBackToImmediateKeyMode) {
 }
 
 TEST_F(KeyboardTest, RawSampleAlwaysRestoresKeyMode) {
+    enable_raw_overlay();
     init_with_ack();
     sample_raw({});
 
@@ -601,6 +645,7 @@ TEST_F(KeyboardTest, CharacterPickerKeyHelpersPreserveBaseCharacter) {
 }
 
 TEST_F(KeyboardTest, RawSampleSupportsOneShotSymLayer) {
+    enable_raw_overlay();
     init_with_ack();
     sample_raw({{0, 2}});
     EXPECT_FALSE(sigurdos_keyboard_has_event());

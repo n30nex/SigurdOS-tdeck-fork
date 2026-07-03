@@ -86,6 +86,7 @@ TEST(PrefsDefaultsTest, UiConnectivityAndRegionDefaultsAreInitialized) {
 
     EXPECT_EQ(127, prefs.kbd_backlight);
     EXPECT_EQ(0, prefs.kbd_layout);
+    EXPECT_FALSE(prefs.kbd_raw_overlay);
     EXPECT_EQ(200, prefs.display_brightness);
     EXPECT_EQ(30, prefs.auto_off_timeout);
     EXPECT_EQ(0, prefs.theme_id);

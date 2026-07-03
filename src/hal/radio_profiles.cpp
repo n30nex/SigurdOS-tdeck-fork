@@ -12,16 +12,36 @@ namespace sigurdos {
 namespace {
 
 static constexpr RadioProfile PROFILES[] = {
-    {"us_902_928", "United States", "USA 902-928", "902-928 MHz",
-     915.000f, 62.5f, 8, 5, 22},
-    {"ca_902_928", "Canada", "Canada 902-928", "902-928 MHz",
-     915.000f, 62.5f, 8, 5, 22},
-    {"eu_868", "Europe", "EU 868", "868 MHz",
-     868.000f, 62.5f, 8, 5, 22},
-    {"uk_869_525", "United Kingdom", "UK 869.525", "869 MHz",
-     869.525f, 250.0f, 10, 5, 22},
-    {"uk_869_618", "United Kingdom alt", "UK 869.618", "869 MHz",
-     869.618f, 62.5f, 8, 5, 22},
+    {"na_rec", "USA/Canada (Recommended)", "USA/Canada", "902-928 MHz",
+     910.525f, 62.5f, 7, 5, 22, 2},
+    {"na_alt", "USA/Canada (Alternate)", "NA Alt", "902-928 MHz",
+     910.525f, 250.0f, 11, 5, 22, 2},
+    {"au", "Australia", "Australia", "915 MHz",
+     915.800f, 250.0f, 10, 5, 22, 0},
+    {"au_vic", "Australia: Victoria", "AU Victoria", "915 MHz",
+     916.575f, 62.5f, 7, 8, 22, 0},
+    {"eu_uk_n", "EU/UK (Narrow)", "EU/UK N", "868 MHz",
+     869.618f, 62.5f, 8, 8, 22, 0},
+    {"eu_uk_lr", "EU/UK (Long Range)", "EU/UK LR", "868 MHz",
+     869.525f, 250.0f, 11, 5, 22, 0},
+    {"eu_uk_mr", "EU/UK (Medium Range)", "EU/UK MR", "868 MHz",
+     869.525f, 250.0f, 10, 5, 22, 0},
+    {"cz_n", "Czech Republic (Narrow)", "Czech N", "868 MHz",
+     869.525f, 62.5f, 7, 5, 22, 0},
+    {"eu433_lr", "EU 433MHz (Long Range)", "EU433 LR", "433 MHz",
+     433.650f, 250.0f, 11, 5, 22, 0},
+    {"nz", "New Zealand", "New Zealand", "915 MHz",
+     917.375f, 250.0f, 11, 5, 22, 0},
+    {"nz_n", "New Zealand (Narrow)", "NZ Narrow", "915 MHz",
+     917.375f, 62.5f, 7, 5, 22, 0},
+    {"pt433", "Portugal 433", "PT 433", "433 MHz",
+     433.375f, 62.5f, 9, 6, 22, 0},
+    {"pt868", "Portugal 868", "PT 868", "868 MHz",
+     869.618f, 62.5f, 7, 6, 22, 0},
+    {"ch", "Switzerland", "Switzerland", "868 MHz",
+     869.618f, 62.5f, 8, 8, 22, 0},
+    {"vn", "Vietnam", "Vietnam", "920 MHz",
+     920.250f, 250.0f, 11, 5, 22, 0},
 };
 
 static bool nearly_equal(float a, float b, float epsilon)
@@ -57,6 +77,17 @@ const RadioProfile* radio_profile_default()
 const RadioProfile* radio_profile_find(const char* id)
 {
     if (!id || !id[0]) return nullptr;
+    if (std::strcmp(id, "us_902_928") == 0 ||
+        std::strcmp(id, "ca_902_928") == 0) {
+        return radio_profile_default();
+    }
+    if (std::strcmp(id, "eu_868") == 0 ||
+        std::strcmp(id, "uk_869_618") == 0) {
+        return radio_profile_find("eu_uk_n");
+    }
+    if (std::strcmp(id, "uk_869_525") == 0) {
+        return radio_profile_find("eu_uk_mr");
+    }
     for (size_t i = 0; i < radio_profile_count(); ++i) {
         if (std::strcmp(PROFILES[i].id, id) == 0) return &PROFILES[i];
     }
@@ -99,6 +130,7 @@ void radio_profile_apply(const RadioProfile& profile, NodePrefs& prefs)
     prefs.sf = profile.sf;
     prefs.cr = profile.cr;
     prefs.tx_power_dbm = profile.tx_power_dbm;
+    prefs.path_hash_mode = profile.path_hash_mode;
     prefs.configured = true;
     copy_profile_id(prefs.radio_profile, profile.id);
 }

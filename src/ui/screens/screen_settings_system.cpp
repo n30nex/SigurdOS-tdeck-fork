@@ -303,7 +303,9 @@ static void input_diag_update(InputDiagDialogCtx* ctx)
              (unsigned long)kd.event_count,
              (unsigned long)kd.overwrite_count,
              (unsigned long)kd.last_event_ms,
-             kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "n/a",
+             kd.raw_overlay_enabled
+                ? (kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "wait")
+                : "off",
              kd.raw_matrix[0],
              kd.raw_matrix[1],
              kd.raw_matrix[2],
@@ -635,6 +637,25 @@ void settings_system_show()
     lv_obj_set_style_text_color(btn_input_diag, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(btn_input_diag, [](lv_event_t* e) {
         show_input_diag_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Keyboard raw overlay
+    snprintf(buf, sizeof(buf), "  Keyboard Mode: %s",
+             p.kbd_raw_overlay ? "Enhanced" : "Factory");
+    lv_obj_t* btn_kbd_mode = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD, buf);
+    lv_obj_set_style_bg_color(btn_kbd_mode, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_kbd_mode, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_kbd_mode, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_kbd_mode, [](lv_event_t* e) {
+        auto np = sigurdos::prefs_get();
+        np.kbd_raw_overlay = !np.kbd_raw_overlay;
+        sigurdos::prefs_set(np);
+        char label[48];
+        snprintf(label, sizeof(label), "  Keyboard Mode: %s",
+                 np.kbd_raw_overlay ? "Enhanced" : "Factory");
+        update_row_label((lv_obj_t*)lv_event_get_target(e), label);
+        sigurdos_keyboard_reset_scan_state();
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 

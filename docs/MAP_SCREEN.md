@@ -141,7 +141,7 @@ The default is preset-aware:
 
 | Radio profile | Default center | Zoom |
 |---------------|----------------|------|
-| `us_902_928` or unset/custom | 39.8283, -98.5795 | 4 |
+| `na_rec`, `us_902_928`, or unset/custom | 39.8283, -98.5795 | 4 |
 | `ca_902_928` | 56.1304, -106.3468 | 3 |
 
 These are only startup fallbacks. If SD tiles are present, discovery centers on the available tile coverage. If `/sdcard/tiles/metadata.json` has bounds, metadata overrides both the preset fallback and coverage sample.

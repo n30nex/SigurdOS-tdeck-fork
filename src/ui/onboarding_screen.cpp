@@ -3,6 +3,7 @@
 #include "theme.h"
 #include "responsive.h"
 #include "chat_screen.h"
+#include "repeat_button.h"
 #include "screens.h"
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
@@ -41,7 +42,7 @@ static lv_obj_t* s_content = nullptr;
 static lv_obj_t* s_name_input = nullptr;
 static lv_obj_t* s_dt_value_labels[5] = {};
 static lv_obj_t* s_dt_error_label = nullptr;
-static lv_obj_t* s_profile_btns[8] = {};
+static lv_obj_t* s_profile_btns[16] = {};
 static lv_obj_t* s_profile_summary_label = nullptr;
 static lv_obj_t* s_sf_label = nullptr;
 static lv_obj_t* s_pwr_label = nullptr;
@@ -148,6 +149,14 @@ static void datetime_adjust_cb(lv_event_t* e)
     adjust_datetime_field(field, delta);
 }
 
+static void datetime_adjust_action(void* user_data)
+{
+    intptr_t packed = (intptr_t)user_data;
+    DateTimeField field = (DateTimeField)((packed >> 8) & 0xFF);
+    int delta = (packed & 0xFF) == 1 ? 1 : -1;
+    adjust_datetime_field(field, delta);
+}
+
 static void add_to_group(lv_obj_t* obj)
 {
     lv_group_t* g = lv_group_get_default();
@@ -181,8 +190,8 @@ static void add_datetime_row(const char* label, DateTimeField field, int y)
 
     lv_obj_t* minus = make_small_button(s_content, 32, 22, "-", ACCENT_RED);
     lv_obj_align(minus, LV_ALIGN_TOP_LEFT, 88, y);
-    lv_obj_add_event_cb(minus, datetime_adjust_cb, LV_EVENT_CLICKED,
-                        (void*)(intptr_t)(((int)field << 8) | 0));
+    attach_hold_repeat(minus, datetime_adjust_action,
+                       (void*)(intptr_t)(((int)field << 8) | 0));
 
     lv_obj_t* value = make_small_button(s_content, 78, 22, "", BG_INPUT);
     lv_obj_align(value, LV_ALIGN_TOP_LEFT, 126, y);
@@ -192,8 +201,8 @@ static void add_datetime_row(const char* label, DateTimeField field, int y)
 
     lv_obj_t* plus = make_small_button(s_content, 32, 22, "+", ACCENT);
     lv_obj_align(plus, LV_ALIGN_TOP_LEFT, 210, y);
-    lv_obj_add_event_cb(plus, datetime_adjust_cb, LV_EVENT_CLICKED,
-                        (void*)(intptr_t)(((int)field << 8) | 1));
+    attach_hold_repeat(plus, datetime_adjust_action,
+                       (void*)(intptr_t)(((int)field << 8) | 1));
 }
 
 static void select_radio_profile(const sigurdos::RadioProfile* profile)
@@ -214,8 +223,9 @@ static void select_radio_profile(const sigurdos::RadioProfile* profile)
     }
     if (s_profile_summary_label) {
         char summary[96];
-        snprintf(summary, sizeof(summary), "%.3f MHz / SF%d / BW%.1f / CR4/%d",
-                 profile->freq_mhz, profile->sf, profile->bw_khz, profile->cr);
+        snprintf(summary, sizeof(summary), "%.3f MHz / SF%d / BW%.1f / CR4/%d / PH%dB",
+                 profile->freq_mhz, profile->sf, profile->bw_khz, profile->cr,
+                 profile->path_hash_mode + 1);
         lv_label_set_text(s_profile_summary_label, summary);
     }
 }
@@ -403,14 +413,23 @@ static void build_step3()
     lv_obj_set_style_text_font(hint, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 20);
 
-    int fy = 42;
+    lv_obj_t* profile_list = lv_obj_create(s_content);
+    lv_obj_set_size(profile_list, DISPLAY_W - 24, 104);
+    lv_obj_align(profile_list, LV_ALIGN_TOP_MID, 0, 42);
+    lv_obj_set_style_bg_opa(profile_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(profile_list, 0, 0);
+    lv_obj_set_style_pad_all(profile_list, 0, 0);
+    lv_obj_set_scroll_dir(profile_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(profile_list, LV_SCROLLBAR_MODE_AUTO);
+
+    int fy = 0;
     const size_t count = sigurdos::radio_profile_count();
     const size_t max_buttons = sizeof(s_profile_btns) / sizeof(s_profile_btns[0]);
     for (size_t i = 0; i < count && i < max_buttons; i++) {
         const auto* profile = sigurdos::radio_profile_at(i);
         if (!profile) continue;
-        auto* btn = lv_btn_create(s_content);
-        lv_obj_set_size(btn, 230, 20);
+        auto* btn = lv_btn_create(profile_list);
+        lv_obj_set_size(btn, DISPLAY_W - 48, 20);
         lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, fy);
         bool selected = s_radio_profile && strcmp(s_radio_profile->id, profile->id) == 0;
         lv_obj_set_style_bg_color(btn, lv_color_hex(selected ? 0x2a5a2a : BG_TERTIARY), 0);
@@ -438,9 +457,10 @@ static void build_step3()
     // Summary row reflects the selected profile.
     char summary[96];
     if (s_radio_profile) {
-        snprintf(summary, sizeof(summary), "%.3f MHz / SF%d / BW%.1f / CR4/%d",
+        snprintf(summary, sizeof(summary), "%.3f MHz / SF%d / BW%.1f / CR4/%d / PH%dB",
                  s_radio_profile->freq_mhz, s_radio_profile->sf,
-                 s_radio_profile->bw_khz, s_radio_profile->cr);
+                 s_radio_profile->bw_khz, s_radio_profile->cr,
+                 s_radio_profile->path_hash_mode + 1);
     } else {
         snprintf(summary, sizeof(summary), "%.3f MHz / SF%d", s_freq, s_sf);
     }
@@ -450,7 +470,7 @@ static void build_step3()
     lv_obj_set_style_text_align(s_profile_summary_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(s_profile_summary_label, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(s_profile_summary_label, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(s_profile_summary_label, LV_ALIGN_TOP_MID, 0, fy + 4);
+    lv_obj_align(s_profile_summary_label, LV_ALIGN_TOP_MID, 0, 152);
 
     // Bottom: Back + Done
     lv_obj_t* back_btn = lv_btn_create(s_content);

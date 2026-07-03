@@ -11,6 +11,12 @@ namespace sigurdos {
 
 static NodePrefs g_prefs;
 
+struct PrefDefaults {
+    PrefDefaults() { g_prefs.set_defaults(); }
+};
+
+static PrefDefaults g_defaults;
+
 bool prefs_load(NodePrefs& p) {
     p = g_prefs;
     return true;

@@ -10,62 +10,74 @@
 
 namespace {
 
-TEST(RadioProfilesTest, DefaultProfileIsUnitedStates915) {
+TEST(RadioProfilesTest, DefaultProfileIsUsaCanadaRecommended) {
     const auto* profile = sigurdos::radio_profile_default();
 
     ASSERT_NE(nullptr, profile);
-    EXPECT_STREQ("us_902_928", profile->id);
-    EXPECT_STREQ("USA 902-928", profile->short_label);
-    EXPECT_FLOAT_EQ(915.000f, profile->freq_mhz);
+    EXPECT_STREQ("na_rec", profile->id);
+    EXPECT_STREQ("USA/Canada", profile->short_label);
+    EXPECT_FLOAT_EQ(910.525f, profile->freq_mhz);
     EXPECT_FLOAT_EQ(62.5f, profile->bw_khz);
-    EXPECT_EQ(8, profile->sf);
+    EXPECT_EQ(7, profile->sf);
     EXPECT_EQ(5, profile->cr);
     EXPECT_EQ(22, profile->tx_power_dbm);
+    EXPECT_EQ(2, profile->path_hash_mode);
 }
 
-TEST(RadioProfilesTest, UnitedStatesAndCanadaUseAuditTuple) {
+TEST(RadioProfilesTest, LegacyUnitedStatesAndCanadaIdsResolveToMergedPreset) {
     const auto* us = sigurdos::radio_profile_find("us_902_928");
     const auto* ca = sigurdos::radio_profile_find("ca_902_928");
 
     ASSERT_NE(nullptr, us);
     ASSERT_NE(nullptr, ca);
-    EXPECT_FLOAT_EQ(us->freq_mhz, ca->freq_mhz);
-    EXPECT_FLOAT_EQ(915.000f, ca->freq_mhz);
+    EXPECT_EQ(us, ca);
+    EXPECT_STREQ("na_rec", ca->id);
+    EXPECT_FLOAT_EQ(910.525f, ca->freq_mhz);
     EXPECT_FLOAT_EQ(62.5f, ca->bw_khz);
-    EXPECT_EQ(8, ca->sf);
+    EXPECT_EQ(7, ca->sf);
     EXPECT_EQ(5, ca->cr);
     EXPECT_EQ(22, ca->tx_power_dbm);
+    EXPECT_EQ(2, ca->path_hash_mode);
 }
 
-TEST(RadioProfilesTest, ApplySetsPrefsAndKeepsTransmitGuardExplicit) {
+TEST(RadioProfilesTest, ApplySetsPrefsAndPathHashMode) {
     sigurdos::NodePrefs prefs;
     prefs.set_defaults();
     ASSERT_FALSE(prefs.configured);
 
-    const auto* ca = sigurdos::radio_profile_find("ca_902_928");
-    ASSERT_NE(nullptr, ca);
-    sigurdos::radio_profile_apply(*ca, prefs);
+    const auto* na = sigurdos::radio_profile_find("na_rec");
+    ASSERT_NE(nullptr, na);
+    sigurdos::radio_profile_apply(*na, prefs);
 
     EXPECT_TRUE(prefs.configured);
-    EXPECT_STREQ("ca_902_928", prefs.radio_profile);
-    EXPECT_FLOAT_EQ(915.000f, prefs.freq);
+    EXPECT_STREQ("na_rec", prefs.radio_profile);
+    EXPECT_FLOAT_EQ(910.525f, prefs.freq);
     EXPECT_FLOAT_EQ(62.5f, prefs.bw);
-    EXPECT_EQ(8, prefs.sf);
+    EXPECT_EQ(7, prefs.sf);
     EXPECT_EQ(5, prefs.cr);
     EXPECT_EQ(22, prefs.tx_power_dbm);
+    EXPECT_EQ(2, prefs.path_hash_mode);
 }
 
-TEST(RadioProfilesTest, SavedProfileBreaksTiesForIdenticalTuples) {
+TEST(RadioProfilesTest, MatchUsesSavedMergedPreset) {
     sigurdos::NodePrefs prefs;
     prefs.set_defaults();
-    const auto* ca = sigurdos::radio_profile_find("ca_902_928");
-    ASSERT_NE(nullptr, ca);
-    sigurdos::radio_profile_apply(*ca, prefs);
+    const auto* na = sigurdos::radio_profile_find("na_rec");
+    ASSERT_NE(nullptr, na);
+    sigurdos::radio_profile_apply(*na, prefs);
 
     const auto* matched = sigurdos::radio_profile_match(prefs);
 
     ASSERT_NE(nullptr, matched);
-    EXPECT_STREQ("ca_902_928", matched->id);
+    EXPECT_STREQ("na_rec", matched->id);
+}
+
+TEST(RadioProfilesTest, IncludesCommunityPresetMatrix) {
+    EXPECT_NE(nullptr, sigurdos::radio_profile_find("au"));
+    EXPECT_NE(nullptr, sigurdos::radio_profile_find("eu_uk_n"));
+    EXPECT_NE(nullptr, sigurdos::radio_profile_find("nz_n"));
+    EXPECT_NE(nullptr, sigurdos::radio_profile_find("pt868"));
+    EXPECT_NE(nullptr, sigurdos::radio_profile_find("vn"));
 }
 
 TEST(RadioProfilesTest, CustomMarksManualSettings) {
