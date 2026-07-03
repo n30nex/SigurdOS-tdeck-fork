@@ -99,8 +99,9 @@ term-log
 Expected observations:
 
 - `help` lists the remote test controller commands.
-- `getrf` prints the expected frequency, spreading factor, bandwidth, coding
-  rate, and TX power for the artifact.
+- `getrf` prints the profile name, expected frequency, spreading factor,
+  bandwidth, coding rate, TX power, channel count, noise floor, RSSI/SNR,
+  airtime, packet counters, and packet-log count for the artifact.
 - RX-only builds also print `remote-test RX-only mode enabled; TX commands are
   blocked`.
 - `contactstats` gives the starting stored/exported/repeater/room/chat counts.
@@ -215,7 +216,8 @@ widgets
 
 Expected observations:
 
-- `getrf` does not print the RX-only warning.
+- `getrf` does not print the RX-only warning and captures the active profile,
+  channel count, live signal metrics, airtime, and packet counters before TX.
 - Baseline node stats and packet log are captured before transmit.
 - Existing contact, repeater, and room counts are known.
 
@@ -447,6 +449,17 @@ Expected observations:
 
 Pass if persistent state survives reboot and fresh packet logging still works.
 Fail if contacts/channels/messages disappear without an explicit factory reset.
+
+## Cleanup
+
+The auto-joined `#testingsigurdos` channel in forced remote-radio builds is
+RAM-only and is not saved during boot. Channels that were added manually during
+the run are persistent by design; remove temporary validation channels before
+returning the device to normal use:
+
+```text
+removechannel testingsigurdos
+```
 
 ## Final Pass Criteria
 

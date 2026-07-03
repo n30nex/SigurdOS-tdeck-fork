@@ -1212,9 +1212,30 @@ static void cmd_getrf() {
         return;
     }
 
-    Serial.printf("[test] getrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d\n",
+    Serial.printf("[test] getrf: profile=%s freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d channels=%d\n",
+#if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
+                  "remote_usca_rxonly",
+#elif defined(SIGURDOS_REMOTE_TEST_RADIO)
+                  "remote_radio",
+#elif defined(SIGURDOS_REMOTE_TEST)
+                  "remote_no_radio",
+#else
+                  "normal",
+#endif
                   p.freq, (int)p.sf, p.bw, (int)p.cr, (int)p.tx_power_dbm,
-                  (int)p.rx_boosted_gain);
+                  (int)p.rx_boosted_gain,
+                  sigurdos::mesh::getChannelCount());
+    Serial.printf("[test] getrf: noise=%d rssi=%d snr=%.1f tx_air_ms=%lu rx_air_ms=%lu sent_flood=%lu sent_direct=%lu recv_flood=%lu recv_direct=%lu pktlog=%d\n",
+                  sigurdos::mesh::getNoiseFloor(),
+                  sigurdos::mesh::getLastRSSI(),
+                  (double)sigurdos::mesh::getLastSNR(),
+                  (unsigned long)sigurdos::mesh::getTotalTxAirtimeMs(),
+                  (unsigned long)sigurdos::mesh::getTotalRxAirtimeMs(),
+                  (unsigned long)sigurdos::mesh::getNumSentFlood(),
+                  (unsigned long)sigurdos::mesh::getNumSentDirect(),
+                  (unsigned long)sigurdos::mesh::getNumRecvFlood(),
+                  (unsigned long)sigurdos::mesh::getNumRecvDirect(),
+                  sigurdos::mesh::getPacketLogCount());
 #if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
     Serial.println(F("[test] getrf: remote-test RX-only mode enabled; TX commands are blocked"));
 #endif
