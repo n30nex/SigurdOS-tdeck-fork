@@ -457,12 +457,34 @@ pct = ((mv - 3000) * 100) / (4200 - 3000);
 | `sigurdos_gps_fix_quality`| GGA            | uint8  (0=none, 1=GPS, 2=DGPS) |
 | `sigurdos_gps_has_fix`   | Combined        | bool   |
 | `sigurdos_gps_hour/min/sec` | GGA        | uint8  (UTC) |
+| `sigurdos_gps_active_baud` | UART state    | uint32 |
+| `sigurdos_gps_*_sentences` | Parser counters | uint32 |
+| `sigurdos_gps_gsv_snr_*` | GSV diagnostics | uint8 |
 
 ### Init Sequence
 
 1. `Serial1.begin(active_baud, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX)`, starting at 9600 baud and cycling once to 38400 baud if no checksum-valid NMEA is seen
 2. Buffer NMEA characters in 128-byte line buffer
 3. On `\n` delimiter, validate checksum and dispatch parser
+
+### Remote-Test Diagnostics
+
+The remote-test serial controller exposes `gpsdiag` for field validation. It
+prints UART/parser counters, satellite/fix fields, coordinates, UTC time, and an
+`assessment` string:
+
+| Assessment | Meaning |
+|------------|---------|
+| `not_initialized_or_no_uart` | GPS has not been started or no UART activity is visible |
+| `no_uart_chars` | UART is open but no bytes have arrived |
+| `partial_uart_no_lines` | Bytes are arriving but no complete NMEA lines have ended |
+| `checksum_failures` | NMEA-like lines are arriving but checksum validation is failing |
+| `no_valid_nmea` | Complete lines arrived but none parsed as checksum-valid NMEA |
+| `valid_nmea_no_gsv` | Parser is alive but no GSV satellite-view sentence has arrived |
+| `no_satellites_visible` | GSV is present but reports zero satellites in view |
+| `satellites_no_snr` | Satellites are listed, but no non-zero SNR/CN0 has been reported |
+| `satellites_waiting_fix` | Satellites/SNR are visible, but GGA/RMC has not reported a fix yet |
+| `fix` | GPS has a usable fix |
 
 ---
 
@@ -478,7 +500,7 @@ pct = ((mv - 3000) * 100) / (4200 - 3000);
 | SPI Speed          | **4 MHz** (`SD.begin(..., 4000000)`) |
 | Filesystem         | FATFS via Arduino SD library     |
 | VFS Mountpoint     | **`/sdcard`** (`SIGURDOS_SD_MOUNTPOINT`) |
-| Init Strategy     | Single attempt at boot (`sigurdos_sdcard_init()`) + lazy retry<br>via `sigurdos_sdcard_retry()` capped at 3 total attempts |
+| Init Strategy     | Three bounded boot attempts (0/120/300 ms backoff) + up to three lazy retries via `sigurdos_sdcard_retry()` |
 | Capacity           | Exposed via `sigurdos_sdcard_capacity_bytes()` |
 
 ### Shared Bus Note

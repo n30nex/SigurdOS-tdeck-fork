@@ -423,6 +423,7 @@ Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md)
 | [`docs/LOGGING.md`](LOGGING.md) | Logging subsystem API, verbosity levels, and configuration |
 | [`docs/MAP_SCREEN.md`](MAP_SCREEN.md) | Map screen and tile cache system documentation |
 | [`docs/MESH_NETWORKING.md`](MESH_NETWORKING.md) | Mesh networking protocol and features documentation |
+| [`docs/RF_INTEROP_TEST_PLAN.md`](RF_INTEROP_TEST_PLAN.md) | Local-node RF interop plan for repeaters, rooms, DMs, channels, packet logs, and trace/path validation |
 | [`docs/MISSING_FEATURES.md`](MISSING_FEATURES.md) | Companion parity audit: implemented, declined, and out-of-scope MeshCore deltas |
 | [`docs/NETWORK_SCREEN.md`](NETWORK_SCREEN.md) | Network screen documentation |
 | [`docs/ROADMAP.md`](ROADMAP.md) | Development roadmap and planned features |

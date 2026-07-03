@@ -151,7 +151,7 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | `OTA Branch` / `Pre-releases` | GitHub OTA release-selection options |
 | `OTA from GitHub` | Downloads the latest release `firmware.bin` and flashes it |
 | `Shut down` / `Reboot` / `Factory reset` | Power controls with confirmation; state is saved before restart |
-| `SigurdOS <version>` | Read-only — `SIGURDOS_VERSION` from `src/hal/tdeck_pins.h` |
+| `SigurdOS <version>` | Opens Build Info: firmware version, Git SHA/dirty flag, MeshCore SHA, build env, partition table, board/MCU, build source, Actions run id/attempt, and ref |
 
 Self-OTA rows refuse to start when the firmware detects it is running under bmorcelli/Launcher (see `docs/LAUNCHER_ROADMAP.md`) — updating must then go through Launcher instead.
 

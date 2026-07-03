@@ -28,6 +28,7 @@
 #include "hal/trackball.h"
 #include "hal/touch.h"
 #include "hal/keyboard.h"
+#include "hal/gps.h"
 #include "hal/prefs.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
@@ -145,6 +146,7 @@ static void print_help() {
     Serial.println(F("║  status      Show device state       ║"));
     Serial.println(F("║  keydiag     Dump keyboard diagnostics║"));
     Serial.println(F("║  inputdiag   Dump touch/trackball diag║"));
+    Serial.println(F("║  gpsdiag     Dump GPS UART/fix diag   ║"));
     Serial.println(F("║  contactstats Show contact counters ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
@@ -1114,6 +1116,61 @@ static void cmd_inputdiag() {
                   bd.active[4] ? 1 : 0);
 }
 
+static const char* gps_diag_assessment()
+{
+    if (sigurdos_gps_active_baud() == 0 && sigurdos_gps_chars_processed() == 0) {
+        return "not_initialized_or_no_uart";
+    }
+    if (sigurdos_gps_chars_processed() == 0) return "no_uart_chars";
+    if (sigurdos_gps_sentences_received() == 0) return "partial_uart_no_lines";
+    if (sigurdos_gps_valid_sentences() == 0) {
+        return sigurdos_gps_checksum_failures() > 0
+            ? "checksum_failures"
+            : "no_valid_nmea";
+    }
+    if (sigurdos_gps_has_fix()) return "fix";
+    if (sigurdos_gps_gsv_sentences() == 0) return "valid_nmea_no_gsv";
+    if (sigurdos_gps_satellites_in_view() == 0) return "no_satellites_visible";
+    if (sigurdos_gps_gsv_snr_count() == 0) return "satellites_no_snr";
+    return "satellites_waiting_fix";
+}
+
+// ── GPS diagnostics ──────────────────────────────────────
+static void cmd_gpsdiag() {
+    const char rmc = sigurdos_gps_rmc_status() ? sigurdos_gps_rmc_status() : '-';
+    Serial.printf("[test] gpsdiag: assessment=%s fix=%d qual=%u sv=%u siv=%u ft=%u rmc=%c snr_max=%u snr_count=%u\n",
+                  gps_diag_assessment(),
+                  sigurdos_gps_has_fix() ? 1 : 0,
+                  (unsigned)sigurdos_gps_fix_quality(),
+                  (unsigned)sigurdos_gps_satellites(),
+                  (unsigned)sigurdos_gps_satellites_in_view(),
+                  (unsigned)sigurdos_gps_fix_type(),
+                  rmc,
+                  (unsigned)sigurdos_gps_gsv_snr_max(),
+                  (unsigned)sigurdos_gps_gsv_snr_count());
+    Serial.printf("[test] gpsdiag: baud=%lu chars=%lu sent=%lu valid=%lu gga=%lu rmc_s=%lu gsv=%lu gsa=%lu csfail=%lu switches=%lu\n",
+                  (unsigned long)sigurdos_gps_active_baud(),
+                  (unsigned long)sigurdos_gps_chars_processed(),
+                  (unsigned long)sigurdos_gps_sentences_received(),
+                  (unsigned long)sigurdos_gps_valid_sentences(),
+                  (unsigned long)sigurdos_gps_gga_sentences(),
+                  (unsigned long)sigurdos_gps_rmc_sentences(),
+                  (unsigned long)sigurdos_gps_gsv_sentences(),
+                  (unsigned long)sigurdos_gps_gsa_sentences(),
+                  (unsigned long)sigurdos_gps_checksum_failures(),
+                  (unsigned long)sigurdos_gps_baud_switches());
+    Serial.printf("[test] gpsdiag: lat=%.6f lon=%.6f alt=%.1f speed=%.1f heading=%.1f time=%02u:%02u:%02u synced=%d\n",
+                  (double)sigurdos_gps_latitude(),
+                  (double)sigurdos_gps_longitude(),
+                  (double)sigurdos_gps_altitude_m(),
+                  (double)sigurdos_gps_speed_kn(),
+                  (double)sigurdos_gps_heading(),
+                  (unsigned)sigurdos_gps_hour(),
+                  (unsigned)sigurdos_gps_minute(),
+                  (unsigned)sigurdos_gps_second(),
+                  sigurdos_gps_time_synced() ? 1 : 0);
+}
+
 static void dump_focused_widget() {
     lv_group_t* g = lv_group_get_default();
     if (!g) { Serial.println("[test] focus: no default group"); return; }
@@ -1381,6 +1438,8 @@ static bool dispatch(const char* line) {
     } else if (strcmp(cmd, "inputdiag") == 0 || strcmp(cmd, "touchdiag") == 0 ||
                strcmp(cmd, "trackballdiag") == 0 || strcmp(cmd, "tbdiag") == 0) {
         cmd_inputdiag();
+    } else if (strcmp(cmd, "gpsdiag") == 0) {
+        cmd_gpsdiag();
     } else if (strcmp(cmd, "contactstats") == 0) {
         cmd_contactstats();
     } else if (strcmp(cmd, "debug") == 0) {

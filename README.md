@@ -99,6 +99,8 @@ Full test documentation: [`test/README.md`](test/README.md)
 | GPS | Serial1 (optional) |
 | SD Card | SPI (shared bus) |
 
+Windows serial capture note: use [`docs/WINDOWS_COM8_SERIAL.md`](docs/WINDOWS_COM8_SERIAL.md) before opening a T-Deck on `COM8`; the helper keeps DTR/RTS deasserted by default for safer log capture.
+
 ## Architecture
 
 ```

@@ -47,7 +47,7 @@ static lv_obj_t* g_time_row = nullptr;
 static void show_build_info_dialog(lv_obj_t* parent)
 {
     const auto& info = sigurdos::build::info();
-    auto dlg_sz = dialog_size(284, 190);
+    auto dlg_sz = dialog_size(292, 214);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -62,11 +62,19 @@ static void show_build_info_dialog(lv_obj_t* parent)
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
 
-    char body[384];
+    char run_line[64];
+    const bool has_attempt = info.actions_run_attempt && info.actions_run_attempt[0] != '\0';
+    snprintf(run_line, sizeof(run_line), "%s%s%s",
+             info.actions_run_id ? info.actions_run_id : "unknown",
+             has_attempt ? "." : "",
+             has_attempt ? info.actions_run_attempt : "");
+
+    char body[512];
     snprintf(body, sizeof(body),
-             "Version: %s\nGit: %s%s\nMeshCore: %s\nEnv: %s\nPartitions: %s\nBoard: %s\nMCU: %s",
+             "Version: %s\nGit: %s%s\nMeshCore: %s\nEnv: %s\nPartitions: %s\nBoard: %s\nMCU: %s\nSource: %s\nRun: %s\nRef: %s",
              info.firmware_version, info.git_sha, info.git_dirty ? " dirty" : "",
-             info.meshcore_sha, info.build_env, info.partitions, info.board, info.mcu);
+             info.meshcore_sha, info.build_env, info.partitions, info.board, info.mcu,
+             info.build_source, run_line, info.actions_ref);
     lv_obj_t* text = lv_label_create(dlg);
     lv_label_set_text(text, body);
     lv_obj_set_width(text, dlg_sz.w - 18);
