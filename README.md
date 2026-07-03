@@ -99,7 +99,7 @@ Full test documentation: [`test/README.md`](test/README.md)
 | GPS | Serial1 (optional) |
 | SD Card | SPI (shared bus) |
 
-Windows serial capture note: use [`docs/WINDOWS_COM8_SERIAL.md`](docs/WINDOWS_COM8_SERIAL.md) before opening a T-Deck on `COM8`; the helper keeps DTR/RTS deasserted by default for safer log capture.
+Windows serial capture note: use [`docs/WINDOWS_COM8_SERIAL.md`](docs/WINDOWS_COM8_SERIAL.md) before opening a T-Deck on `COM8`; the helper keeps DTR/RTS deasserted by default for safer log capture. For manual hardware evidence, use [`docs/FIELD_VALIDATION.md`](docs/FIELD_VALIDATION.md).
 
 ## Architecture
 
@@ -287,7 +287,7 @@ All screens from the SigurdOS T-Deck UI, captured from a live device running the
 | Screen | Screenshot | Description |
 |--------|-----------|-------------|
 | **Home** | ![Home](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/home.png) | 4×3 icon grid launcher with CHATS, DMs, ROOMS, CONTACTS, REPEATERS, ADVERTISE, MAP, TERMINAL, PACKETS, SETTINGS, SETUP, SIGNAL. Top bar shows current channel, bottom bar shows device name + battery. |
-| **Onboarding** | ![Onboarding](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/onboarding.png) | First-boot setup wizard (3 steps) — configure node name, radio frequency, and spreading factor before the device is usable. |
+| **Onboarding** | ![Onboarding](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/onboarding.png) | First-boot setup wizard — configure node name, date/time with touch-friendly steppers, and a country radio preset such as USA or Canada before the device is usable. |
 | **Chat** | ![Chat](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/chat.png) | Direct message view showing message bubbles between the user and a contact. Includes text input, sent/received messages with timestamps, and navigation to channel chats. |
 | **Contacts** | ![Contacts](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/contacts.png) | Lists companions (ADV_TYPE_CHAT) and room servers (ADV_TYPE_ROOM) that have been heard on the mesh. Tap a contact to send a direct message. |
 | **Repeaters** | ![Repeaters](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/repeaters.png) | Lists infrastructure relay nodes (ADV_TYPE_REPEATER) heard on the mesh. Repeaters extend network range and are filtered separately from contacts. |
@@ -295,11 +295,11 @@ All screens from the SigurdOS T-Deck UI, captured from a live device running the
 | **Heard / Packets** | ![Heard](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/heard.png) | Packet log showing all received mesh packets with timestamp, source, RSSI, SNR, and type columns. Useful for network diagnostics. |
 | **Map** | ![Map](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/map.png) | Offline tile map renderer showing node locations (from GPS) with pan and zoom. Renders PNG tiles from SD card or PSRAM cache. |
 | **Advertise** | ![Advertise](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/advertise.png) | Send an advert (presence beacon) to the mesh so other nodes discover you. Shows advert type, cooldown, and last advertised timestamp. |
-| **Settings** | ![Settings](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/settings.png) | Device configuration: node name, radio params (frequency, SF, power, gain), display timeout, backlight, GPS toggle, and factory reset. |
+| **Settings** | ![Settings](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/settings.png) | Device configuration: radio presets and editable RF fields, display timeout, backlight, GPS and SD diagnostics, input self-test, OTA, power controls, and factory reset. |
 | **Trace** | ![Trace](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/trace.png) | Real-time routing trace showing packet paths through the mesh — source → hops → destination with per-hop RSSI/SNR. |
 | **Terminal** | ![Terminal](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/terminal.png) | Serial-style command interface for direct MeshCore CLI commands (e.g. `info`, `status`, `nodes`, `channels`). |
 | **Signal & SNR** | ![Signal](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/signal.png) | Signal diagnostics screen showing RSSI, SNR, noise floor, and packet success rate for the current radio configuration. |
-| **Radio Setup** | ![Radio](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/radio.png) | Advanced radio configuration: frequency band, spreading factor, coding rate, TX power, and RX gain boost. |
+| **Radio Setup** | ![Radio](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/radio.png) | Advanced radio configuration with preset profiles plus touch/trackball-editable frequency, spreading factor, coding rate, TX power, and RX gain boost controls. |
 | **WiFiNetworks** | ![WiFi](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/wifi.png) | WiFi network scanning and connection management for OTA updates and diagnostics. Shows available access points with encryption status, RSSI, and connect flow. |
 | **NodeStats** | *No screenshot* | Node statistics display showing uptime, memory usage, packet counts, and mesh health. |
 | **Telemetry** | ![Telemetry](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/telemetry.png) | Environmental telemetry readouts (temperature, humidity, pressure) from sensor-equipped mesh nodes. |
