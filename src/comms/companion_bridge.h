@@ -12,7 +12,13 @@
 namespace sigurdos {
 namespace comms {
 
+// Pinned MeshCore companion_radio currently advertises v13, but v13 adds
+// anonymous request behavior for non-contact pubkeys that SigurdOS does not
+// implement yet. Advertise v12 until CMD_SEND_ANON_REQ/BINARY/CONTROL parity
+// is implemented so official clients keep v13-only expectations disabled.
+static constexpr uint8_t SIGURDOS_COMPANION_PINNED_MESHCORE_VER_CODE = 13;
 static constexpr uint8_t SIGURDOS_COMPANION_FIRMWARE_VER_CODE = 12;
+static constexpr bool SIGURDOS_COMPANION_SUPPORTS_V13_ANON_REQ = false;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_SIZE = 32;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE = 6;
 static constexpr size_t  SIGURDOS_COMPANION_PATH_SIZE = 64;

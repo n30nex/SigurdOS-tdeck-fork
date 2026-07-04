@@ -422,6 +422,18 @@ TEST_F(CompanionProtocolTest, DeviceQueryFrameMatchesOfficialShape) {
     EXPECT_EQ(out[81], host.pathHashMode());
 }
 
+TEST_F(CompanionProtocolTest, DeviceQueryAdvertisesV12UntilV13AnonParity) {
+    uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 13};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 82u);
+    EXPECT_EQ(sigurdos::comms::SIGURDOS_COMPANION_PINNED_MESHCORE_VER_CODE, 13);
+    EXPECT_FALSE(sigurdos::comms::SIGURDOS_COMPANION_SUPPORTS_V13_ANON_REQ);
+    EXPECT_EQ(out[1], 12);
+    EXPECT_EQ(out[1], sigurdos::comms::SIGURDOS_COMPANION_FIRMWARE_VER_CODE);
+}
+
 TEST_F(CompanionProtocolTest, DeviceQueryReportsConfiguredPathHashMode) {
     host.path_hash_mode = 2;  // 3-byte path hash
     uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
@@ -870,6 +882,34 @@ TEST_F(CompanionProtocolTest, DefaultFloodScopeGetSet) {
     ASSERT_TRUE(bridge.handleFrame(clr, sizeof(clr)));
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
     EXPECT_TRUE(host.scope_cleared);
+}
+
+TEST_F(CompanionProtocolTest, ExplicitlyDeclinesUnsupportedV13RequestCommands) {
+    const uint8_t commands[] = {
+        cc::CMD_SEND_BINARY_REQ,
+        cc::CMD_SEND_CONTROL_DATA,
+        cc::CMD_SEND_ANON_REQ,
+    };
+
+    for (uint8_t cmd : commands) {
+        serial.writes.clear();
+        std::vector<uint8_t> frame(1 + 32 + 4, 0);
+        frame[0] = cmd;
+        ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size())) << "cmd=" << (int)cmd;
+        ASSERT_EQ(serial.writes.size(), 1u) << "cmd=" << (int)cmd;
+        EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR) << "cmd=" << (int)cmd;
+        ASSERT_GE(serial.writes[0].size(), 2u) << "cmd=" << (int)cmd;
+        EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_UNSUPPORTED_CMD) << "cmd=" << (int)cmd;
+    }
+}
+
+TEST_F(CompanionProtocolTest, ShortAnonRequestIsUnsupportedNotMalformed) {
+    uint8_t frame[] = {cc::CMD_SEND_ANON_REQ};
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    ASSERT_GE(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_UNSUPPORTED_CMD);
 }
 
 TEST_F(CompanionProtocolTest, FloodScopeKeyOverride) {
