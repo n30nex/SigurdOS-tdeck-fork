@@ -59,6 +59,13 @@ void navigate_to(Screen screen);
 // Go back to previous screen
 void go_back();
 
+// Temporarily intercept global back navigation for internal subviews that are
+// not represented as their own Screen enum entry. The callback returns true
+// when it handled back and the normal navigation stack should not pop.
+using BackOverrideHandler = bool (*)();
+void set_back_override(BackOverrideHandler handler);
+void clear_back_override();
+
 // Return true when the navigation stack has a previous screen.
 bool can_go_back();
 

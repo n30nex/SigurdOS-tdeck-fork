@@ -30,6 +30,7 @@
 namespace sigurdos::ui {
 
 static Screen current = Screen::Home;
+static BackOverrideHandler back_override = nullptr;
 
 // ── Back history stack (circular, max 8 entries) ─────────
 static constexpr int MAX_HISTORY = 16;
@@ -99,6 +100,7 @@ void navigate_to(Screen screen)
     if (screen == current) return;
 
     back_swipe_commit = 0; // reset back-swipe state on new navigation
+    back_override = nullptr;
     highlight_back_button(false);
 
     // Push current screen onto history before navigating away
@@ -120,9 +122,15 @@ void navigate_to(Screen screen)
 
 void go_back()
 {
+    if (back_override && back_override()) {
+        back_swipe_commit = 0;
+        highlight_back_button(false);
+        return;
+    }
     if (history_empty()) return; // nowhere to go back to
 
     back_swipe_commit = 0; // reset back-swipe state on back navigation
+    back_override = nullptr;
     highlight_back_button(false);
 
     Screen target = pop_history();
@@ -140,6 +148,16 @@ void go_back()
         static_cast<uint8_t>(target),
         lv_tick_get());
 #endif
+}
+
+void set_back_override(BackOverrideHandler handler)
+{
+    back_override = handler;
+}
+
+void clear_back_override()
+{
+    back_override = nullptr;
 }
 
 bool can_go_back()

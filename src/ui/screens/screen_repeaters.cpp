@@ -42,6 +42,12 @@ using namespace responsive;
 static int g_repeaters_page = 0;
 static bool g_repeater_detail_open = false;
 
+static bool repeater_detail_back_override()
+{
+    repeaters_screen_show();
+    return true;
+}
+
 static int compare_contacts_by_last_seen_desc(const void* a, const void* b)
 {
     const auto* ca = static_cast<const sigurdos::mesh::ContactInfo*>(a);
@@ -124,6 +130,7 @@ static void arm_repeaters_refresh(lv_obj_t* screen, RepeaterListSignature signat
 // ════════════════════════════════════════════════════════
 void repeaters_screen_show()
 {
+    clear_back_override();
     g_repeater_detail_open = false;
     lv_obj_t* scr = make_screen_full("Repeaters");
     RepeaterListSignature signature{0, 0};
@@ -457,6 +464,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 {
     if (!contact_name || !contact_name[0]) return;
     g_repeater_detail_open = true;
+    set_back_override(repeater_detail_back_override);
     char safe_contact_name[32];
     snprintf(safe_contact_name, sizeof(safe_contact_name), "%s", contact_name);
     contact_name = safe_contact_name;
