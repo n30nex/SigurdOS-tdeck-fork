@@ -17,6 +17,8 @@
 namespace sigurdos {
 namespace mesh {
 
+    static int s_last_persisted_contact_count = -1;
+
     void SigurdMeshV2::pushSignalHistory(int rssi, float snr) {
         uint32_t now = 0;
         if (getRTCClock()) now = getRTCClock()->getCurrentTime();
@@ -416,9 +418,13 @@ namespace mesh {
 
         // Fan out to the phone app (NEW_ADVERT for a new contact, else ADVERT).
         sigurdos::mesh::mesh_v2_companion_advert_push(&contact, is_new);
-        if (is_new && contact.type != ADV_TYPE_NONE &&
-            lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE)) {
+        const bool live_contact = contact.type != ADV_TYPE_NONE &&
+            lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
+        const int contact_count = getNumContacts();
+        if (live_contact &&
+            (is_new || contact_count != s_last_persisted_contact_count)) {
             sigurdos::mesh::saveContacts();
+            s_last_persisted_contact_count = contact_count;
         }
 
 #if SIGURDOS_DEBUG_MESH

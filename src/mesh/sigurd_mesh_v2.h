@@ -402,7 +402,10 @@ public:
     bool isAutoAddEnabled() const override { return true; }
     bool shouldAutoAddContactType(uint8_t type) const override;
 
-    bool shouldOverwriteWhenFull() const override { return true; }
+    bool shouldOverwriteWhenFull() const override {
+        return sigurdos::mesh::autoAddConfigAllowsOverwriteOldest(
+            sigurdos::prefs_get().autoadd_config);
+    }
     uint8_t getAutoAddMaxHops() const override {
         return sigurdos::prefs_get().autoadd_max_hops;
     }

@@ -49,12 +49,78 @@ static int compare_contacts_by_last_seen_desc(const void* a, const void* b)
     return strcmp(ca->name, cb->name);
 }
 
+struct RepeaterListSignature {
+    int count;
+    uint32_t newest_last_seen;
+};
+
+struct RepeaterRefreshState {
+    lv_obj_t* screen;
+    RepeaterListSignature signature;
+};
+
+static RepeaterListSignature get_repeater_signature()
+{
+    RepeaterListSignature sig{0, 0};
+    sigurdos::mesh::ContactInfo* contacts =
+        new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    if (!contacts) return sig;
+
+    int total = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    if (total < 0) total = 0;
+    if (total > MAX_CONTACTS) total = MAX_CONTACTS;
+
+    for (int i = 0; i < total; i++) {
+        if (contacts[i].type != ADV_TYPE_REPEATER) continue;
+        sig.count++;
+        if (contacts[i].last_seen > sig.newest_last_seen) {
+            sig.newest_last_seen = contacts[i].last_seen;
+        }
+    }
+
+    delete[] contacts;
+    return sig;
+}
+
+static bool repeater_signature_changed(const RepeaterListSignature& a,
+                                       const RepeaterListSignature& b)
+{
+    return a.count != b.count || a.newest_last_seen != b.newest_last_seen;
+}
+
+static void repeaters_refresh_timer_cb(lv_timer_t* timer)
+{
+    auto* state = static_cast<RepeaterRefreshState*>(lv_timer_get_user_data(timer));
+    if (!state || !lv_obj_is_valid(state->screen) ||
+        current_screen() != Screen::Repeaters) {
+        delete state;
+        lv_timer_del(timer);
+        return;
+    }
+
+    RepeaterListSignature current = get_repeater_signature();
+    if (repeater_signature_changed(current, state->signature)) {
+        delete state;
+        lv_timer_del(timer);
+        repeaters_screen_show();
+    }
+}
+
+static void arm_repeaters_refresh(lv_obj_t* screen, RepeaterListSignature signature)
+{
+    auto* state = new(std::nothrow) RepeaterRefreshState{screen, signature};
+    if (!state) return;
+    lv_timer_t* timer = lv_timer_create(repeaters_refresh_timer_cb, 1500, state);
+    if (!timer) delete state;
+}
+
 // ════════════════════════════════════════════════════════
 // Repeaters — infrastructure relay nodes only
 // ════════════════════════════════════════════════════════
 void repeaters_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Repeaters");
+    RepeaterListSignature signature{0, 0};
 
     sigurdos::mesh::ContactInfo* contacts =
         new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
@@ -72,6 +138,10 @@ void repeaters_screen_show()
     int n = 0;
     for (int i = 0; i < total; i++) {
         if (contacts[i].type == ADV_TYPE_REPEATER) {
+            signature.count++;
+            if (contacts[i].last_seen > signature.newest_last_seen) {
+                signature.newest_last_seen = contacts[i].last_seen;
+            }
             if (n < i) contacts[n] = contacts[i];
             n++;
         }
@@ -95,6 +165,7 @@ void repeaters_screen_show()
         lv_obj_set_style_text_font(info, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
         delete[] contacts;
+        arm_repeaters_refresh(scr, signature);
         show_screen(scr);
         return;
     }
@@ -222,6 +293,7 @@ void repeaters_screen_show()
     }
 
     delete[] page_contacts;
+    arm_repeaters_refresh(scr, signature);
     show_screen(scr);
 }
 

@@ -147,4 +147,30 @@ TEST_F(PrefsTest, RadioProfileRoundTripsThroughPrefs) {
     EXPECT_STREQ("ca_902_928", loaded.radio_profile);
 }
 
+TEST_F(PrefsTest, WifiCredentialReuseRequiresMatchingSsid) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    std::strncpy(prefs.wifi_ssid, "Workshop", sizeof(prefs.wifi_ssid) - 1);
+    std::strncpy(prefs.wifi_password, "correct horse battery staple",
+                 sizeof(prefs.wifi_password) - 1);
+
+    EXPECT_TRUE(sigurdos::prefs_wifi_ssid_matches(prefs, "Workshop"));
+    EXPECT_FALSE(sigurdos::prefs_wifi_ssid_matches(prefs, "Guest"));
+    EXPECT_FALSE(sigurdos::prefs_wifi_ssid_matches(prefs, ""));
+    EXPECT_FALSE(sigurdos::prefs_wifi_ssid_matches(prefs, nullptr));
+}
+
+TEST_F(PrefsTest, WifiCredentialReuseHonorsEncryptedNetworks) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    std::strncpy(prefs.wifi_ssid, "Workshop", sizeof(prefs.wifi_ssid) - 1);
+
+    EXPECT_TRUE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", false));
+    EXPECT_FALSE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", true));
+
+    std::strncpy(prefs.wifi_password, "secret", sizeof(prefs.wifi_password) - 1);
+    EXPECT_TRUE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", true));
+    EXPECT_FALSE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Guest", false));
+}
+
 } // namespace

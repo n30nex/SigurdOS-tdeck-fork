@@ -103,6 +103,11 @@ inline bool autoAddConfigAllowsContactType(uint8_t type, uint8_t config)
     return (config & (1u << type)) != 0;
 }
 
+inline bool autoAddConfigAllowsOverwriteOldest(uint8_t config)
+{
+    return (config & 0x01u) != 0;
+}
+
 bool init(bool spiffs_ok = true);
 void loop();
 

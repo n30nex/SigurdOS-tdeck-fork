@@ -58,6 +58,12 @@ TEST(MeshContractTest, AutoAddConfigCanDisableOnlyRepeaters) {
     EXPECT_FALSE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_REPEATER, no_repeaters));
 }
 
+TEST(MeshContractTest, AutoAddOverwriteOldestUsesBitZero) {
+    EXPECT_FALSE(sigurdos::mesh::autoAddConfigAllowsOverwriteOldest(0x1E));
+    EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsOverwriteOldest(0x1F));
+    EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsOverwriteOldest(0x01));
+}
+
 TEST(MeshContractTest, PublicChannelDefaultsStayStable) {
     EXPECT_STREQ(sigurdos::mesh::PUBLIC_CHANNEL_NAME, "Public");
     EXPECT_STREQ(sigurdos::mesh::PUBLIC_CHANNEL_PSK_BASE64,

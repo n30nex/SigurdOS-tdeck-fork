@@ -122,6 +122,17 @@ bool prefs_exists();
 const NodePrefs& prefs_get();
 void             prefs_set(const NodePrefs& p);
 
+inline bool prefs_wifi_ssid_matches(const NodePrefs& p, const char* ssid) {
+    return ssid && ssid[0] && p.wifi_ssid[0] && strcmp(p.wifi_ssid, ssid) == 0;
+}
+
+inline bool prefs_wifi_credentials_reusable(const NodePrefs& p,
+                                            const char* ssid,
+                                            bool encrypted) {
+    if (!prefs_wifi_ssid_matches(p, ssid)) return false;
+    return !encrypted || p.wifi_password[0];
+}
+
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
