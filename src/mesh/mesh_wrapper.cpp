@@ -1635,8 +1635,8 @@ const PingResult* getPingResult(int i) {
     return reinterpret_cast<const PingResult*>(r);
 }
 
-void saveChannels() {
-    if (!g_mesh) return;
+bool saveChannels() {
+    if (!g_mesh) return false;
     int n = g_mesh->getChannelCount();
 
     // Channel read callback for the store
@@ -1655,7 +1655,7 @@ void saveChannels() {
         return true;
     };
 
-    sigurdos::mesh::channelStoreSave(n, read_fn, g_mesh);
+    return sigurdos::mesh::channelStoreSave(n, read_fn, g_mesh);
 }
 
 void loadChannels() {

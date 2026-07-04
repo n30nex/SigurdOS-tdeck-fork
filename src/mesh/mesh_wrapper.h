@@ -253,7 +253,7 @@ uint32_t getLastAdvertTime();
 bool     getLastAdvertSuccess();
 bool     getLastAdvertUsedGps();
 void saveState();
-void saveChannels();
+bool saveChannels();
 void loadChannels();
 void shutdown();
 void factoryReset();
