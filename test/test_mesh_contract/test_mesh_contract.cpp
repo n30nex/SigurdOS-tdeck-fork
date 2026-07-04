@@ -100,6 +100,13 @@ TEST(MeshContractTest, LoginPendingTimeoutUsesWrapSafeElapsedTime) {
     EXPECT_TRUE(sigurdos::mesh::loginPendingTimedOut(100u, UINT32_MAX - 29900u));
 }
 
+TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
+    EXPECT_EQ(sigurdos::mesh::LOGIN_PASSWORD_MAX_BYTES, 15u);
+    EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable(""));
+    EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable("secret"));
+    EXPECT_FALSE(sigurdos::mesh::loginPasswordInputSubmittable(nullptr));
+}
+
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
     EXPECT_EQ(sizeof(MeshMessage::sender), 32u);
     EXPECT_EQ(sizeof(MeshMessage::channel), 32u);

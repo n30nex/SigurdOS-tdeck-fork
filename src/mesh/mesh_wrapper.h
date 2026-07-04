@@ -354,6 +354,13 @@ inline bool loginPendingTimedOut(uint32_t now_ms, uint32_t started_at_ms) {
 }
 
 // ── Repeater/room login (Phase 4.5) ──────────────
+static constexpr size_t LOGIN_PASSWORD_MAX_BYTES = 15;
+
+inline bool loginPasswordInputSubmittable(const char* password) {
+    // MeshCore accepts an empty password as an ACL/guest login attempt.
+    return password != nullptr;
+}
+
 bool sendLogin(const char* name, const char* password);
 void sendLogout(const char* name);
 bool sendCommand(const char* name, const char* text);

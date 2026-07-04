@@ -142,6 +142,7 @@ static lv_timer_t* g_pending_channel_select_timer = nullptr;
 static lv_scr_load_anim_t g_pending_channel_list_anim = LV_SCR_LOAD_ANIM_NONE;
 static char g_pending_open_channel[CHANNEL_NAME_CAP] = "";
 static char g_pending_select_channel[CHANNEL_NAME_CAP] = "";
+static bool g_channel_transition_pending = false;
 
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
@@ -760,7 +761,11 @@ static void channel_open_timer_cb(lv_timer_t* timer)
 {
     if (timer) lv_timer_del(timer);
     g_pending_channel_open_timer = nullptr;
-    if (current_screen() != Screen::Chat) return;
+    g_channel_transition_pending = false;
+    if (current_screen() != Screen::Chat) {
+        g_pending_open_channel[0] = '\0';
+        return;
+    }
 
     char channel[CHANNEL_NAME_CAP];
     strncpy(channel, g_pending_open_channel, sizeof(channel) - 1);
@@ -780,8 +785,12 @@ static void request_open_channel_messaging(int idx)
     strncpy(g_pending_open_channel, dyn_channels[idx], sizeof(g_pending_open_channel) - 1);
     g_pending_open_channel[sizeof(g_pending_open_channel) - 1] = '\0';
     ch_meta[idx].unread = 0;
+    if (g_channel_transition_pending) return;
+    g_channel_transition_pending = true;
     if (!g_pending_channel_open_timer) {
-        g_pending_channel_open_timer = lv_timer_create(channel_open_timer_cb, 1, nullptr);
+        g_pending_channel_open_timer = lv_timer_create(
+            channel_open_timer_cb, CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS, nullptr);
+        if (!g_pending_channel_open_timer) g_channel_transition_pending = false;
     }
 }
 
@@ -814,7 +823,8 @@ static void request_select_channel(int idx)
     g_pending_select_channel[sizeof(g_pending_select_channel) - 1] = '\0';
     ch_meta[idx].unread = 0;
     if (!g_pending_channel_select_timer) {
-        g_pending_channel_select_timer = lv_timer_create(channel_select_timer_cb, 1, nullptr);
+        g_pending_channel_select_timer = lv_timer_create(
+            channel_select_timer_cb, CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS, nullptr);
     }
 }
 
@@ -1078,6 +1088,7 @@ static void show_channel_list(lv_scr_load_anim_t anim)
     scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
     ch_list = ch_back_btn = ch_add_btn = nullptr;
     ch_focus = 0;
+    g_channel_transition_pending = false;
 
     refresh_channels();
     ch_list_selected = 0;

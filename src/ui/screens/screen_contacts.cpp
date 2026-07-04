@@ -345,6 +345,54 @@ static void schedule_login_detail_refresh(const char* name, bool skip_login)
     }
 }
 
+struct DeferredLoginSubmitCtx {
+    char name[32];
+    char password[16];
+    bool save_password;
+};
+
+static void deferred_login_submit_cb(lv_timer_t* t)
+{
+    auto* ctx = static_cast<DeferredLoginSubmitCtx*>(lv_timer_get_user_data(t));
+    if (ctx && ctx->name[0]) {
+        bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
+        if (sent) {
+            start_login_poll_timer(ctx->name);
+            if (ctx->save_password && ctx->password[0]) {
+                sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
+            }
+        } else {
+            sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
+        }
+        schedule_login_detail_refresh(ctx->name, false);
+    }
+    delete ctx;
+    lv_timer_del(t);
+}
+
+static void schedule_login_submit(const char* name, const char* password, bool save_password)
+{
+    if (!name || !name[0] ||
+        !sigurdos::mesh::loginPasswordInputSubmittable(password)) {
+        return;
+    }
+    auto* ctx = new(std::nothrow) DeferredLoginSubmitCtx{};
+    if (!ctx) {
+        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+        schedule_login_detail_refresh(name, false);
+        return;
+    }
+    snprintf(ctx->name, sizeof(ctx->name), "%s", name);
+    snprintf(ctx->password, sizeof(ctx->password), "%s", password);
+    ctx->save_password = save_password;
+    lv_timer_t* timer = lv_timer_create(deferred_login_submit_cb, 20, ctx);
+    if (!timer) {
+        sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
+        schedule_login_detail_refresh(ctx->name, false);
+        delete ctx;
+    }
+}
+
 // ── Login password dialog ─────────────────────────
 // Shows a modal dialog for entering a password to log into a repeater/room server.
 // Includes a "Save Password" checkbox that persists the password to NVS.
@@ -378,7 +426,7 @@ void show_login_password_dialog(const char* contact_name)
     lv_textarea_set_placeholder_text(ta, "Password (press Enter to submit)");
     lv_textarea_set_password_mode(ta, true);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_max_length(ta, 15);  // MeshCore login payload limit
+    lv_textarea_set_max_length(ta, sigurdos::mesh::LOGIN_PASSWORD_MAX_BYTES);
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_radius(ta, 0, 0);
@@ -470,20 +518,14 @@ void show_login_password_dialog(const char* contact_name)
     lv_obj_add_event_cb(login_btn, [](lv_event_t* le) {
         PwDialogData* d = (PwDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
         if (d && d->name) {
-            const char* pw = lv_textarea_get_text(d->ta);
-            if (pw && pw[0]) {
-                bool sent = sigurdos::mesh::sendLogin(d->name, pw);
-                if (sent) {
-                    // Start a login-polling timer on the main screen
-                    start_login_poll_timer(d->name);
-                } else {
-                    sigurdos::mesh::forceLoginState(d->name, LOGIN_STATUS_FAILED, 0);
-                }
-                schedule_login_detail_refresh(d->name, false);
-                // Save password to NVS only after the request was accepted locally.
-                if (sent && d->save_cb && (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
-                    sigurdos::saveRepeaterPassword(d->name, pw);
-                }
+            const char* pw = (d->ta && lv_obj_is_valid(d->ta))
+                ? lv_textarea_get_text(d->ta)
+                : "";
+            if (sigurdos::mesh::loginPasswordInputSubmittable(pw)) {
+                const bool save_password =
+                    d->save_cb && lv_obj_is_valid(d->save_cb) &&
+                    (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED);
+                schedule_login_submit(d->name, pw, save_password);
             }
         }
         // Close dialog
@@ -497,7 +539,7 @@ void show_login_password_dialog(const char* contact_name)
         uint32_t key = lv_event_get_key(te);
         if (key == LV_KEY_ENTER) {
             const char* pwt = lv_textarea_get_text(t);
-            if (pwt && pwt[0]) {
+            if (sigurdos::mesh::loginPasswordInputSubmittable(pwt)) {
                 lv_obj_t* parent = lv_obj_get_parent(t);
                 PwDialogData* expected = parent
                     ? (PwDialogData*)lv_obj_get_user_data(parent)
