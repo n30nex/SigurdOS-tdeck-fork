@@ -20,12 +20,15 @@ namespace {
 
 #if defined(ESP32_PLATFORM)
 static constexpr const char* STORE_PATH = "/companion_msgs";
+static constexpr const char* STORE_TMP_PATH = "/companion_msgs.tmp";
+static constexpr const char* STORE_BAK_PATH = "/companion_msgs.bak";
 #endif
 
 static constexpr uint32_t MESSAGE_STORE_MAX_RECORDS = 64;
 
 #if !defined(ESP32_PLATFORM)
 static char g_native_path[160] = "/tmp/sigurdos_companion_msgs.bin";
+static bool g_native_fail_next_replace_rename = false;
 
 static void copyZ(char* dest, size_t dest_sz, const char* src)
 {
@@ -33,6 +36,13 @@ static void copyZ(char* dest, size_t dest_sz, const char* src)
     if (!src) src = "";
     std::strncpy(dest, src, dest_sz - 1);
     dest[dest_sz - 1] = '\0';
+}
+
+static bool siblingPath(char* out, size_t out_sz, const char* suffix)
+{
+    if (!out || out_sz == 0 || !suffix) return false;
+    int n = std::snprintf(out, out_sz, "%s%s", g_native_path, suffix);
+    return n > 0 && (size_t)n < out_sz;
 }
 #endif
 
@@ -69,14 +79,30 @@ static bool ensureFs()
     return true;
 }
 
+static bool pathExists(const char* path)
+{
+    return path && SPIFFS.exists(path);
+}
+
+static bool removePath(const char* path)
+{
+    if (!path || !SPIFFS.exists(path)) return true;
+    return SPIFFS.remove(path);
+}
+
+static bool renamePath(const char* from, const char* to)
+{
+    return from && to && SPIFFS.rename(from, to);
+}
+
 static bool existsStore()
 {
-    return SPIFFS.exists(STORE_PATH);
+    return pathExists(STORE_PATH);
 }
 
 static bool removeStore()
 {
-    return SPIFFS.remove(STORE_PATH);
+    return removePath(STORE_PATH);
 }
 #else
 static bool ensureFs()
@@ -84,17 +110,33 @@ static bool ensureFs()
     return true;
 }
 
-static bool existsStore()
+static bool pathExists(const char* path)
 {
-    FILE* f = std::fopen(g_native_path, "rb");
+    if (!path) return false;
+    FILE* f = std::fopen(path, "rb");
     if (!f) return false;
     std::fclose(f);
     return true;
 }
 
+static bool removePath(const char* path)
+{
+    return path && (std::remove(path) == 0 || !pathExists(path));
+}
+
+static bool renamePath(const char* from, const char* to)
+{
+    return from && to && std::rename(from, to) == 0;
+}
+
+static bool existsStore()
+{
+    return pathExists(g_native_path);
+}
+
 static bool removeStore()
 {
-    return std::remove(g_native_path) == 0 || !existsStore();
+    return removePath(g_native_path);
 }
 #endif
 
@@ -337,18 +379,100 @@ static bool findExistingMessage(const StoredMessage& msg, StoredMessage* out)
     return false;
 }
 
+static bool finishAtomicReplace(const char* tmp_path, const char* store_path, const char* bak_path)
+{
+    if (!tmp_path || !store_path || !bak_path) return false;
+
+    removePath(bak_path);
+    bool backed_up = false;
+    if (pathExists(store_path)) {
+        if (!renamePath(store_path, bak_path)) {
+            removePath(tmp_path);
+            return false;
+        }
+        backed_up = true;
+    }
+
+    bool promoted = false;
+#if !defined(ESP32_PLATFORM)
+    if (g_native_fail_next_replace_rename) {
+        g_native_fail_next_replace_rename = false;
+    } else {
+        promoted = renamePath(tmp_path, store_path);
+    }
+#else
+    promoted = renamePath(tmp_path, store_path);
+#endif
+
+    if (!promoted) {
+        removePath(store_path);
+        if (backed_up) renamePath(bak_path, store_path);
+        removePath(tmp_path);
+        return false;
+    }
+
+    removePath(bak_path);
+    return true;
+}
+
+static bool recoverPendingReplace()
+{
+    if (!ensureFs()) return false;
+
+#if defined(ESP32_PLATFORM)
+    const char* store_path = STORE_PATH;
+    const char* tmp_path = STORE_TMP_PATH;
+    const char* bak_path = STORE_BAK_PATH;
+#else
+    const char* store_path = g_native_path;
+    char tmp_path_buf[180];
+    char bak_path_buf[180];
+    if (!siblingPath(tmp_path_buf, sizeof(tmp_path_buf), ".tmp") ||
+        !siblingPath(bak_path_buf, sizeof(bak_path_buf), ".bak")) {
+        return false;
+    }
+    const char* tmp_path = tmp_path_buf;
+    const char* bak_path = bak_path_buf;
+#endif
+
+    if (pathExists(store_path)) {
+        removePath(tmp_path);
+        removePath(bak_path);
+        return true;
+    }
+
+    if (pathExists(bak_path)) {
+        removePath(store_path);
+        if (!renamePath(bak_path, store_path)) return false;
+        removePath(tmp_path);
+        return true;
+    }
+
+    if (pathExists(tmp_path)) {
+        if (!renamePath(tmp_path, store_path)) {
+            removePath(tmp_path);
+            return true;
+        }
+        uint32_t count = 0;
+        if (!readHeader(&count)) {
+            removeStore();
+        }
+    }
+
+    return true;
+}
+
 // Atomically replace the entire message store with the given records.
-// Writes to a temp file first, then uses rename() to swap it in —
-// power loss after the initial write leaves the original file intact.
+// Writes to a temp file first, backs up the live file, then promotes the temp.
+// If promotion fails, the backup is restored and startup recovery can finish it.
 static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count)
 {
     if (!ensureFs()) return false;
-    if (!msgs || count == 0) return messageStoreClear();
+    if (!msgs && count > 0) return false;
 
 #if defined(ESP32_PLATFORM)
-    static constexpr const char* TMP_PATH = "/companion_msgs.tmp";
-    SPIFFS.remove(TMP_PATH);
-    File f = SPIFFS.open(TMP_PATH, "w");
+    removePath(STORE_TMP_PATH);
+    File f = SPIFFS.open(STORE_TMP_PATH, "w");
     if (!f) return false;
     uint32_t magic = detail::MESSAGE_STORE_MAGIC;
     uint8_t version = detail::MESSAGE_STORE_VERSION;
@@ -364,19 +488,18 @@ static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count)
     }
     f.close();
     if (!ok) {
-        SPIFFS.remove(TMP_PATH);
+        removePath(STORE_TMP_PATH);
         return false;
     }
-    SPIFFS.remove(STORE_PATH);
-    if (!SPIFFS.rename(TMP_PATH, STORE_PATH)) {
-        SPIFFS.remove(TMP_PATH);
-        return false;
-    }
-    return true;
+    return finishAtomicReplace(STORE_TMP_PATH, STORE_PATH, STORE_BAK_PATH);
 #else
     char tmp_path[180];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", g_native_path);
-    std::remove(tmp_path);
+    char bak_path[180];
+    if (!siblingPath(tmp_path, sizeof(tmp_path), ".tmp") ||
+        !siblingPath(bak_path, sizeof(bak_path), ".bak")) {
+        return false;
+    }
+    removePath(tmp_path);
     FILE* f = std::fopen(tmp_path, "wb");
     if (!f) return false;
     uint32_t magic = detail::MESSAGE_STORE_MAGIC;
@@ -393,15 +516,10 @@ static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count)
     }
     std::fclose(f);
     if (!ok) {
-        std::remove(tmp_path);
+        removePath(tmp_path);
         return false;
     }
-    std::remove(g_native_path);
-    if (std::rename(tmp_path, g_native_path) != 0) {
-        std::remove(tmp_path);
-        return false;
-    }
-    return true;
+    return finishAtomicReplace(tmp_path, g_native_path, bak_path);
 #endif
 }
 
@@ -501,6 +619,7 @@ void storedMessageNormalize(StoredMessage& msg)
 
 bool messageStoreBegin()
 {
+    if (!recoverPendingReplace()) return false;
     if (!writeHeaderIfNeeded()) return false;
     uint32_t count = 0;
     if (readHeader(&count) && count > MESSAGE_STORE_MAX_RECORDS) {
@@ -683,6 +802,11 @@ void messageStoreSetNativePath(const char* path)
 {
     if (!path || !path[0]) return;
     copyZ(g_native_path, sizeof(g_native_path), path);
+}
+
+void messageStoreSetNativeFailNextReplaceRename(bool fail)
+{
+    g_native_fail_next_replace_rename = fail;
 }
 #endif
 

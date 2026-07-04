@@ -84,6 +84,7 @@ int  messageStoreCount();
 
 #if !defined(ESP32_PLATFORM)
 void messageStoreSetNativePath(const char* path);
+void messageStoreSetNativeFailNextReplaceRename(bool fail);
 #endif
 
 } // namespace mesh

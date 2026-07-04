@@ -80,21 +80,44 @@ void writeRawStoreWithIds(const char* path, const uint32_t* ids, int count)
     std::fclose(f);
 }
 
+bool fileExists(const char* path)
+{
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    std::fclose(f);
+    return true;
+}
+
+void siblingPath(const char* path, const char* suffix, char* out, size_t out_sz)
+{
+    std::snprintf(out, out_sz, "%s%s", path, suffix);
+}
+
 class MessageStoreTest : public ::testing::Test {
 protected:
     char path[128]{};
+    char tmp_path[140]{};
+    char bak_path[140]{};
 
     void SetUp() override {
         std::snprintf(path, sizeof(path), "/tmp/sigurdos_msg_store_%d.bin",
                       ::testing::UnitTest::GetInstance()->random_seed());
+        siblingPath(path, ".tmp", tmp_path, sizeof(tmp_path));
+        siblingPath(path, ".bak", bak_path, sizeof(bak_path));
+        sigurdos::mesh::messageStoreSetNativeFailNextReplaceRename(false);
         sigurdos::mesh::messageStoreSetNativePath(path);
         std::remove(path);
+        std::remove(tmp_path);
+        std::remove(bak_path);
         ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
         ASSERT_TRUE(sigurdos::mesh::messageStoreClear());
     }
 
     void TearDown() override {
+        sigurdos::mesh::messageStoreSetNativeFailNextReplaceRename(false);
         std::remove(path);
+        std::remove(tmp_path);
+        std::remove(bak_path);
     }
 };
 
@@ -304,6 +327,61 @@ TEST_F(MessageStoreTest, BeginRepairsLegacyZeroAndDuplicateStoreIds) {
     EXPECT_TRUE(out[0].companion_sent);
     EXPECT_FALSE(out[1].companion_sent);
     EXPECT_FALSE(out[2].companion_sent);
+}
+
+TEST_F(MessageStoreTest, BeginRestoresBackupWhenLiveMissing) {
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "before-backup", 1, false, false)));
+
+    ASSERT_EQ(std::rename(path, bak_path), 0);
+    ASSERT_FALSE(fileExists(path));
+    ASSERT_TRUE(fileExists(bak_path));
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+
+    sigurdos::mesh::StoredMessage out[2]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(out, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_STREQ(out[0].text, "before-backup");
+    EXPECT_TRUE(fileExists(path));
+    EXPECT_FALSE(fileExists(bak_path));
+}
+
+TEST_F(MessageStoreTest, BeginKeepsLiveStoreWhenTempLeftBehind) {
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "live-store", 1, false, false)));
+    const uint32_t ids[] = {1u};
+    writeRawStoreWithIds(tmp_path, ids, 1);
+    ASSERT_TRUE(fileExists(path));
+    ASSERT_TRUE(fileExists(tmp_path));
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+
+    sigurdos::mesh::StoredMessage out[2]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(out, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_STREQ(out[0].text, "live-store");
+    EXPECT_FALSE(fileExists(tmp_path));
+}
+
+TEST_F(MessageStoreTest, CompactionFailureLeavesOldStoreReadable) {
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "self", "sent", 77, true, false)));
+
+    sigurdos::mesh::messageStoreSetNativeFailNextReplaceRename(true);
+    EXPECT_FALSE(sigurdos::mesh::messageStoreMarkAcked("DM: Alice", 77));
+
+    sigurdos::mesh::StoredMessage out[2]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(out, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_STREQ(out[0].text, "sent");
+    EXPECT_FALSE(out[0].acked);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    n = sigurdos::mesh::messageStoreLoadAll(out, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_STREQ(out[0].text, "sent");
+    EXPECT_FALSE(out[0].acked);
 }
 
 TEST_F(MessageStoreTest, MarkCompanionSentMarksOnlyOneRecord) {
