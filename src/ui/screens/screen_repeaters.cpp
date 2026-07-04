@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../contact_paging.h"
 #include "../chat_screen.h"
+#include "../repeater_refresh_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
@@ -39,6 +40,7 @@ using namespace theme;
 using namespace responsive;
 
 static int g_repeaters_page = 0;
+static bool g_repeater_detail_open = false;
 
 static int compare_contacts_by_last_seen_desc(const void* a, const void* b)
 {
@@ -91,8 +93,11 @@ static bool repeater_signature_changed(const RepeaterListSignature& a,
 static void repeaters_refresh_timer_cb(lv_timer_t* timer)
 {
     auto* state = static_cast<RepeaterRefreshState*>(lv_timer_get_user_data(timer));
-    if (!state || !lv_obj_is_valid(state->screen) ||
-        current_screen() != Screen::Repeaters) {
+    bool screen_valid = state && state->screen && lv_obj_is_valid(state->screen);
+    bool screen_active = screen_valid && lv_scr_act() == state->screen;
+    bool screen_current = current_screen() == Screen::Repeaters;
+    if (!repeater_refresh_allowed(state != nullptr, screen_valid, screen_current,
+                                  screen_active, g_repeater_detail_open)) {
         delete state;
         lv_timer_del(timer);
         return;
@@ -119,6 +124,7 @@ static void arm_repeaters_refresh(lv_obj_t* screen, RepeaterListSignature signat
 // ════════════════════════════════════════════════════════
 void repeaters_screen_show()
 {
+    g_repeater_detail_open = false;
     lv_obj_t* scr = make_screen_full("Repeaters");
     RepeaterListSignature signature{0, 0};
 
@@ -445,6 +451,7 @@ static void repeater_input_dialog(const char* contact_name,
 void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 {
     if (!contact_name || !contact_name[0]) return;
+    g_repeater_detail_open = true;
     char safe_contact_name[32];
     snprintf(safe_contact_name, sizeof(safe_contact_name), "%s", contact_name);
     contact_name = safe_contact_name;
