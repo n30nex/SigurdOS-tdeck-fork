@@ -379,6 +379,7 @@ static void build_step2()
             if (s_dt_error_label) lv_label_set_text(s_dt_error_label, "Clock not ready");
             return;
         }
+        sigurdos::time_source_mark(sigurdos::TimeSource::Manual);
 
         s_step = 2;
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);

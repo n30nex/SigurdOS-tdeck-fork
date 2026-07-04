@@ -96,4 +96,20 @@ TEST(TimeSyncPolicy, NtpResyncUsesSixHourWindow) {
         1000 + sigurdos::SIGURDOS_NTP_RESYNC_INTERVAL_MS, 1000));
 }
 
+TEST(TimeSyncPolicy, TimeSourceLabelsAreUserFacing) {
+    EXPECT_STREQ("Unknown", sigurdos::time_source_label(sigurdos::TimeSource::Unknown));
+    EXPECT_STREQ("Manual", sigurdos::time_source_label(sigurdos::TimeSource::Manual));
+    EXPECT_STREQ("WiFi/NTP", sigurdos::time_source_label(sigurdos::TimeSource::WifiNtp));
+    EXPECT_STREQ("GPS", sigurdos::time_source_label(sigurdos::TimeSource::Gps));
+}
+
+TEST(TimeSyncPolicy, GpsSyncOverridesLastMarkedSource) {
+    sigurdos::time_source_mark(sigurdos::TimeSource::WifiNtp);
+    EXPECT_EQ(sigurdos::TimeSource::WifiNtp, sigurdos::time_source_current(false));
+    EXPECT_EQ(sigurdos::TimeSource::Gps, sigurdos::time_source_current(true));
+
+    sigurdos::time_source_mark(sigurdos::TimeSource::Manual);
+    EXPECT_EQ(sigurdos::TimeSource::Manual, sigurdos::time_source_current(false));
+}
+
 } // anonymous namespace

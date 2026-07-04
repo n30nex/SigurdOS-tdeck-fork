@@ -79,6 +79,7 @@ static void sync_time_from_wifi_if_ready()
     time_t ntp_epoch = time(nullptr);
     if (sigurdos::time_epoch_is_sane((uint32_t)ntp_epoch)) {
         if (sigurdos::mesh::setSystemTime((uint32_t)ntp_epoch)) {
+            sigurdos::time_source_mark(sigurdos::TimeSource::WifiNtp);
             last_sync_ms = now_ms;
         }
     }

@@ -11,6 +11,13 @@ static constexpr uint32_t SIGURDOS_VALID_TIME_MIN_EPOCH = 1700000000UL;
 static constexpr uint32_t SIGURDOS_NTP_RETRY_INTERVAL_MS = 60000UL;
 static constexpr uint32_t SIGURDOS_NTP_RESYNC_INTERVAL_MS = 21600000UL;
 
+enum class TimeSource : uint8_t {
+    Unknown = 0,
+    Manual,
+    WifiNtp,
+    Gps,
+};
+
 inline bool time_epoch_is_sane(uint32_t epoch)
 {
     return epoch >= SIGURDOS_VALID_TIME_MIN_EPOCH;
@@ -31,6 +38,35 @@ inline bool ntp_resync_due(uint32_t now_ms, uint32_t last_sync_ms)
 inline bool onboarding_manual_time_needed(uint32_t current_epoch)
 {
     return !time_epoch_is_sane(current_epoch);
+}
+
+inline TimeSource& time_source_state()
+{
+    static TimeSource source = TimeSource::Unknown;
+    return source;
+}
+
+inline void time_source_mark(TimeSource source)
+{
+    time_source_state() = source;
+}
+
+inline TimeSource time_source_current(bool gps_time_synced)
+{
+    if (gps_time_synced) return TimeSource::Gps;
+    return time_source_state();
+}
+
+inline const char* time_source_label(TimeSource source)
+{
+    switch (source) {
+    case TimeSource::Manual: return "Manual";
+    case TimeSource::WifiNtp: return "WiFi/NTP";
+    case TimeSource::Gps: return "GPS";
+    case TimeSource::Unknown:
+    default:
+        return "Unknown";
+    }
 }
 
 } // namespace sigurdos

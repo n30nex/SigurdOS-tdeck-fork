@@ -26,11 +26,13 @@
 #include "../../hal/prefs.h"
 #include "../../hal/sdcard.h"
 #include "../../hal/tdeck_pins.h"
+#include "../../hal/time_sync_policy.h"
 #include "../../hal/touch.h"
 #include "../../hal/trackball.h"
 #include "../../hal/launcher_env.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/github_ota.h"
+#include "../../hal/gps.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../diagnostics/build_info.h"
 #include "../../fonts/emoji_font.h"
@@ -47,6 +49,16 @@ using namespace responsive;
 
 static lv_obj_t* g_date_row = nullptr;   // for live update after setting time
 static lv_obj_t* g_time_row = nullptr;
+static lv_obj_t* g_time_source_row = nullptr;
+
+static void update_time_source_row()
+{
+    if (!g_time_source_row) return;
+    const auto source = sigurdos::time_source_current(sigurdos_gps_time_synced());
+    char buf[40];
+    snprintf(buf, sizeof(buf), "  Time Source: %s", sigurdos::time_source_label(source));
+    update_row_label(g_time_source_row, buf);
+}
 
 static void show_build_info_dialog(lv_obj_t* parent)
 {
@@ -540,6 +552,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
         }
 
         if (valid && sigurdos::mesh::setSystemTime(epoch)) {
+            sigurdos::time_source_mark(sigurdos::TimeSource::Manual);
             int yy, mmo, dd, hh, mmi;
             sigurdos::mesh::getCurrentLocalDateTime(&yy, &mmo, &dd, &hh, &mmi);
             char dbuf[32], tbuf[16];
@@ -547,6 +560,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
             snprintf(tbuf, sizeof(tbuf), "  Time: %02d:%02d", hh, mmi);
             update_row_label(g_date_row, dbuf);
             update_row_label(g_time_row, tbuf);
+            update_time_source_row();
             home_screen_update_time(tbuf);
             lv_obj_del_async(dlg);
         }
@@ -617,6 +631,18 @@ void settings_system_show()
         lv_obj_add_event_cb(btn_time, [](lv_event_t* e) {
             datetime_set_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)), false);
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
+    // Time source
+    {
+        const auto source = sigurdos::time_source_current(sigurdos_gps_time_synced());
+        snprintf(buf, sizeof(buf), "  Time Source: %s", sigurdos::time_source_label(source));
+        lv_obj_t* btn_source = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_source, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_source, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_source, lv_color_hex(TEXT_PRIMARY), 0);
+        g_time_source_row = btn_source;
         row++;
     }
 
@@ -1254,6 +1280,7 @@ void settings_system_show()
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         g_date_row = nullptr;
         g_time_row = nullptr;
+        g_time_source_row = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
     show_screen(scr);
