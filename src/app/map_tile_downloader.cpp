@@ -25,6 +25,8 @@
 static constexpr int TILE_HTTP_TIMEOUT_MS = 15000;
 static constexpr int TILE_MAX_BYTES = 196 * 1024;
 static constexpr int TILE_READ_TIMEOUT_MS = 20000;
+static char s_provider_cache[sigurdos::MAP_TILE_PROVIDER_MAX_LEN] = {};
+static bool s_provider_cache_loaded = false;
 
 static void set_status(SigurdosMapTileDownloadStatus* out,
                        int requested, int downloaded, int skipped, int failed,
@@ -44,6 +46,25 @@ static void set_status(SigurdosMapTileDownloadStatus* out,
     } else {
         out->message[0] = '\0';
     }
+}
+
+const char* sigurdos_map_tile_download_provider()
+{
+    if (!s_provider_cache_loaded) {
+        s_provider_cache_loaded = true;
+        if (!sigurdos::loadMapTileProvider(s_provider_cache,
+                                           sizeof(s_provider_cache))) {
+            std::snprintf(s_provider_cache, sizeof(s_provider_cache),
+                          "%s", SIGURDOS_MAP_TILE_PROVIDER);
+        }
+    }
+    return s_provider_cache;
+}
+
+void sigurdos_map_tile_download_reset_provider_cache()
+{
+    s_provider_cache[0] = '\0';
+    s_provider_cache_loaded = false;
 }
 
 #if defined(ESP32_PLATFORM)
@@ -128,9 +149,9 @@ static bool download_one_tile(int z, int x, int y, SigurdosMapTileDownloadStatus
         return false;
     }
 
-    char url[128];
+    char url[160];
     std::snprintf(url, sizeof(url), "%s/%d/%d/%d.png",
-                  SIGURDOS_MAP_TILE_PROVIDER, z, x, y);
+                  sigurdos_map_tile_download_provider(), z, x, y);
 
     WiFiClientSecure client;
     client.setInsecure();

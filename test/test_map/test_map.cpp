@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include "app/map_tile_downloader.h"
+#include "hal/prefs.h"
 #include "tile_cache.h"
 #include "ui/map_gps_state.h"
 
@@ -259,9 +260,13 @@ TEST(MapTileDownloadPolicyTest, CurrentViewOnlyPolicyIsExplicit) {
     EXPECT_EQ(SIGURDOS_MAP_TILE_CURRENT_VIEW_RADIUS, 1);
     EXPECT_EQ(SIGURDOS_MAP_TILE_MAX_CURRENT_VIEW_TILES, 9);
     EXPECT_FALSE(sigurdos_map_tile_download_prefetch_allowed());
+    EXPECT_GE(sigurdos_map_tile_download_min_cache_days(), 7);
 }
 
 TEST(MapTileDownloadPolicyTest, ProviderHeadersAndAttributionAreDeclared) {
+    sigurdos::clearMapTileProvider();
+    sigurdos_map_tile_download_reset_provider_cache();
+
     EXPECT_STREQ(sigurdos_map_tile_download_provider(),
                  "https://tile.openstreetmap.org");
     EXPECT_NE(std::strstr(sigurdos_map_tile_download_user_agent(), "SigurdOS"),
@@ -269,6 +274,21 @@ TEST(MapTileDownloadPolicyTest, ProviderHeadersAndAttributionAreDeclared) {
     EXPECT_NE(std::strstr(sigurdos_map_tile_download_attribution(),
                           "OpenStreetMap"),
               nullptr);
+}
+
+TEST(MapTileDownloadPolicyTest, ProviderOverrideCanBeSavedAndReset) {
+    sigurdos::clearMapTileProvider();
+    sigurdos_map_tile_download_reset_provider_cache();
+
+    ASSERT_TRUE(sigurdos::saveMapTileProvider("https://tiles.example.test/osm/"));
+    sigurdos_map_tile_download_reset_provider_cache();
+    EXPECT_STREQ(sigurdos_map_tile_download_provider(),
+                 "https://tiles.example.test/osm");
+
+    ASSERT_TRUE(sigurdos::clearMapTileProvider());
+    sigurdos_map_tile_download_reset_provider_cache();
+    EXPECT_STREQ(sigurdos_map_tile_download_provider(),
+                 "https://tile.openstreetmap.org");
 }
 
 // ════════════════════════════════════════════════════════

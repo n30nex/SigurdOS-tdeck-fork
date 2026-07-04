@@ -195,6 +195,7 @@ void prefs_set(const NodePrefs& p) {
 // ── Repeater password storage ─────────────────────────────────────────
 static constexpr const char* PW_NS = "sigurdos_pw";
 static constexpr int MAX_SAVED_PWS = 8;
+static constexpr const char* MAP_TILE_PROVIDER_KEY = "tile_url";
 
 static uint8_t clampPasswordStoreCount(uint8_t count) {
     return (count > MAX_SAVED_PWS) ? MAX_SAVED_PWS : count;
@@ -319,6 +320,97 @@ void removeRepeaterPassword(const char* name) {
         }
     }
     nvs.end();
+}
+
+static bool normalizeMapTileProviderUrl(const char* provider_url,
+                                        char* out,
+                                        size_t out_size) {
+    if (!provider_url || !out || out_size == 0) return false;
+    out[0] = '\0';
+
+    while (*provider_url == ' ' || *provider_url == '\t' ||
+           *provider_url == '\r' || *provider_url == '\n') {
+        provider_url++;
+    }
+
+    size_t len = strlen(provider_url);
+    while (len > 0 &&
+           (provider_url[len - 1] == ' ' || provider_url[len - 1] == '\t' ||
+            provider_url[len - 1] == '\r' || provider_url[len - 1] == '\n')) {
+        len--;
+    }
+
+    while (len > 8 && provider_url[len - 1] == '/') {
+        len--;
+    }
+
+    if (len == 0 || len >= out_size) return false;
+    memcpy(out, provider_url, len);
+    out[len] = '\0';
+    return true;
+}
+
+bool mapTileProviderUrlValid(const char* provider_url) {
+    if (!provider_url || !provider_url[0]) return false;
+
+    const size_t len = strlen(provider_url);
+    if (len >= MAP_TILE_PROVIDER_MAX_LEN) return false;
+
+    const bool http =
+        strncmp(provider_url, "http://", 7) == 0 ||
+        strncmp(provider_url, "https://", 8) == 0;
+    if (!http) return false;
+
+    for (const char* p = provider_url; *p; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+        if (c <= ' ' || c == '"' || c == '\'' || c == '<' || c == '>') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool saveMapTileProvider(const char* provider_url) {
+    char normalized[MAP_TILE_PROVIDER_MAX_LEN] = {};
+    if (!normalizeMapTileProviderUrl(provider_url, normalized, sizeof(normalized)) ||
+        !mapTileProviderUrlValid(normalized)) {
+        return false;
+    }
+
+    Preferences nvs;
+    if (!nvs.begin(NVS_NS, false)) return false;
+    nvs.putString(MAP_TILE_PROVIDER_KEY, normalized);
+    nvs.end();
+    return true;
+}
+
+bool loadMapTileProvider(char* provider_url, size_t max_len) {
+    if (!provider_url || max_len == 0) return false;
+    provider_url[0] = '\0';
+
+    Preferences nvs;
+    if (!nvs.begin(NVS_NS, true)) return false;
+    char stored[MAP_TILE_PROVIDER_MAX_LEN] = {};
+    size_t ret = nvs.getString(MAP_TILE_PROVIDER_KEY, stored, sizeof(stored));
+    nvs.end();
+
+    if (ret == 0 || ret > sizeof(stored) ||
+        !mapTileProviderUrlValid(stored) ||
+        strlen(stored) >= max_len) {
+        provider_url[0] = '\0';
+        return false;
+    }
+
+    strcpy(provider_url, stored);
+    return true;
+}
+
+bool clearMapTileProvider() {
+    Preferences nvs;
+    if (!nvs.begin(NVS_NS, false)) return false;
+    nvs.remove(MAP_TILE_PROVIDER_KEY);
+    nvs.end();
+    return true;
 }
 
 } // namespace sigurdos

@@ -495,6 +495,20 @@ python3 scripts/download_maps.py --name uk \
 
 Output: `maps-{name}/tiles/{z}/{x}/{y}.png` plus `maps-{name}/tiles/metadata.json`. Copy the `tiles/` directory to the SD card root so the device sees `/sdcard/tiles/{z}/{x}/{y}.png`.
 
+### On-Device Tile Downloads
+
+The T-Deck downloader is intentionally limited to the current visible map neighborhood. It queues at most a 3x3 tile set, does not expose bulk prefetch, sends a SigurdOS User-Agent, and stores successful tiles under `/sdcard/tiles/{z}/{x}/{y}.png`. Existing cached tiles are reused and are treated as having a minimum cache lifetime of seven days.
+
+The default provider is `https://tile.openstreetmap.org`. To use a different policy-compatible provider without reflashing firmware, open Terminal and run:
+
+```text
+tileurl
+tileurl https://tiles.example.test/osm
+tileurl reset
+```
+
+The stored provider must be an `http://` or `https://` URL root. A trailing slash is stripped before saving because tile paths are appended as `{z}/{x}/{y}.png`.
+
 ---
 
 ## Coordinate System for T-Deck (320×240)

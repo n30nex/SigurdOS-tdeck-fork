@@ -21,6 +21,7 @@
 #include "../navigation.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../../app/map_tile_downloader.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
@@ -157,7 +158,26 @@ void terminal_screen_show()
 
         static char result[256];
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list exportkey importkey import getvar setvar delvar listvars");
+            snprintf(result, sizeof(result), "Commands: help status advert ping tileurl sign anon fetchmsgs groupdata emoji-list exportkey importkey import getvar setvar delvar listvars");
+        } else if (strcmp(cmd, "tileurl") == 0) {
+            snprintf(result, sizeof(result), "Tile URL: %s",
+                     sigurdos_map_tile_download_provider());
+        } else if (strncmp(cmd, "tileurl ", 8) == 0) {
+            const char* url = cmd + 8;
+            while (*url == ' ' || *url == '\t') url++;
+            if (strcmp(url, "default") == 0 || strcmp(url, "reset") == 0) {
+                if (sigurdos::clearMapTileProvider()) {
+                    sigurdos_map_tile_download_reset_provider_cache();
+                    snprintf(result, sizeof(result), "Tile URL reset to default");
+                } else {
+                    snprintf(result, sizeof(result), "Tile URL reset failed");
+                }
+            } else if (sigurdos::saveMapTileProvider(url)) {
+                sigurdos_map_tile_download_reset_provider_cache();
+                snprintf(result, sizeof(result), "Tile URL saved");
+            } else {
+                snprintf(result, sizeof(result), "Usage: tileurl <http(s)://host/path|default>");
+            }
         } else if (strncmp(cmd, "import ", 7) == 0) {
             const char* uri = cmd + 7;
             while (*uri == ' ' || *uri == '\t') uri++;

@@ -7,6 +7,8 @@
 
 #include "hal/prefs.h"
 
+#include <cstring>
+
 namespace sigurdos {
 
 static NodePrefs g_prefs;
@@ -19,6 +21,7 @@ struct SavedRepeaterPassword {
 
 static SavedRepeaterPassword g_repeater_passwords[MAX_SAVED_REPEATER_PWS];
 static int g_repeater_password_count = 0;
+static char g_map_tile_provider[MAP_TILE_PROVIDER_MAX_LEN] = {};
 
 struct PrefDefaults {
     PrefDefaults() { g_prefs.set_defaults(); }
@@ -103,6 +106,83 @@ void removeRepeaterPassword(const char* name) {
             return;
         }
     }
+}
+
+static bool normalizeMapTileProviderUrl(const char* provider_url,
+                                        char* out,
+                                        size_t out_size) {
+    if (!provider_url || !out || out_size == 0) return false;
+    out[0] = '\0';
+
+    while (*provider_url == ' ' || *provider_url == '\t' ||
+           *provider_url == '\r' || *provider_url == '\n') {
+        provider_url++;
+    }
+
+    size_t len = std::strlen(provider_url);
+    while (len > 0 &&
+           (provider_url[len - 1] == ' ' || provider_url[len - 1] == '\t' ||
+            provider_url[len - 1] == '\r' || provider_url[len - 1] == '\n')) {
+        len--;
+    }
+
+    while (len > 8 && provider_url[len - 1] == '/') {
+        len--;
+    }
+
+    if (len == 0 || len >= out_size) return false;
+    std::memcpy(out, provider_url, len);
+    out[len] = '\0';
+    return true;
+}
+
+bool mapTileProviderUrlValid(const char* provider_url) {
+    if (!provider_url || !provider_url[0]) return false;
+
+    const size_t len = std::strlen(provider_url);
+    if (len >= MAP_TILE_PROVIDER_MAX_LEN) return false;
+
+    const bool http =
+        std::strncmp(provider_url, "http://", 7) == 0 ||
+        std::strncmp(provider_url, "https://", 8) == 0;
+    if (!http) return false;
+
+    for (const char* p = provider_url; *p; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+        if (c <= ' ' || c == '"' || c == '\'' || c == '<' || c == '>') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool saveMapTileProvider(const char* provider_url) {
+    char normalized[MAP_TILE_PROVIDER_MAX_LEN] = {};
+    if (!normalizeMapTileProviderUrl(provider_url, normalized, sizeof(normalized)) ||
+        !mapTileProviderUrlValid(normalized)) {
+        return false;
+    }
+    std::strncpy(g_map_tile_provider, normalized, sizeof(g_map_tile_provider) - 1);
+    g_map_tile_provider[sizeof(g_map_tile_provider) - 1] = '\0';
+    return true;
+}
+
+bool loadMapTileProvider(char* provider_url, size_t max_len) {
+    if (!provider_url || max_len == 0) return false;
+    provider_url[0] = '\0';
+    if (!g_map_tile_provider[0] ||
+        !mapTileProviderUrlValid(g_map_tile_provider) ||
+        std::strlen(g_map_tile_provider) >= max_len) {
+        return false;
+    }
+    std::strncpy(provider_url, g_map_tile_provider, max_len - 1);
+    provider_url[max_len - 1] = '\0';
+    return true;
+}
+
+bool clearMapTileProvider() {
+    g_map_tile_provider[0] = '\0';
+    return true;
 }
 
 } // namespace sigurdos

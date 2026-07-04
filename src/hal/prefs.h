@@ -144,4 +144,11 @@ bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
 void removeRepeaterPassword(const char* name);
 
+// ── Map tile provider override (persisted separately from NodePrefs) ──
+static constexpr size_t MAP_TILE_PROVIDER_MAX_LEN = 96;
+bool mapTileProviderUrlValid(const char* provider_url);
+bool saveMapTileProvider(const char* provider_url);
+bool loadMapTileProvider(char* provider_url, size_t max_len);
+bool clearMapTileProvider();
+
 } // namespace sigurdos

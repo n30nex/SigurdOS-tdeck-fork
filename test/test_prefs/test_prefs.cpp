@@ -44,6 +44,7 @@ protected:
         for (const char* name : names) {
             sigurdos::removeRepeaterPassword(name);
         }
+        sigurdos::clearMapTileProvider();
     }
 };
 
@@ -198,6 +199,31 @@ TEST_F(PrefsTest, WifiCredentialReuseHonorsEncryptedNetworks) {
     std::strncpy(prefs.wifi_password, "secret", sizeof(prefs.wifi_password) - 1);
     EXPECT_TRUE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", true));
     EXPECT_FALSE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Guest", false));
+}
+
+TEST_F(PrefsTest, MapTileProviderUrlValidationRejectsUnsafeValues) {
+    EXPECT_TRUE(sigurdos::mapTileProviderUrlValid("https://tiles.example.test/osm"));
+    EXPECT_TRUE(sigurdos::mapTileProviderUrlValid("http://localhost:8080/tiles"));
+
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid(nullptr));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid(""));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid("ftp://tiles.example.test"));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid("https://tiles.example.test/with space"));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid("https://tiles.example.test/<bad>"));
+}
+
+TEST_F(PrefsTest, MapTileProviderSaveLoadAndClearRoundTrips) {
+    char loaded[sigurdos::MAP_TILE_PROVIDER_MAX_LEN] = {};
+
+    EXPECT_FALSE(sigurdos::loadMapTileProvider(loaded, sizeof(loaded)));
+    ASSERT_TRUE(sigurdos::saveMapTileProvider("  https://tiles.example.test/osm/  "));
+    ASSERT_TRUE(sigurdos::loadMapTileProvider(loaded, sizeof(loaded)));
+    EXPECT_STREQ("https://tiles.example.test/osm", loaded);
+
+    ASSERT_TRUE(sigurdos::clearMapTileProvider());
+    loaded[0] = '\0';
+    EXPECT_FALSE(sigurdos::loadMapTileProvider(loaded, sizeof(loaded)));
+    EXPECT_STREQ("", loaded);
 }
 
 TEST_F(PrefsTest, RepeaterPasswordSaveLoadAndForgetRoundTrips) {
