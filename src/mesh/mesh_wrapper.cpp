@@ -1861,8 +1861,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
-                g_mesh->sendLoginTo(*c, password);
-                return true;
+                return g_mesh->sendLoginTo(*c, password);
             }
         }
         return false;

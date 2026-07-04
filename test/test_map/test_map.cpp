@@ -243,6 +243,16 @@ TEST(MapGpsButtonStateTest, ButtonStateReflectsGpsLock) {
     EXPECT_EQ(sigurdos::ui::map_gps_button_color(state), sigurdos::theme::ACCENT_GREEN);
 }
 
+TEST(MapGpsButtonStateTest, ControlFocusIndexWrapsAcrossMapControls) {
+    EXPECT_EQ(sigurdos::ui::MAP_SCREEN_CONTROL_COUNT, 4);
+    EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(0, 1), 1);
+    EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(3, 1), 0);
+    EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(0, -1), 3);
+    EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(-1, 1), 1);
+    EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(99, -1), 3);
+    EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(0, 1, 0), -1);
+}
+
 // ════════════════════════════════════════════════════════
 // Tile cache LRU eviction
 // ════════════════════════════════════════════════════════

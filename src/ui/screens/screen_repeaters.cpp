@@ -309,12 +309,17 @@ void repeaters_screen_show()
 // Sends an admin CLI command to a logged-in repeater/server and pushes
 // a confirmation message into the message queue. The actual response
 // arrives later as a chat message from the server.
-static void repeater_send(const char* contact_name, const char* cmd, const char* fmt) {
-    if (!contact_name || !cmd || !cmd[0]) return;
-    sigurdos::mesh::sendCommand(contact_name, cmd);
+static bool repeater_send(const char* contact_name, const char* cmd, const char* fmt) {
+    if (!contact_name || !cmd || !cmd[0]) return false;
+    bool sent = sigurdos::mesh::sendCommand(contact_name, cmd);
     char buf[80];
-    snprintf(buf, sizeof(buf), fmt, cmd);
+    if (sent) {
+        snprintf(buf, sizeof(buf), fmt, cmd);
+    } else {
+        snprintf(buf, sizeof(buf), "! Send failed: %s", cmd);
+    }
     sigurdos::mesh::mesh_v2_queue_push("System", "", buf, 0, 0.0f);
+    return sent;
 }
 
 // Generic input dialog — shows a text entry box and sends

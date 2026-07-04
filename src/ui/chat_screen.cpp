@@ -138,8 +138,10 @@ static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_l
 static int   active_channel = 0;
 static lv_timer_t* g_pending_channel_list_timer = nullptr;
 static lv_timer_t* g_pending_channel_open_timer = nullptr;
+static lv_timer_t* g_pending_channel_select_timer = nullptr;
 static lv_scr_load_anim_t g_pending_channel_list_anim = LV_SCR_LOAD_ANIM_NONE;
 static char g_pending_open_channel[CHANNEL_NAME_CAP] = "";
+static char g_pending_select_channel[CHANNEL_NAME_CAP] = "";
 
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
@@ -230,7 +232,8 @@ static void clear_chat_private_scope(const char* conversation)
 static void ensure_channel_buffer(int idx)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
-    if (ch_msgs[idx] || ch_msg_capacity[idx] == CHAT_MSGS_MAX) return;
+    if (ch_msgs[idx]) return;
+    ch_msg_capacity[idx] = 0;
 
     const size_t bytes = CHAT_MSGS_MAX * sizeof(ChannelMessage);
     ch_msgs[idx] = (ChannelMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -280,6 +283,7 @@ static void show_channel_list(lv_scr_load_anim_t anim);
 static void open_channel_messaging(int idx);
 static void request_show_channel_list(lv_scr_load_anim_t anim);
 static void request_open_channel_messaging(int idx);
+static void request_select_channel(int idx);
 static void rebuild_channel_ribbon();
 static void show_add_channel_options(lv_obj_t* parent);
 static void render_active_messages();
@@ -332,10 +336,7 @@ static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
 
     lv_obj_add_event_cb(pill, [](lv_event_t* e) {
         int ch = (int)(intptr_t)lv_event_get_user_data(e);
-        active_channel = ch;
-        ch_meta[ch].unread = 0;
-        rebuild_channel_ribbon();
-        render_active_messages();
+        request_select_channel(ch);
     }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
 
     return pill;
@@ -781,6 +782,39 @@ static void request_open_channel_messaging(int idx)
     ch_meta[idx].unread = 0;
     if (!g_pending_channel_open_timer) {
         g_pending_channel_open_timer = lv_timer_create(channel_open_timer_cb, 1, nullptr);
+    }
+}
+
+static void channel_select_timer_cb(lv_timer_t* timer)
+{
+    if (timer) lv_timer_del(timer);
+    g_pending_channel_select_timer = nullptr;
+    if (current_screen() != Screen::Chat) return;
+    if (!channel_ribbon || !lv_obj_is_valid(channel_ribbon)) return;
+    if (!msg_list || !lv_obj_is_valid(msg_list)) return;
+
+    char channel[CHANNEL_NAME_CAP];
+    strncpy(channel, g_pending_select_channel, sizeof(channel) - 1);
+    channel[sizeof(channel) - 1] = '\0';
+    g_pending_select_channel[0] = '\0';
+    if (!channel[0]) return;
+
+    const int idx = find_channel_idx(channel);
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    active_channel = idx;
+    ch_meta[idx].unread = 0;
+    rebuild_channel_ribbon();
+    render_active_messages();
+}
+
+static void request_select_channel(int idx)
+{
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    strncpy(g_pending_select_channel, dyn_channels[idx], sizeof(g_pending_select_channel) - 1);
+    g_pending_select_channel[sizeof(g_pending_select_channel) - 1] = '\0';
+    ch_meta[idx].unread = 0;
+    if (!g_pending_channel_select_timer) {
+        g_pending_channel_select_timer = lv_timer_create(channel_select_timer_cb, 1, nullptr);
     }
 }
 

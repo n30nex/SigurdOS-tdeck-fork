@@ -475,16 +475,20 @@ public:
         return idx >= 0 ? _login_entries[idx].permission : 0;
     }
 
-    uint8_t getLoginStatus(const char* name) const {
+    uint8_t getLoginStatus(const char* name) {
         int idx = findLoginEntry(name);
-        return idx >= 0 ? static_cast<uint8_t>(_login_entries[idx].status)
-                        : static_cast<uint8_t>(LOGIN_NONE);
+        if (idx < 0) return static_cast<uint8_t>(LOGIN_NONE);
+        if (_login_entries[idx].status == LOGIN_PENDING &&
+            loginPendingTimedOut((uint32_t)millis(), _login_entries[idx].started_at_ms)) {
+            _login_entries[idx].status = LOGIN_FAILED;
+        }
+        return static_cast<uint8_t>(_login_entries[idx].status);
     }
 
     // Send a login request to a repeater or room server contact.
     // Uses BaseChatMesh::sendLogin() which sends as PAYLOAD_TYPE_ANON_REQ.
     // The response arrives in onContactResponse() with RESP_SERVER_LOGIN_OK at data[4].
-    void sendLoginTo(const ::ContactInfo& contact, const char* password);
+    bool sendLoginTo(const ::ContactInfo& contact, const char* password);
 
 
     // Logout: stop the keep-alive connection and clear the session.

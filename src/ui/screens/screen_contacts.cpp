@@ -534,7 +534,7 @@ void show_login_password_dialog(const char* contact_name)
 // Cancels itself if the user navigates away.
 struct LoginPollCtx {
     char* name;
-    lv_obj_t* screen;
+    Screen origin_screen;
 
     uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
@@ -551,10 +551,10 @@ static void on_login_poll_timer(lv_timer_t* t) {
     }
 
 
-    // If a newer generation timer was started, this ctx is stale
-    // If user navigated away from the screen, stop polling
-    if (!ctx->screen || ctx->gen != g_login_poll_gen || lv_scr_act() != ctx->screen) {
-
+    // If a newer generation timer was started or the user navigated away from
+    // the originating nav screen, stop polling. Do not bind to lv_scr_act():
+    // the pending/detail refresh intentionally replaces the LVGL screen.
+    if (ctx->gen != g_login_poll_gen || current_screen() != ctx->origin_screen) {
         free(ctx->name);
         delete ctx;
         lv_timer_del(t);
@@ -596,9 +596,20 @@ static void start_login_poll_timer(const char* name) {
     }
 
     g_login_poll_gen++;
-    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act(), g_login_poll_gen};
+    LoginPollCtx* ctx = new(std::nothrow) LoginPollCtx{strdup(name), current_screen(), g_login_poll_gen};
+    if (!ctx || !ctx->name) {
+        if (ctx) {
+            free(ctx->name);
+            delete ctx;
+        }
+        return;
+    }
 
     g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
+    if (!g_login_poll_timer) {
+        free(ctx->name);
+        delete ctx;
+    }
 }
 
 // ── Admin command dialog ──────────────────────────
@@ -899,13 +910,17 @@ void show_fetch_msgs_dialog(const char* contact_name)
         if (d && d->name) {
             const char* channel = lv_textarea_get_text(d->ta);
             if (channel && channel[0]) {
-                sigurdos::mesh::sendRoomMsgFetchRequest(d->name, channel);
                 char confirm[64];
-                snprintf(confirm, sizeof(confirm), "Fetching msgs from %s channel %s",
+                bool sent = sigurdos::mesh::sendRoomMsgFetchRequest(d->name, channel);
+                snprintf(confirm, sizeof(confirm),
+                         sent ? "Fetching msgs from %s channel %s"
+                              : "! Fetch failed for %s channel %s",
                          d->name, channel);
                 sigurdos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
-                // Navigate to Chat screen so user sees incoming messages
-                sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
+                if (sent) {
+                    // Navigate to Chat screen so user sees incoming messages.
+                    sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
+                }
             }
         }
         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));

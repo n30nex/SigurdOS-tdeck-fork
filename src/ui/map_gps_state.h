@@ -14,6 +14,8 @@ enum class MapGpsButtonState : uint8_t {
     Locked,
 };
 
+static constexpr int MAP_SCREEN_CONTROL_COUNT = 4;
+
 inline MapGpsButtonState map_gps_button_state(bool gps_enabled, bool has_fix)
 {
     if (has_fix) return MapGpsButtonState::Locked;
@@ -38,6 +40,16 @@ inline uint32_t map_gps_button_color(MapGpsButtonState state)
     case MapGpsButtonState::Off:
     default:                         return theme::ACCENT;
     }
+}
+
+inline int map_screen_cycle_control_index(int current, int delta,
+                                          int count = MAP_SCREEN_CONTROL_COUNT)
+{
+    if (count <= 0) return -1;
+    if (current < 0 || current >= count) current = 0;
+    int next = (current + delta) % count;
+    if (next < 0) next += count;
+    return next;
 }
 
 } // namespace sigurdos::ui

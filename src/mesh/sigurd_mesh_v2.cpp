@@ -837,8 +837,8 @@ namespace mesh {
         return -1; // table full
     }
 
-    void SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {
-        if (!password) return;
+    bool SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {
+        if (!password) return false;
         uint32_t est_timeout = 0;
         int r = BaseChatMesh::sendLogin(contact, password, est_timeout);
         if (r != MSG_SEND_FAILED) {
@@ -847,7 +847,9 @@ namespace mesh {
             Serial.printf("[mesh] Login sent to %s (result=%d, timeout=%u)\n",
                           contact.name, r, est_timeout);
 #endif
+            return true;
         }
+        return false;
     }
 
     void SigurdMeshV2::sendLogoutTo(const ::ContactInfo& contact) {

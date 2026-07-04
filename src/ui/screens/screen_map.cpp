@@ -47,12 +47,58 @@ static lv_obj_t* g_map_status_label = nullptr;
 static lv_obj_t* g_map_gps_label = nullptr;
 static lv_obj_t* g_map_gps_btn = nullptr;
 static lv_obj_t* g_map_gps_btn_label = nullptr;
+static lv_obj_t* g_map_download_btn = nullptr;
+static lv_obj_t* g_map_zoom_in_btn = nullptr;
+static lv_obj_t* g_map_zoom_out_btn = nullptr;
 static lv_obj_t* g_map_screen = nullptr;
 static lv_timer_t* g_download_status_timer = nullptr;
 static bool g_download_was_running = false;
 static bool g_prompted_manual_location = false;
+static bool g_map_control_focus = false;
+static int g_map_control_idx = 0;
 static constexpr int MANUAL_LOCATION_ZOOM = 12;
 static constexpr int GPS_CENTER_ZOOM = 14;
+
+static lv_obj_t* map_control_obj(int idx)
+{
+    switch (idx) {
+    case 0: return g_map_gps_btn;
+    case 1: return g_map_download_btn;
+    case 2: return g_map_zoom_in_btn;
+    case 3: return g_map_zoom_out_btn;
+    default: return nullptr;
+    }
+}
+
+static const char* map_control_name(int idx)
+{
+    switch (idx) {
+    case 0: return "Use GPS";
+    case 1: return "Download tiles";
+    case 2: return "Zoom in";
+    case 3: return "Zoom out";
+    default: return "Map control";
+    }
+}
+
+static void update_map_control_focus()
+{
+    for (int i = 0; i < MAP_SCREEN_CONTROL_COUNT; ++i) {
+        lv_obj_t* obj = map_control_obj(i);
+        if (!obj || !lv_obj_is_valid(obj)) continue;
+        const bool focused = g_map_control_focus && i == g_map_control_idx;
+        lv_obj_set_style_border_width(obj, focused ? 2 : 1, 0);
+        lv_obj_set_style_border_color(obj,
+            lv_color_hex(focused ? ACCENT_YELLOW : ACCENT), 0);
+    }
+
+    if (!g_map_control_focus) return;
+    lv_obj_t* focused = map_control_obj(g_map_control_idx);
+    if (focused && lv_obj_is_valid(focused) && lv_group_get_default()) {
+        lv_group_focus_obj(focused);
+    }
+    update_map_status(map_control_name(g_map_control_idx));
+}
 
 // ════════════════════════════════════════════════════════
 // Map — trackball pan navigation
@@ -60,6 +106,31 @@ static constexpr int GPS_CENTER_ZOOM = 14;
 
 bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
     const int PAN_PX = 12;  // pixels per trackball tick
+    if (g_map_control_focus) {
+        switch (event) {
+        case SigurdOSTrackballEvent::Left:
+            g_map_control_idx = map_screen_cycle_control_index(g_map_control_idx, -1);
+            update_map_control_focus();
+            return true;
+        case SigurdOSTrackballEvent::Right:
+            g_map_control_idx = map_screen_cycle_control_index(g_map_control_idx, 1);
+            update_map_control_focus();
+            return true;
+        case SigurdOSTrackballEvent::Click: {
+            lv_obj_t* obj = map_control_obj(g_map_control_idx);
+            if (obj && lv_obj_is_valid(obj)) lv_obj_send_event(obj, LV_EVENT_CLICKED, nullptr);
+            return true;
+        }
+        case SigurdOSTrackballEvent::Up:
+        case SigurdOSTrackballEvent::Down:
+            g_map_control_focus = false;
+            update_map_control_focus();
+            break;
+        default:
+            break;
+        }
+    }
+
     switch (event) {
         case SigurdOSTrackballEvent::Up:
             sigurdos_map_pan(0, -PAN_PX);
@@ -78,8 +149,9 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
             render_map_with_contacts();
             return true;
         case SigurdOSTrackballEvent::Click:
-            sigurdos_map_zoom_in();
-            render_map_with_contacts();
+            g_map_control_focus = true;
+            g_map_control_idx = 0;
+            update_map_control_focus();
             return true;
         default:
             return false;
@@ -390,7 +462,12 @@ void map_screen_show()
     g_map_gps_label = nullptr;
     g_map_gps_btn = nullptr;
     g_map_gps_btn_label = nullptr;
+    g_map_download_btn = nullptr;
+    g_map_zoom_in_btn = nullptr;
+    g_map_zoom_out_btn = nullptr;
     g_download_was_running = false;
+    g_map_control_focus = false;
+    g_map_control_idx = 0;
     create_map_gps_topbar_status(scr);
     lv_obj_add_event_cb(scr, [](lv_event_t* e) {
         lv_obj_t* deleting = (lv_obj_t*)lv_event_get_target(e);
@@ -400,11 +477,15 @@ void map_screen_show()
         g_map_gps_label = nullptr;
         g_map_gps_btn = nullptr;
         g_map_gps_btn_label = nullptr;
+        g_map_download_btn = nullptr;
+        g_map_zoom_in_btn = nullptr;
+        g_map_zoom_out_btn = nullptr;
         if (g_download_status_timer) {
             lv_timer_del(g_download_status_timer);
             g_download_status_timer = nullptr;
         }
         g_download_was_running = false;
+        g_map_control_focus = false;
     }, LV_EVENT_DELETE, nullptr);
 
     // Create the map overlay container before initializing contacts
@@ -467,20 +548,28 @@ void map_screen_show()
     int zoom_y_base = DISPLAY_H - BOT_BAR_H - DIVIDER_H - 8;
 
     lv_obj_t* zoom_in = lv_btn_create(scr);
+    g_map_zoom_in_btn = zoom_in;
     lv_obj_set_size(zoom_in, 32, 32);
     lv_obj_align(zoom_in, LV_ALIGN_BOTTOM_RIGHT, -8, -(BOT_BAR_H + DIVIDER_H + 8));
     lv_obj_set_style_bg_color(zoom_in, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_radius(zoom_in, 0, 0);
+    lv_obj_set_style_border_width(zoom_in, 1, 0);
+    lv_obj_set_style_border_color(zoom_in, lv_color_hex(ACCENT), 0);
+    apply_focus_style(zoom_in);
     lv_obj_t* zi = lv_label_create(zoom_in);
     lv_label_set_text(zi, "+"); lv_obj_center(zi);
     lv_obj_add_event_cb(zoom_in, [](lv_event_t*) { sigurdos_map_zoom_in(); render_map_with_contacts(); },
                         LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* zoom_out = lv_btn_create(scr);
+    g_map_zoom_out_btn = zoom_out;
     lv_obj_set_size(zoom_out, 32, 32);
     lv_obj_align(zoom_out, LV_ALIGN_BOTTOM_RIGHT, -8, -(BOT_BAR_H + DIVIDER_H + 48));
     lv_obj_set_style_bg_color(zoom_out, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_radius(zoom_out, 0, 0);
+    lv_obj_set_style_border_width(zoom_out, 1, 0);
+    lv_obj_set_style_border_color(zoom_out, lv_color_hex(ACCENT), 0);
+    apply_focus_style(zoom_out);
     lv_obj_t* zo = lv_label_create(zoom_out);
     lv_label_set_text(zo, "-"); lv_obj_center(zo);
     lv_obj_add_event_cb(zoom_out, [](lv_event_t*) { sigurdos_map_zoom_out(); render_map_with_contacts(); },
@@ -493,6 +582,7 @@ void map_screen_show()
     lv_obj_set_style_radius(g_map_gps_btn, 0, 0);
     lv_obj_set_style_border_width(g_map_gps_btn, 1, 0);
     lv_obj_set_style_border_color(g_map_gps_btn, lv_color_hex(ACCENT), 0);
+    apply_focus_style(g_map_gps_btn);
     g_map_gps_btn_label = lv_label_create(g_map_gps_btn);
     lv_label_set_text(g_map_gps_btn_label, "Use GPS");
     lv_obj_set_style_text_color(g_map_gps_btn_label, lv_color_hex(ACCENT), 0);
@@ -504,12 +594,14 @@ void map_screen_show()
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* dl_btn = lv_btn_create(scr);
+    g_map_download_btn = dl_btn;
     lv_obj_set_size(dl_btn, 36, 28);
     lv_obj_align(dl_btn, LV_ALIGN_BOTTOM_LEFT, 112, -(BOT_BAR_H + DIVIDER_H + 8));
     lv_obj_set_style_bg_color(dl_btn, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_radius(dl_btn, 0, 0);
     lv_obj_set_style_border_width(dl_btn, 1, 0);
     lv_obj_set_style_border_color(dl_btn, lv_color_hex(ACCENT), 0);
+    apply_focus_style(dl_btn);
     lv_obj_t* dl = lv_label_create(dl_btn);
     lv_label_set_text(dl, LV_SYMBOL_DOWNLOAD);
     lv_obj_set_style_text_color(dl, lv_color_hex(ACCENT), 0);
@@ -518,6 +610,13 @@ void map_screen_show()
     lv_obj_add_event_cb(dl_btn, [](lv_event_t*) {
         start_visible_tile_download();
     }, LV_EVENT_CLICKED, nullptr);
+
+    if (lv_group_t* g = lv_group_get_default()) {
+        lv_group_add_obj(g, g_map_gps_btn);
+        lv_group_add_obj(g, g_map_download_btn);
+        lv_group_add_obj(g, g_map_zoom_in_btn);
+        lv_group_add_obj(g, g_map_zoom_out_btn);
+    }
 
     g_map_status_label = lv_label_create(scr);
     lv_label_set_text(g_map_status_label, sigurdos_map_tiles_available()

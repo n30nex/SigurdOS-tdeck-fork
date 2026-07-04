@@ -93,6 +93,13 @@ TEST(MeshContractTest, LoginStatusValuesStayStableForUiStateMachine) {
     EXPECT_EQ(LOGIN_STATUS_FAILED, 3);
 }
 
+TEST(MeshContractTest, LoginPendingTimeoutUsesWrapSafeElapsedTime) {
+    EXPECT_EQ(sigurdos::mesh::LOGIN_PENDING_TIMEOUT_MS, 30000u);
+    EXPECT_FALSE(sigurdos::mesh::loginPendingTimedOut(29999u, 0u));
+    EXPECT_TRUE(sigurdos::mesh::loginPendingTimedOut(30000u, 0u));
+    EXPECT_TRUE(sigurdos::mesh::loginPendingTimedOut(100u, UINT32_MAX - 29900u));
+}
+
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
     EXPECT_EQ(sizeof(MeshMessage::sender), 32u);
     EXPECT_EQ(sizeof(MeshMessage::channel), 32u);
