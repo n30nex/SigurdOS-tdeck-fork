@@ -1032,35 +1032,45 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // the ACL role byte; legacy responses fall back to an admin flag.
         const uint8_t login_perm = sigurdos::mesh::getLoginPermission(contact_name);
         bool is_admin = (login_perm >= PERM_ACL_ADMIN);
-        constexpr bool show_advanced_admin_rows = false;
+        bool show_admin_management_rows = repeater_show_admin_management_rows(is_admin);
+        bool show_admin_radio_rows = repeater_show_admin_radio_rows(is_admin);
+        bool show_admin_password_rows = repeater_show_admin_password_rows(is_admin);
 
         // ── Section: Radio Settings ──────────────────────
-        if (is_admin && show_advanced_admin_rows) {
-        sec_header("  Radio Settings");
-        add_set(LV_SYMBOL_WIFI "  Radio Params", "Set Radio",     "freq,bw,sf,cr",    "set radio ", false);
-        add_set(LV_SYMBOL_WIFI "  Temporary Radio", "Temp Radio",  "freq,bw,sf,cr,mins", "tempradio ", false);
+        if (show_admin_radio_rows) {
+            sec_header("  Radio Settings");
+            add_set(LV_SYMBOL_WIFI "  Radio Params", "Set Radio", "freq,bw,sf,cr",
+                    "set radio ", false);
+            add_set(LV_SYMBOL_WIFI "  Temporary Radio", "Temp Radio", "freq,bw,sf,cr,mins",
+                    "tempradio ", false);
         }
 
         // ── Section: Management ──────────────────────────
-        if (is_admin && show_advanced_admin_rows) {
-        sec_header("  Management");
-        add_set(LV_SYMBOL_REFRESH "  Local Advert", "Local Advert", "Minutes 60-240 or 0", "set advert.interval ", false);
-        add_set(LV_SYMBOL_REFRESH "  Flood Advert", "Flood Advert", "Hours 3-168 or 0", "set flood.advert.interval ", false);
-        add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
-        add_set(LV_SYMBOL_CLOSE "  Admin Password",   "Admin Password",   "New admin password", "password ",  true);
-        add_set(LV_SYMBOL_CLOSE "  Guest Password",   "Guest Password",   "New guest password", "set guest.password ", false);
-        add_act(LV_SYMBOL_LIST "  Version",           "ver",              "Sent: ver");
+        if (show_admin_management_rows) {
+            sec_header("  Management");
+            add_set(LV_SYMBOL_REFRESH "  Local Advert", "Local Advert", "Minutes 60-240 or 0",
+                    "set advert.interval ", false);
+            add_set(LV_SYMBOL_REFRESH "  Flood Advert", "Flood Advert", "Hours 3-168 or 0",
+                    "set flood.advert.interval ", false);
+            add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
+            if (show_admin_password_rows) {
+                add_set(LV_SYMBOL_CLOSE "  Admin Password", "Admin Password",
+                        "New admin password", "password ", true);
+                add_set(LV_SYMBOL_CLOSE "  Guest Password", "Guest Password",
+                        "New guest password", "set guest.password ", false);
+            }
+            add_act(LV_SYMBOL_LIST "  Version", "ver", "Sent: ver");
         }
 
         // ── Section: Network ─────────────────────────────
-        if (is_admin && show_advanced_admin_rows) {
-        sec_header("  Network");
-        add_act(LV_SYMBOL_LIST "  Neighbours",        "neighbors",        "Sent: neighbors");
-        add_act(LV_SYMBOL_LIST "  Regions",           "region",           "Sent: region");
-        add_act(LV_SYMBOL_REFRESH "  Repeat On",      "set repeat on",    "Sent: repeat on");
-        add_act(LV_SYMBOL_REFRESH "  Repeat Off",     "set repeat off",   "Sent: repeat off");
-        add_act(LV_SYMBOL_REFRESH "  Advert (flood)",  "advert",          "Sent: flood advert");
-        add_act(LV_SYMBOL_EDIT "  Public Key",        "get public.key",   "Sent: get public.key");
+        if (show_admin_management_rows) {
+            sec_header("  Network");
+            add_act(LV_SYMBOL_LIST "  Neighbours", "neighbors", "Sent: neighbors");
+            add_act(LV_SYMBOL_LIST "  Regions", "region", "Sent: region");
+            add_act(LV_SYMBOL_REFRESH "  Repeat On", "set repeat on", "Sent: repeat on");
+            add_act(LV_SYMBOL_REFRESH "  Repeat Off", "set repeat off", "Sent: repeat off");
+            add_act(LV_SYMBOL_REFRESH "  Advert (flood)", "advert", "Sent: flood advert");
+            add_act(LV_SYMBOL_EDIT "  Public Key", "get public.key", "Sent: get public.key");
         }
 
         // ── Section: Commands ────────────────────────────

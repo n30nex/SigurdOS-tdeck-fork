@@ -75,4 +75,18 @@ TEST(LoginRefreshPolicy, RefreshesAfterSentRepeaterLogin)
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(true, false));
 }
 
+TEST(RepeaterAdminPolicy, ShowsManagementRowsOnlyForAdmins)
+{
+    EXPECT_TRUE(sigurdos::ui::repeater_show_admin_management_rows(true));
+    EXPECT_FALSE(sigurdos::ui::repeater_show_admin_management_rows(false));
+}
+
+TEST(RepeaterAdminPolicy, KeepsHighRiskRowsHidden)
+{
+    EXPECT_FALSE(sigurdos::ui::repeater_show_admin_radio_rows(true));
+    EXPECT_FALSE(sigurdos::ui::repeater_show_admin_radio_rows(false));
+    EXPECT_FALSE(sigurdos::ui::repeater_show_admin_password_rows(true));
+    EXPECT_FALSE(sigurdos::ui::repeater_show_admin_password_rows(false));
+}
+
 } // namespace

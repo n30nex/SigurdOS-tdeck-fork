@@ -45,4 +45,19 @@ inline bool login_detail_refresh_after_submit(bool send_attempted,
     return !send_attempted || !contact_is_room_server;
 }
 
+inline bool repeater_show_admin_management_rows(bool is_admin)
+{
+    return is_admin;
+}
+
+inline bool repeater_show_admin_radio_rows(bool /*is_admin*/)
+{
+    return false;
+}
+
+inline bool repeater_show_admin_password_rows(bool /*is_admin*/)
+{
+    return false;
+}
+
 } // namespace sigurdos::ui
