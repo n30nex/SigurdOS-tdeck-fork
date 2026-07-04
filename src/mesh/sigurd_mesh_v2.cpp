@@ -69,7 +69,7 @@ namespace mesh {
 
     bool SigurdMeshV2::sendTrace(int contact_idx, uint32_t tag) {
         ::ContactInfo c;
-        if (!getContactByIdx((uint32_t)contact_idx, c)) return false;
+        if (!getContactByPublicIndex((uint32_t)contact_idx, c)) return false;
         if (c.out_path_len == OUT_PATH_UNKNOWN) return false;
         _has_trace_result = false;
         ::mesh::Packet* pkt = createTrace(tag, 0, 0);
@@ -282,7 +282,7 @@ namespace mesh {
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 uint32_t tag = 0, est_timeout = 0;
                 int r = BaseChatMesh::sendRequest(tmp, req_type, tag, est_timeout);
                 if (r != MSG_SEND_FAILED) {
@@ -310,7 +310,7 @@ namespace mesh {
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 uint32_t tag = 0, est_timeout = 0;
                 int r = BaseChatMesh::sendRequest(tmp, data, data_len, tag, est_timeout);
                 if (r != MSG_SEND_FAILED) {
@@ -339,7 +339,7 @@ namespace mesh {
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 // REQ data: [req_type][channel_name\0]
                 uint8_t req_data[64];
                 req_data[0] = REQ_TYPE_GET_ROOM_MSGS;
@@ -421,8 +421,10 @@ namespace mesh {
         const bool live_contact = contact.type != ADV_TYPE_NONE &&
             lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
         const int contact_count = getNumContacts();
-        if (live_contact &&
-            (is_new || contact_count != s_last_persisted_contact_count)) {
+        const bool new_visible_contact = live_contact &&
+            (is_new || contact_count != s_last_persisted_contact_count);
+        sigurdos::mesh::mesh_v2_note_contact_activity(contact.type, new_visible_contact);
+        if (new_visible_contact) {
             sigurdos::mesh::saveContacts();
             s_last_persisted_contact_count = contact_count;
         }
@@ -480,7 +482,7 @@ namespace mesh {
                 sigurdos::mesh::mesh_v2_notify_send_confirmed(ack_val, trip_ms);
                 // Return a valid ContactInfo for BaseChatMesh internal processing
                 for (int j = 0; j < getNumContacts(); j++) {
-                    if (getContactByIdx((uint32_t)j, _contact_cache)) {
+                    if (getContactByPublicIndex((uint32_t)j, _contact_cache)) {
                         return &_contact_cache;
                     }
                 }
@@ -736,7 +738,7 @@ namespace mesh {
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 // Get a writable pointer to the contact
                 ::ContactInfo* c = lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
                 if (!c) return 0;
@@ -889,21 +891,31 @@ namespace mesh {
         return &_ch_cache;
     }
 
+    bool SigurdMeshV2::getContactByPublicIndex(uint32_t idx, ::ContactInfo& contact) {
+        return BaseChatMesh::getContactByIdx(
+            sigurdos::mesh::detail::contactPublicIndexToRawSlot(idx),
+            contact);
+    }
+
     const ::ContactInfo* SigurdMeshV2::getContact(int idx) {
         if (idx < 0 || idx >= getNumContacts()) return nullptr;
-        if (!getContactByIdx((uint32_t)idx, _contact_cache)) return nullptr;
+        if (!getContactByPublicIndex((uint32_t)idx, _contact_cache)) return nullptr;
         return &_contact_cache;
+    }
+
+    void SigurdMeshV2::markContactsPersistedBaseline() {
+        s_last_persisted_contact_count = getNumContacts();
     }
 
     bool SigurdMeshV2::removeContact(int idx) {
         ::ContactInfo tmp;
-        if (!getContactByIdx((uint32_t)idx, tmp)) return false;
+        if (!getContactByPublicIndex((uint32_t)idx, tmp)) return false;
         return BaseChatMesh::removeContact(tmp);
     }
 
     bool SigurdMeshV2::resetPathTo(int idx) {
         ::ContactInfo tmp;
-        if (!getContactByIdx((uint32_t)idx, tmp)) return false;
+        if (!getContactByPublicIndex((uint32_t)idx, tmp)) return false;
         // resetPathTo() mutates the passed reference, so operate on the live
         // stored contact (returned by lookupContactByPubKey), not a copy.
         ::ContactInfo* live = lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
@@ -1011,7 +1023,7 @@ namespace mesh {
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 uint32_t expected_ack = 0, est_timeout = 0;
                 uint32_t ts = getRTCClock()->getCurrentTime();
                 int r = BaseChatMesh::sendMessage(tmp, ts, 0, text,
@@ -1030,7 +1042,7 @@ namespace mesh {
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 uint32_t expected_ack = 0, est_timeout = 0;
                 int r = BaseChatMesh::sendMessage(tmp, fixed_ts, 0, text,
                                                   expected_ack, est_timeout);

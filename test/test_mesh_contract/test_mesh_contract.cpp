@@ -64,6 +64,12 @@ TEST(MeshContractTest, AutoAddOverwriteOldestUsesBitZero) {
     EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsOverwriteOldest(0x01));
 }
 
+TEST(MeshContractTest, PublicContactIndexesSkipMeshCoreAnonSlots) {
+    EXPECT_EQ(sigurdos::mesh::detail::CONTACT_PUBLIC_INDEX_OFFSET, 8u);
+    EXPECT_EQ(sigurdos::mesh::detail::contactPublicIndexToRawSlot(0), 8u);
+    EXPECT_EQ(sigurdos::mesh::detail::contactPublicIndexToRawSlot(12), 20u);
+}
+
 TEST(MeshContractTest, PublicChannelDefaultsStayStable) {
     EXPECT_STREQ(sigurdos::mesh::PUBLIC_CHANNEL_NAME, "Public");
     EXPECT_STREQ(sigurdos::mesh::PUBLIC_CHANNEL_PSK_BASE64,

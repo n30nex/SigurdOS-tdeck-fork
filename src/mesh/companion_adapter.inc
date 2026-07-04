@@ -86,7 +86,7 @@ static void fillStoredPrefixForName(const char* name, uint8_t* out)
     if (!g_mesh || !name) return;
     ::ContactInfo tmp;
     for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+        if (g_mesh->getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
             memcpy(out, tmp.id.pub_key, sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
             return;
         }
@@ -244,7 +244,7 @@ public:
     bool getContact(int index, CompanionContact& out) const override {
         if (!g_mesh) return false;
         ::ContactInfo c{};
-        if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+        if (!g_mesh->getContactByPublicIndex((uint32_t)index, c)) return false;
         companionContactFromInfo(c, out);
         return true;
     }

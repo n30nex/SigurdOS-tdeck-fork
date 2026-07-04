@@ -26,6 +26,15 @@
 namespace sigurdos {
 namespace mesh {
 
+namespace detail {
+static constexpr uint32_t CONTACT_PUBLIC_INDEX_OFFSET = 8;
+
+inline uint32_t contactPublicIndexToRawSlot(uint32_t public_index)
+{
+    return public_index + CONTACT_PUBLIC_INDEX_OFFSET;
+}
+} // namespace detail
+
 // Forward declarations from mesh_wrapper.cpp
 // sender_timestamp / path_len carry the originating packet's stamp and mesh
 // path-length byte through to the companion bridge so the phone app shows the
@@ -52,6 +61,7 @@ void mesh_v2_group_data_push(uint8_t channel_index,
                               uint16_t data_type,
                               const uint8_t* data,
                               size_t data_len);
+void mesh_v2_note_contact_activity(uint8_t contact_type, bool is_new_visible_contact);
 
 // Live mesh-event fan-out to the companion bridge (no-ops when the bridge is
 // absent / no phone connected). Primitive args keep this header MeshCore-free.
@@ -124,6 +134,11 @@ int  pendingMessageCount();
 uint32_t getQueueDropCount();
 int  getUnreadMessageCount();
 void resetUnreadMessageCount();
+int  getUnreadContactCount();
+void resetUnreadContactCount();
+int  getUnreadRepeaterCount();
+void resetUnreadRepeaterCount();
+uint32_t getMeshActivitySeq();
 
 int  getContactCount();
 int  exportContacts(char names[][32], int max);

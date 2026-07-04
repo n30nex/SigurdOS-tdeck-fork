@@ -25,6 +25,9 @@
 namespace sigurdos {
 namespace mesh {
 
+static_assert(detail::CONTACT_PUBLIC_INDEX_OFFSET == MAX_ANON_CONTACTS,
+              "SigurdOS contact index mapping must match MeshCore anon slots");
+
 // RSSI/SNR side-channel — BaseChatMesh::ContactInfo doesn't carry signal data
 struct SignalSample {
     uint8_t key[4];
@@ -378,7 +381,7 @@ public:
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 return tmp.out_path_len;
             }
         }
@@ -519,7 +522,9 @@ public:
     }
 
     ::ContactInfo _contact_cache;
+    bool getContactByPublicIndex(uint32_t idx, ::ContactInfo& contact);
     const ::ContactInfo* getContact(int idx);
+    void markContactsPersistedBaseline();
 
 
     bool removeContact(int idx);

@@ -107,6 +107,9 @@ static uint32_t      msg_drop_count = 0;
 // Unread message count — incremented on every incoming (non-self) message,
 // reset to 0 when the chat screen is opened. Used by the home screen badge.
 static int           unread_count = 0;
+static int           unread_contact_count = 0;
+static int           unread_repeater_count = 0;
+static uint32_t      mesh_activity_seq = 0;
 
 #include "companion_adapter.inc"
 
@@ -200,7 +203,10 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
     m.is_self = false;
-    if (strcmp(sender, own_name) != 0) unread_count++;
+    if (strcmp(sender, own_name) != 0) {
+        unread_count++;
+        mesh_activity_seq++;
+    }
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
@@ -222,6 +228,18 @@ void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_t
     // report an ACK (it is created lazily on the first incoming/companion path).
     if (g_companion_bridge_ptr) {
         g_companion_bridge_ptr->notifySendConfirmed(ack, trip_time_ms);
+    }
+}
+
+void sigurdos::mesh::mesh_v2_note_contact_activity(uint8_t contact_type,
+                                                   bool is_new_visible_contact) {
+    if (contact_type == ADV_TYPE_NONE) return;
+    mesh_activity_seq++;
+    if (!is_new_visible_contact) return;
+    if (contact_type == ADV_TYPE_REPEATER) {
+        unread_repeater_count++;
+    } else {
+        unread_contact_count++;
     }
 }
 
@@ -259,7 +277,10 @@ static void queue_push(const char* sender, const char* channel, const char* text
     m.timestamp = rtc_clock.getCurrentTime();
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
-    if (strcmp(sender, own_name) != 0) unread_count++;
+    if (strcmp(sender, own_name) != 0) {
+        unread_count++;
+        mesh_activity_seq++;
+    }
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     // Log as packet entry (accessible via Packets screen)
@@ -555,12 +576,12 @@ int getLoggedInRoomServerCount() {
     if (!g_mesh) return 0;
     int count = 0;
     int n = g_mesh->getContactCount();
-    ::ContactInfo tmp;
     for (int i = 0; i < n; i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
-            tmp.type == ADV_TYPE_ROOM &&
-            tmp.name[0] &&
-            g_mesh->isLoggedIn(tmp.name)) {
+        auto* tmp = g_mesh->getContact(i);
+        if (tmp &&
+            tmp->type == ADV_TYPE_ROOM &&
+            tmp->name[0] &&
+            g_mesh->isLoggedIn(tmp->name)) {
             count++;
         }
     }
@@ -571,15 +592,15 @@ const char* getLoggedInRoomServerName(int index) {
     if (!g_mesh || index < 0) return "";
     int count = 0;
     int n = g_mesh->getContactCount();
-    ::ContactInfo tmp;
     for (int i = 0; i < n; i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
-            tmp.type == ADV_TYPE_ROOM &&
-            tmp.name[0] &&
-            g_mesh->isLoggedIn(tmp.name)) {
+        auto* tmp = g_mesh->getContact(i);
+        if (tmp &&
+            tmp->type == ADV_TYPE_ROOM &&
+            tmp->name[0] &&
+            g_mesh->isLoggedIn(tmp->name)) {
             if (count == index) {
                 static char name_buf[32];
-                strncpy(name_buf, tmp.name, sizeof(name_buf) - 1);
+                strncpy(name_buf, tmp->name, sizeof(name_buf) - 1);
                 name_buf[sizeof(name_buf) - 1] = '\0';
                 return name_buf;
             }
@@ -1173,6 +1194,11 @@ uint32_t getQueueDropCount() { return msg_drop_count; }
 
 int getUnreadMessageCount() { return unread_count; }
 void resetUnreadMessageCount() { unread_count = 0; }
+int getUnreadContactCount() { return unread_contact_count; }
+void resetUnreadContactCount() { unread_contact_count = 0; }
+int getUnreadRepeaterCount() { return unread_repeater_count; }
+void resetUnreadRepeaterCount() { unread_repeater_count = 0; }
+uint32_t getMeshActivitySeq() { return mesh_activity_seq; }
 
 // ── Contacts ────────────────────────────────────
 
@@ -1582,13 +1608,13 @@ void saveState() {
 static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, void*)
 {
     if (!g_mesh || !out) return false;
-    ::ContactInfo c;
-    if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+    const ::ContactInfo* c = g_mesh->getContact(index);
+    if (!c) return false;
 
-    memcpy(out->pub_key, c.id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
-    memcpy(out->name, c.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
-    out->type = c.type;
-    out->perm = (c.flags >> 1) & 0x03;
+    memcpy(out->pub_key, c->id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
+    memcpy(out->name, c->name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
+    out->type = c->type;
+    out->perm = (c->flags >> 1) & 0x03;
     return true;
 }
 
@@ -1612,11 +1638,13 @@ void saveContacts() {
     if (!g_mesh) return;
     int n = g_mesh->getNumContacts();
     sigurdos::mesh::contactStoreSave(n, readStoredContact, nullptr);
+    g_mesh->markContactsPersistedBaseline();
 }
 
 void loadContacts() {
     if (!g_mesh) return;
     sigurdos::mesh::contactStoreLoad(writeStoredContact, nullptr);
+    g_mesh->markContactsPersistedBaseline();
 }
 
 void reloadContactsAfterIdentityChange() {
@@ -1792,7 +1820,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
         if (!g_mesh || !name) return false;
         ::ContactInfo tmp;
         for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-            if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (g_mesh->getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 // Get writable pointer to the actual MeshCore ContactInfo
                 ::ContactInfo* live = g_mesh->lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
                 if (!live) return false;
@@ -1809,7 +1837,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
         if (!g_mesh || !name) return -1;
         ::ContactInfo tmp;
         for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-            if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (g_mesh->getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 return (tmp.flags >> 1) & 0x03;
             }
         }
@@ -2327,9 +2355,9 @@ bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz)
     if (hex_sz < (size_t)(PUB_KEY_SIZE * 2 + 1)) return false;
     int count = g_mesh->getNumContacts();
     for (int i = 0; i < count; i++) {
-        ::ContactInfo c;
-        if (g_mesh->getContactByIdx(i, c) && strcmp(c.name, name) == 0) {
-            ::mesh::Utils::toHex(hex_out, c.id.pub_key, PUB_KEY_SIZE);
+        const ::ContactInfo* c = g_mesh->getContact(i);
+        if (c && strcmp(c->name, name) == 0) {
+            ::mesh::Utils::toHex(hex_out, c->id.pub_key, PUB_KEY_SIZE);
             return true;
         }
     }

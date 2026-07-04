@@ -10,6 +10,10 @@ namespace sigurdos::mesh {
 static MeshMessage     mock_msgs[8];
 static int             mock_msg_count = 0;
 static uint32_t        mock_drop_count = 0;
+static int             mock_unread_count = 0;
+static int             mock_unread_contacts = 0;
+static int             mock_unread_repeaters = 0;
+static uint32_t        mock_activity_seq = 0;
 static char            mock_own_name[32] = "MockNode";
 static int             mock_noise = -120;
 static int             mock_rssi  = -80;
@@ -51,6 +55,21 @@ int pollMessages(MeshMessage* out, int max) {
 
 int pendingMessageCount() { return mock_msg_count; }
 uint32_t getQueueDropCount() { return mock_drop_count; }
+int getUnreadMessageCount() { return mock_unread_count; }
+void resetUnreadMessageCount() { mock_unread_count = 0; }
+int getUnreadContactCount() { return mock_unread_contacts; }
+void resetUnreadContactCount() { mock_unread_contacts = 0; }
+int getUnreadRepeaterCount() { return mock_unread_repeaters; }
+void resetUnreadRepeaterCount() { mock_unread_repeaters = 0; }
+uint32_t getMeshActivitySeq() { return mock_activity_seq; }
+
+void mesh_v2_note_contact_activity(uint8_t contact_type, bool is_new_visible_contact) {
+    if (contact_type == ADV_TYPE_NONE) return;
+    mock_activity_seq++;
+    if (!is_new_visible_contact) return;
+    if (contact_type == ADV_TYPE_REPEATER) mock_unread_repeaters++;
+    else mock_unread_contacts++;
+}
 
 // ── Identity ─────────────────────────────────────
 

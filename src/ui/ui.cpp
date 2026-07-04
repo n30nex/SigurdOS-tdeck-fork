@@ -42,6 +42,23 @@ static uint32_t splash_start = 0;
 static bool home_shown = false;
 static bool persisted_state_loaded = false;
 
+static void show_activity_flash()
+{
+    lv_obj_t* active = lv_scr_act();
+    if (!active) return;
+
+    lv_obj_t* flash = lv_obj_create(active);
+    lv_obj_set_size(flash, LV_PCT(100), 3);
+    lv_obj_align(flash, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(flash, lv_color_hex(theme::ACCENT), 0);
+    lv_obj_set_style_bg_opa(flash, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(flash, 0, 0);
+    lv_obj_set_style_pad_all(flash, 0, 0);
+    lv_obj_remove_flag(flash, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_move_foreground(flash);
+    lv_obj_delete_delayed(flash, 180);
+}
+
 void init()
 {
     // Register emoji font as fallback for all Montserrat fonts
@@ -158,11 +175,18 @@ void loop()
             last_msg_poll = millis();
             static sigurdos::mesh::MeshMessage msgs[4];  // static to avoid ~1300B stack in loop()
             int n = sigurdos::mesh::pollMessages(msgs, 4);
-            bool got_new = (n > 0);
             for (int i = 0; i < n; i++) {
                 chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text, msgs[i].is_self);
             }
-            if (got_new && !sigurdos::prefs_get().buzzer_quiet) {
+            static uint32_t last_activity_seq = 0;
+            const uint32_t activity_seq = sigurdos::mesh::getMeshActivitySeq();
+            const bool got_new_activity = (activity_seq != last_activity_seq);
+            if (got_new_activity) {
+                last_activity_seq = activity_seq;
+                show_activity_flash();
+                home_screen_update_badges();
+            }
+            if (got_new_activity && !sigurdos::prefs_get().buzzer_quiet) {
                 sigurdos::hal::buzzer_beep_short();
             }
             // Refresh ACK status on the current chat screen

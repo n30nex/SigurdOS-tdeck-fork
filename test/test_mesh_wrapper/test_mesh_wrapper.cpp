@@ -115,6 +115,20 @@ TEST_F(MeshWrapperTest, UnreadCountStartsAtZero) {
     EXPECT_EQ(sigurdos::mesh::pendingMessageCount(), 0);
 }
 
+TEST_F(MeshWrapperTest, MeshActivityCountersSeparateContactsAndRepeaters) {
+    sigurdos::mesh::resetUnreadContactCount();
+    sigurdos::mesh::resetUnreadRepeaterCount();
+
+    const uint32_t before = sigurdos::mesh::getMeshActivitySeq();
+    sigurdos::mesh::mesh_v2_note_contact_activity(ADV_TYPE_CHAT, true);
+    sigurdos::mesh::mesh_v2_note_contact_activity(ADV_TYPE_REPEATER, true);
+    sigurdos::mesh::mesh_v2_note_contact_activity(ADV_TYPE_REPEATER, false);
+
+    EXPECT_EQ(sigurdos::mesh::getUnreadContactCount(), 1);
+    EXPECT_EQ(sigurdos::mesh::getUnreadRepeaterCount(), 1);
+    EXPECT_EQ(sigurdos::mesh::getMeshActivitySeq(), before + 3);
+}
+
 // ── Noise floor is within realistic range ───────────────
 TEST_F(MeshWrapperTest, NoiseFloorInRealisticRange) {
     // Even with mocks, the return should be in dBm range
