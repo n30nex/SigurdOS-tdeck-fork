@@ -17,6 +17,7 @@
 #include "app/map_renderer.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
+#include "ui/screens_common.h"
 #include "ui/theme.h"
 #include "diagnostics/debug_cfg.h"
 #if SIGURDOS_DEBUG_DIAG
