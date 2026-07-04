@@ -134,6 +134,49 @@ inline uint16_t loginKeepAliveSeconds(uint8_t raw_units, uint8_t contact_type)
     return secs;
 }
 
+enum class LoginResponseKind : uint8_t {
+    Ignored = 0,
+    NewOk,
+    LegacyOk,
+    Failed,
+};
+
+struct LoginResponseParseResult {
+    LoginResponseKind kind = LoginResponseKind::Ignored;
+    uint8_t keep_alive_units = 0;
+    uint8_t permission = 0;
+    uint8_t acl = 0;
+    uint8_t failure_code = 0;
+};
+
+inline LoginResponseParseResult parseLoginResponse(const uint8_t* data,
+                                                   size_t len,
+                                                   bool login_pending)
+{
+    LoginResponseParseResult result{};
+    if (!data || len < 5) return result;
+
+    if (len >= 8 && data[4] == 0) {
+        result.kind = LoginResponseKind::NewOk;
+        result.keep_alive_units = data[5];
+        result.permission = data[6];
+        result.acl = data[7];
+        return result;
+    }
+
+    if (len >= 6 && data[4] == 'O' && data[5] == 'K') {
+        result.kind = LoginResponseKind::LegacyOk;
+        result.permission = 1;
+        return result;
+    }
+
+    if (login_pending && data[4] != 0) {
+        result.kind = LoginResponseKind::Failed;
+        result.failure_code = data[4];
+    }
+    return result;
+}
+
 inline size_t roomMessagePrefixBytes(const char* channel_name)
 {
     if (!channel_name) return 0;

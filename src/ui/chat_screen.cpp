@@ -1186,7 +1186,7 @@ static void show_channel_list(lv_scr_load_anim_t anim)
     if (from_messaging_view) {
         lv_scr_load_anim(s, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
     } else {
-        lv_scr_load_anim(s, anim, 200, 0, true);
+        lv_scr_load_anim(s, anim, CHAT_SCREEN_LIST_LOAD_ANIM_MS, 0, true);
     }
 }
 

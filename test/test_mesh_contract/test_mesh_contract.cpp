@@ -114,6 +114,36 @@ TEST(MeshContractTest, LoginKeepAliveUsesDefaultForMeshCoreZeroHint) {
     EXPECT_EQ(sigurdos::mesh::loginKeepAliveSeconds(0, ADV_TYPE_CHAT), 0u);
 }
 
+TEST(MeshContractTest, LoginResponseParserAcceptsNewOkOnlyWithFullPayload) {
+    const uint8_t ok[] = {0x11, 0x22, 0x33, 0x44, 0x00, 0x04, 0x02, 0x7f};
+    auto parsed = sigurdos::mesh::parseLoginResponse(ok, sizeof(ok), true);
+    EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::NewOk);
+    EXPECT_EQ(parsed.keep_alive_units, 0x04);
+    EXPECT_EQ(parsed.permission, 0x02);
+    EXPECT_EQ(parsed.acl, 0x7f);
+
+    const uint8_t too_short_ok[] = {0x11, 0x22, 0x33, 0x44, 0x00};
+    parsed = sigurdos::mesh::parseLoginResponse(too_short_ok, sizeof(too_short_ok), true);
+    EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::Ignored);
+}
+
+TEST(MeshContractTest, LoginResponseParserAcceptsLegacyOk) {
+    const uint8_t legacy_ok[] = {0x11, 0x22, 0x33, 0x44, 'O', 'K'};
+    auto parsed = sigurdos::mesh::parseLoginResponse(legacy_ok, sizeof(legacy_ok), true);
+    EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::LegacyOk);
+    EXPECT_EQ(parsed.permission, 1);
+}
+
+TEST(MeshContractTest, LoginResponseParserMarksPendingFailures) {
+    const uint8_t failed[] = {0x11, 0x22, 0x33, 0x44, 0x05};
+    auto parsed = sigurdos::mesh::parseLoginResponse(failed, sizeof(failed), true);
+    EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::Failed);
+    EXPECT_EQ(parsed.failure_code, 0x05);
+
+    parsed = sigurdos::mesh::parseLoginResponse(failed, sizeof(failed), false);
+    EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::Ignored);
+}
+
 TEST(MeshContractTest, PendingRequestsExpireWithWrapSafeElapsedTime) {
     EXPECT_EQ(sigurdos::mesh::PENDING_REQUEST_TTL_MS, 120000u);
     EXPECT_FALSE(sigurdos::mesh::pendingRequestExpired(0u, 119999u));
