@@ -4,6 +4,37 @@ Use this checklist when testing a GitHub Actions firmware artifact on a physical
 
 Before opening the serial port, recheck that the T-Deck Plus enumerates as `COM8` and use `scripts/validation/safe_serial_monitor.py` or the workflow in [`WINDOWS_COM8_SERIAL.md`](WINDOWS_COM8_SERIAL.md). Do not use generic terminal defaults that assert DTR/RTS.
 
+## Fast GitHub Artifact Loop
+
+For normal release-firmware validation, use the manual `Build Validation Matrix`
+workflow and download only the `firmware-SigurdOS_TDeck` artifact. This is the
+fastest current path that still preserves the rule that flashable firmware comes
+from GitHub Actions.
+
+```powershell
+gh workflow run build-validation-matrix.yml `
+  --repo n30nex/SigurdOS-tdeck-fork `
+  --ref codex/fix-tdeck-radio-keyboard-validation
+
+gh run watch <run-id> `
+  --repo n30nex/SigurdOS-tdeck-fork `
+  --exit-status `
+  --interval 15
+
+gh run download <run-id> `
+  --repo n30nex/SigurdOS-tdeck-fork `
+  --name firmware-SigurdOS_TDeck `
+  --dir F:\SIGUI\artifacts\cloud-builds\<timestamp>-canada-<sha>
+```
+
+Validate the downloaded `firmware-merged.bin` before flashing:
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+python scripts\audit_launcher_artifact.py `
+  F:\SIGUI\artifacts\cloud-builds\<timestamp>-canada-<sha>\firmware-merged.bin
+```
+
 ## UI Crash Monitor
 
 For manual touch/trackball crash reproduction, keep a passive crash monitor open

@@ -16,8 +16,8 @@ pio test -e native_test -f test_gps
 # Run the full host-side native suite.
 pio test -e native_test
 
-# Build the firmware image for the LilyGo T-Deck target.
-pio run -e SigurdOS_TDeck
+# Produce a flashable release-candidate artifact in GitHub Actions.
+gh workflow run build-validation-matrix.yml --ref <branch>
 ```
 
 Every PR should state which validation was run. If a change needs a remote test
