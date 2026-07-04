@@ -93,6 +93,9 @@ TEST(PrefsDefaultsTest, UiConnectivityAndRegionDefaultsAreInitialized) {
     EXPECT_FALSE(prefs.buzzer_quiet);
     EXPECT_EQ('\0', prefs.wifi_ssid[0]);
     EXPECT_EQ('\0', prefs.wifi_password[0]);
+    EXPECT_FALSE(prefs.map_location_valid);
+    EXPECT_EQ(0, prefs.map_lat);
+    EXPECT_EQ(0, prefs.map_lon);
     EXPECT_EQ('\0', prefs.active_region[0]);
 }
 

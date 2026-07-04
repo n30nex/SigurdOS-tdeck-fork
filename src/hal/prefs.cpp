@@ -55,6 +55,9 @@ bool prefs_load(NodePrefs& p) {
     p.advert_location_valid = nvs.getBool("adv_loc", false);
     p.advert_lat = nvs.getInt("adv_lat", 0);
     p.advert_lon = nvs.getInt("adv_lon", 0);
+    p.map_location_valid = nvs.getBool("map_loc", false);
+    p.map_lat = nvs.getInt("map_lat", 0);
+    p.map_lon = nvs.getInt("map_lon", 0);
     p.rx_delay_base  = nvs.getFloat("rx_del", 10.0f);
     p.tx_delay_factor = nvs.getFloat("tx_del", 1.0f);
     p.direct_tx_delay_factor = nvs.getFloat("dir_tx", 1.0f);
@@ -131,6 +134,9 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putBool("adv_loc", p.advert_location_valid);
     nvs.putInt("adv_lat", p.advert_lat);
     nvs.putInt("adv_lon", p.advert_lon);
+    nvs.putBool("map_loc", p.map_location_valid);
+    nvs.putInt("map_lat", p.map_lat);
+    nvs.putInt("map_lon", p.map_lon);
     nvs.putFloat("rx_del", p.rx_delay_base);
     nvs.putFloat("tx_del", p.tx_delay_factor);
     nvs.putFloat("dir_tx", p.direct_tx_delay_factor);

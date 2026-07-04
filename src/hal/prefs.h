@@ -32,6 +32,9 @@ struct NodePrefs {
     bool     advert_location_valid; // true when companion app supplied fixed-point lat/lon
     int32_t  advert_lat;        // fixed-point degrees * 1e6, companion advert fallback
     int32_t  advert_lon;        // fixed-point degrees * 1e6, companion advert fallback
+    bool     map_location_valid; // true when user supplied a map center
+    int32_t  map_lat;            // fixed-point degrees * 1e6, local map center
+    int32_t  map_lon;            // fixed-point degrees * 1e6, local map center
     float    rx_delay_base;        // 0-20.0, RX delay base factor for collision avoidance
     float    tx_delay_factor;      // 0-2.0, TX flood retransmit delay multiplier
     float    direct_tx_delay_factor; // 0-2.0, TX direct retransmit delay multiplier
@@ -82,6 +85,9 @@ struct NodePrefs {
         advert_location_valid = false;
         advert_lat = 0;
         advert_lon = 0;
+        map_location_valid = false;
+        map_lat = 0;
+        map_lon = 0;
         rx_delay_base = 10.0f;      // default RX delay base (matching MeshCore companion default)
         tx_delay_factor = 1.0f;     // default TX flood delay factor
         direct_tx_delay_factor = 1.0f; // default TX direct delay factor

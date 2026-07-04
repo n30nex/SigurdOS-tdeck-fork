@@ -147,6 +147,23 @@ TEST_F(PrefsTest, RadioProfileRoundTripsThroughPrefs) {
     EXPECT_STREQ("ca_902_928", loaded.radio_profile);
 }
 
+TEST_F(PrefsTest, MapLocationRoundTripsThroughPrefs) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.map_location_valid = true;
+    saved.map_lat = 43653200;
+    saved.map_lon = -79383200;
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_TRUE(loaded.map_location_valid);
+    EXPECT_EQ(43653200, loaded.map_lat);
+    EXPECT_EQ(-79383200, loaded.map_lon);
+}
+
 TEST_F(PrefsTest, WifiCredentialReuseRequiresMatchingSsid) {
     sigurdos::NodePrefs prefs;
     prefs.set_defaults();

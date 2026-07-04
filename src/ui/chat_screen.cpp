@@ -158,6 +158,11 @@ static ChannelMessage* ch_msgs[MAX_CHANNELS] = {nullptr};
 static uint16_t       ch_msg_capacity[MAX_CHANNELS] = {0};
 static uint16_t       ch_msg_count[MAX_CHANNELS];
 
+struct MessageActionCtx {
+    char sender[32];
+    char text[160];
+};
+
 
 struct ChatPrivateScopeState {
     char conversation[32];
@@ -1317,6 +1322,136 @@ static void create_top_bar()
 // ════════════════════════════════════════════════════
 // Message bubble — Discord style
 // ════════════════════════════════════════════════════
+
+static void focus_chat_input()
+{
+    if (input_field && lv_obj_is_valid(input_field) && lv_group_get_default()) {
+        lv_group_focus_obj(input_field);
+    }
+}
+
+static void prefill_public_reply(const MessageActionCtx* ctx)
+{
+    if (!ctx || !input_field || !lv_obj_is_valid(input_field)) return;
+
+    char reply[MAX_MSG_BYTES + 1];
+    snprintf(reply, sizeof(reply), "@%s ", ctx->sender);
+    lv_textarea_set_text(input_field, reply);
+    focus_chat_input();
+}
+
+static void close_message_action_toast(lv_obj_t* obj)
+{
+    if (!obj) return;
+    lv_obj_t* dlg = lv_obj_get_parent(obj);
+    if (dlg) lv_obj_del_async(dlg);
+}
+
+static void show_message_action_toast(const MessageActionCtx* source)
+{
+    if (!source || !source->sender[0]) return;
+    if (!input_field || !lv_obj_is_valid(input_field)) return;
+
+    auto* ctx = new(std::nothrow) MessageActionCtx(*source);
+    if (!ctx) return;
+
+    lv_obj_t* parent = lv_scr_act();
+    auto dlg_sz = dialog_size(236, 116);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    if (!dlg) {
+        delete ctx;
+        return;
+    }
+
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+    disable_scroll(dlg);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (MessageActionCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, ctx);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    char title_buf[48];
+    snprintf(title_buf, sizeof(title_buf), "%s", ctx->sender);
+    lv_label_set_text(title, title_buf);
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t* preview = lv_label_create(dlg);
+    char preview_buf[54];
+    const size_t src_len = strnlen(ctx->text, sizeof(ctx->text));
+    constexpr size_t preview_max = 42;
+    if (src_len > preview_max) {
+        const size_t trunc = sigurdos::utf8_truncate_bytes(ctx->text, preview_max);
+        memcpy(preview_buf, ctx->text, trunc);
+        memcpy(preview_buf + trunc, "...", 4);
+    } else {
+        memcpy(preview_buf, ctx->text, src_len + 1);
+    }
+    lv_label_set_text(preview, preview_buf);
+    lv_label_set_long_mode(preview, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(preview, dlg_sz.w - 18);
+    lv_obj_set_style_text_color(preview, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(preview, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(preview, LV_ALIGN_TOP_MID, 0, 20);
+
+    sigurdos::mesh::ContactInfo contact_info;
+    const bool contact_known = sigurdos::mesh::getContactByName(ctx->sender, &contact_info);
+    lv_group_t* g = lv_group_get_default();
+
+    lv_obj_t* reply_btn = lv_btn_create(dlg);
+    lv_obj_set_size(reply_btn, contact_known ? 92 : 132, 28);
+    lv_obj_align(reply_btn, contact_known ? LV_ALIGN_BOTTOM_LEFT : LV_ALIGN_BOTTOM_MID,
+                 contact_known ? 8 : 0, -4);
+    lv_obj_set_style_bg_color(reply_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(reply_btn, 0, 0);
+    lv_obj_set_style_border_width(reply_btn, 0, 0);
+    lv_obj_t* reply_lbl = lv_label_create(reply_btn);
+    lv_label_set_text(reply_lbl, "Reply");
+    lv_obj_set_style_text_font(reply_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_style_text_color(reply_lbl, lv_color_hex(0xffffff), 0);
+    lv_obj_center(reply_lbl);
+    lv_obj_add_event_cb(reply_btn, [](lv_event_t* e) {
+        auto* c = (MessageActionCtx*)lv_event_get_user_data(e);
+        prefill_public_reply(c);
+        close_message_action_toast((lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, ctx);
+    if (g) lv_group_add_obj(g, reply_btn);
+
+    if (contact_known) {
+        lv_obj_t* dm_btn = lv_btn_create(dlg);
+        lv_obj_set_size(dm_btn, 92, 28);
+        lv_obj_align(dm_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -4);
+        lv_obj_set_style_bg_color(dm_btn, lv_color_hex(BG_INPUT), 0);
+        lv_obj_set_style_radius(dm_btn, 0, 0);
+        lv_obj_set_style_border_width(dm_btn, 0, 0);
+        lv_obj_t* dm_lbl = lv_label_create(dm_btn);
+        lv_label_set_text(dm_lbl, "DM");
+        lv_obj_set_style_text_font(dm_lbl, emoji_wrapped_montserrat_10, 0);
+        lv_obj_set_style_text_color(dm_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_center(dm_lbl);
+        lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+            auto* c = (MessageActionCtx*)lv_event_get_user_data(e);
+            char name[sizeof(c->sender)];
+            strncpy(name, c->sender, sizeof(name) - 1);
+            name[sizeof(name) - 1] = '\0';
+            close_message_action_toast((lv_obj_t*)lv_event_get_target(e));
+            chat_screen_open_dm(name);
+        }, LV_EVENT_CLICKED, ctx);
+        if (g) lv_group_add_obj(g, dm_btn);
+    }
+
+    if (g) lv_group_focus_obj(reply_btn);
+}
+
 static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
                                 const char* text, uint32_t timestamp,
                                 bool is_self, bool acked)
@@ -1391,6 +1526,26 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_set_style_text_font(msg_text, emoji_wrapped_montserrat_12, 0);
     lv_label_set_long_mode(msg_text, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msg_text, LV_PCT(100));
+
+    if (!is_self && active_channel >= 0 && active_channel < dyn_count &&
+        sigurdos::mesh::isPublicChannelName(dyn_channels[active_channel])) {
+        auto* ctx = new(std::nothrow) MessageActionCtx{};
+        if (ctx) {
+            strncpy(ctx->sender, sender ? sender : "", sizeof(ctx->sender) - 1);
+            ctx->sender[sizeof(ctx->sender) - 1] = '\0';
+            strncpy(ctx->text, text ? text : "", sizeof(ctx->text) - 1);
+            ctx->text[sizeof(ctx->text) - 1] = '\0';
+            lv_obj_add_event_cb(container, [](lv_event_t* e) {
+                auto* c = (MessageActionCtx*)lv_event_get_user_data(e);
+                if (!c) return;
+                if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) {
+                    show_message_action_toast(c);
+                } else if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+                    delete c;
+                }
+            }, LV_EVENT_ALL, ctx);
+        }
+    }
 
     return container;
 }
