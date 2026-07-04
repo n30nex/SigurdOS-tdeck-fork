@@ -54,6 +54,13 @@ TEST(UINotifications, ActivityWithoutMessageFlashesWithoutBuzz) {
     EXPECT_FALSE(plan.buzz);
 }
 
+TEST(UINotifications, IncomingMessageWithoutActivityStillFlashesAndBuzzes) {
+    const auto plan = activity_notification_plan(false, false, true, false);
+    EXPECT_TRUE(plan.flash);
+    EXPECT_TRUE(plan.buzz);
+    EXPECT_EQ(plan.buzz_pattern, sigurdos::hal::BuzzerPatternKind::Short);
+}
+
 TEST(UINotifications, DirectMessagesUseShortBuzzPattern) {
     const auto plan = activity_notification_plan(true, false, true, false);
     EXPECT_TRUE(plan.flash);
