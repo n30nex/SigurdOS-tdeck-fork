@@ -1184,6 +1184,19 @@ uint32_t sendMessage(const char* dest, const char* text) {
 bool sendChannelMessage(const char* channel_name, const char* text) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !channel_name || !channel_name[0] || !text || !text[0]) return false;
+
+    // Room-server chat is not the normal group-channel flood path. When the UI
+    // opens a channel from a specific room server, post only to that server and
+    // persist the local channel transcript after the room send succeeds.
+    if (g_active_room_server[0]) {
+        uint32_t room_ts = sendRoomMessage(g_active_room_server, channel_name, text);
+        if (room_ts != 0) {
+            storeOutgoingMessageForCompanion(channel_name, text, room_ts, true);
+            return true;
+        }
+        return false;
+    }
+
     bool sent = false;
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
         auto* ch = g_mesh->getChannel(i);
@@ -1196,20 +1209,13 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
             break;
         }
     }
-    // If the user opened chat from a specific room server, post only to that
-    // room. Otherwise keep the previous best-effort behavior for logged-in
-    // room servers so normal Public chat can still bridge to known rooms.
-    if (g_active_room_server[0]) {
-        uint32_t room_ts = sendRoomMessage(g_active_room_server, channel_name, text);
-        if (room_ts != 0) sent = true;
-    } else {
-        int n_room = getLoggedInRoomServerCount();
-        for (int ri = 0; ri < n_room; ri++) {
-            const char* room_name = getLoggedInRoomServerName(ri);
-            if (room_name && room_name[0]) {
-                uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
-                if (room_ts != 0) sent = true;
-            }
+    // Best-effort bridge normal channel sends into logged-in room servers.
+    int n_room = getLoggedInRoomServerCount();
+    for (int ri = 0; ri < n_room; ri++) {
+        const char* room_name = getLoggedInRoomServerName(ri);
+        if (room_name && room_name[0]) {
+            uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
+            if (room_ts != 0) sent = true;
         }
     }
     return sent;
@@ -1910,6 +1916,24 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
             }
         }
         return -1;
+    }
+
+    bool resetRoomServerSync(const char* name) {
+        if (!g_mesh || !name || !name[0]) return false;
+        ::ContactInfo tmp;
+        for (int i = 0; i < g_mesh->getNumContacts(); i++) {
+            if (!g_mesh->getContactByPublicIndex((uint32_t)i, tmp) ||
+                strcmp(tmp.name, name) != 0) {
+                continue;
+            }
+            if (tmp.type != ADV_TYPE_ROOM) return false;
+            ::ContactInfo* live = g_mesh->lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
+            if (!live) return false;
+            live->sync_since = 0;
+            saveContacts();
+            return true;
+        }
+        return false;
     }
 
     // ── Channel management extensions ────────────

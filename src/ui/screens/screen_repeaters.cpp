@@ -75,6 +75,10 @@ struct RepeaterRefreshState {
     RepeaterListSignature signature;
 };
 
+struct RoomSyncCtx {
+    char* name;
+};
+
 static RepeaterListSignature get_repeater_signature()
 {
     RepeaterListSignature sig{0, 0};
@@ -897,7 +901,47 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         add_query(LV_SYMBOL_SETTINGS "  Request Status", RepeaterManagementRequest::Status);
         add_query(LV_SYMBOL_WIFI "  Request Telemetry", RepeaterManagementRequest::Telemetry);
         if (target->type == ADV_TYPE_ROOM) {
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_ENVELOPE "  Open Public Chat", ">");
+            lv_obj_t* sync = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Resync Past Posts", ">");
+            lv_obj_set_style_bg_color(sync, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_obj_set_style_bg_opa(sync, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(sync, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_t* sync_v = lv_obj_get_child(sync, 1);
+            if (sync_v && lv_obj_check_type(sync_v, &lv_label_class))
+                lv_obj_set_style_text_color(sync_v, lv_color_hex(ACCENT), 0);
+            auto* sync_ctx = new(std::nothrow) RoomSyncCtx{strdup(contact_name)};
+            if (sync_ctx && sync_ctx->name) {
+                lv_obj_set_user_data(sync, sync_ctx);
+                lv_obj_add_event_cb(sync, [](lv_event_t* e) {
+                    auto* c = (RoomSyncCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (!c || !c->name) return;
+                    if (!sigurdos::mesh::resetRoomServerSync(c->name)) {
+                        sigurdos::mesh::mesh_v2_queue_push("System", "",
+                            "Room resync failed: contact not found", 0, 0.0f);
+                        return;
+                    }
+
+                    char saved_pw[16] = {0};
+                    if (sigurdos::loadRepeaterPassword(c->name, saved_pw, sizeof(saved_pw))) {
+                        bool sent = sigurdos::mesh::sendLogin(c->name, saved_pw);
+                        sigurdos::mesh::mesh_v2_queue_push(
+                            "System", "",
+                            sent ? "Room resync login sent" : "Room resync login failed",
+                            0, 0.0f);
+                    } else {
+                        show_login_password_dialog(c->name);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(sync, [](lv_event_t* e) {
+                    auto* c = (RoomSyncCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (c) { free(c->name); delete c; }
+                }, LV_EVENT_DELETE, nullptr);
+            } else if (sync_ctx) {
+                free(sync_ctx->name);
+                delete sync_ctx;
+            }
+            row++;
+
+            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_ENVELOPE "  Open Room Chat", ">");
             lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
             lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
             lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
@@ -932,8 +976,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // ── Section: Radio Settings ──────────────────────
         if (is_admin) {
         sec_header("  Radio Settings");
-        add_set(LV_SYMBOL_WIFI "  Radio Params", "Set Radio",     "freq bw sf cr",    "set radio ", false);
-        add_set(LV_SYMBOL_WIFI "  Temporary Radio", "Temp Radio",  "freq bw sf cr mins", "tempradio ", false);
+        add_set(LV_SYMBOL_WIFI "  Radio Params", "Set Radio",     "freq,bw,sf,cr",    "set radio ", false);
+        add_set(LV_SYMBOL_WIFI "  Temporary Radio", "Temp Radio",  "freq,bw,sf,cr,mins", "tempradio ", false);
         }
 
         // ── Section: Management ──────────────────────────

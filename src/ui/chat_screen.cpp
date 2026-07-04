@@ -155,7 +155,7 @@ static bool g_channel_transition_pending = false;
 
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
-static int   chat_filter_mode = 0;
+static int   chat_filter_mode = 1;
 
 static bool chat_conversation_visible_for_current_filter(const char* conversation)
 {
@@ -163,6 +163,7 @@ static bool chat_conversation_visible_for_current_filter(const char* conversatio
 }
 
 static void chat_load_companion_messages();
+static void chat_load_companion_messages_for_conversation(const char* conversation, int idx);
 
 static void reset_unread_for_current_filter()
 {
@@ -1044,6 +1045,37 @@ static void chat_load_companion_messages()
         int idx = ensure_loaded_conversation(msg.conversation);
         if (idx < 0 || idx >= MAX_CHANNELS) continue;
 
+        const char* text = msg.text;
+        char prefix[40];
+        if (msg.is_channel && !msg.is_self && msg.sender[0]) {
+            snprintf(prefix, sizeof(prefix), "%s: ", msg.sender);
+            size_t plen = strnlen(prefix, sizeof(prefix));
+            if (strncmp(msg.text, prefix, plen) == 0) {
+                text = msg.text + plen;
+            }
+        }
+        append_loaded_channel_message(idx, msg.sender, text, msg.timestamp,
+                                      msg.is_self, msg.acked);
+    }
+    heap_caps_free(recent);
+}
+
+static void chat_load_companion_messages_for_conversation(const char* conversation, int idx)
+{
+    if (!conversation || !conversation[0] || idx < 0 || idx >= MAX_CHANNELS) return;
+
+    constexpr int kRecentCap = 64;
+    const size_t bytes = sizeof(sigurdos::mesh::StoredMessage) * kRecentCap;
+    sigurdos::mesh::StoredMessage* recent =
+        (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!recent) {
+        recent = (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!recent) return;
+
+    int n = sigurdos::mesh::messageStoreLoadRecent(conversation, recent, kRecentCap);
+    for (int i = 0; i < n; i++) {
+        const sigurdos::mesh::StoredMessage& msg = recent[i];
         const char* text = msg.text;
         char prefix[40];
         if (msg.is_channel && !msg.is_self && msg.sender[0]) {
@@ -2283,6 +2315,7 @@ static void open_channel_messaging(int idx)
 {
     if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
     active_channel = idx;
+    chat_load_companion_messages_for_conversation(dyn_channels[idx], idx);
 
     detach_chat_focus_objects();
     ch_list = ch_back_btn = ch_add_btn = nullptr;
@@ -2887,7 +2920,7 @@ static void show_scope_picker() {
 }
 
 void chat_screen_set_filter(int mode) {
-    chat_filter_mode = mode;
+    chat_filter_mode = (mode >= 1 && mode <= 2) ? mode : 1;
 }
 
 bool chat_screen_overlay_active() {

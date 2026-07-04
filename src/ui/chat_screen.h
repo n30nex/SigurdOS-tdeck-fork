@@ -56,9 +56,8 @@ inline bool chat_screen_is_dm_name(const char* name)
 
 inline bool chat_screen_filter_accepts_channel(int mode, const char* name)
 {
-    if (mode == 1) return name && name[0] && !chat_screen_is_dm_name(name);
     if (mode == 2) return chat_screen_is_dm_name(name);
-    return true;
+    return name && name[0] && !chat_screen_is_dm_name(name);
 }
 
 inline int chat_screen_emoji_page_count(int emoji_count)
@@ -132,7 +131,8 @@ void chat_screen_open_dm(const char* contact_name);
 // Open a channel conversation directly (creates the Public channel if needed)
 void chat_screen_open_channel(const char* channel_name);
 
-// Set which conversations to show: 0=all, 1=channels only, 2=DMs only
+// Set which conversations to show: 1=channels only, 2=DMs only.
+// Other values fall back to channels only.
 void chat_screen_set_filter(int mode);
 
 // Add a message to the chat display

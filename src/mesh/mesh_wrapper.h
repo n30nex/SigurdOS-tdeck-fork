@@ -327,6 +327,7 @@ bool removeContact(const char* name);
 bool resetPathTo(const char* name);
 bool setContactPerm(const char* name, uint8_t perm);
 int  getContactPerm(const char* name);
+bool resetRoomServerSync(const char* name);
 
 // ── Channel management extensions ────────────
 bool removeChannel(int idx);

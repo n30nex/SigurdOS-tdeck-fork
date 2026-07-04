@@ -178,7 +178,7 @@ static void apply_selection(int old_idx = -1)
 static void open_icon(int idx)
 {
     if (idx >= 0 && idx < ICON_COUNT) {
-        // Reset filters to defaults
+        // Reset filters to the home defaults.
         chat_screen_set_filter(0);
         contacts_screen_set_filter(-1);
 

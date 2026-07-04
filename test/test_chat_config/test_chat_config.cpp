@@ -74,6 +74,13 @@ TEST(ChatConfig, ChannelFilterKeepsPublicAndHashtagChannels) {
     EXPECT_FALSE(chat_screen_filter_accepts_channel(1, nullptr));
 }
 
+TEST(ChatConfig, DefaultFilterKeepsDmsOutOfChats) {
+    EXPECT_TRUE(chat_screen_filter_accepts_channel(0, "Public"));
+    EXPECT_TRUE(chat_screen_filter_accepts_channel(99, "#general"));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(0, "DM: Alice"));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(-1, "DM: Bob"));
+}
+
 TEST(ChatConfig, DmFilterKeepsOnlyDmConversations) {
     EXPECT_TRUE(chat_screen_filter_accepts_channel(2, "DM: Alice"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Public"));
