@@ -318,7 +318,7 @@ void contacts_screen_show()
 }
 
 // Forward declaration of login-polling timer (defined after dialog functions)
-static void start_login_poll_timer(const char* name);
+static void start_login_poll_timer(const char* name, bool auto_open_room = false);
 static void schedule_login_submit(const char* name, const char* password, bool save_password);
 
 static void schedule_chat_navigation()
@@ -328,6 +328,13 @@ static void schedule_chat_navigation()
         sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
     }, 30, nullptr);
     if (timer) lv_timer_set_repeat_count(timer, 1);
+}
+
+static bool contact_is_room_server(const char* name)
+{
+    if (!name || !name[0]) return false;
+    sigurdos::mesh::ContactInfo info{};
+    return sigurdos::mesh::getContactByName(name, &info) && info.type == ADV_TYPE_ROOM;
 }
 
 static constexpr uint32_t LOGIN_DETAIL_REFRESH_MS = 150;
@@ -398,7 +405,9 @@ static void deferred_login_submit_cb(lv_timer_t* t)
     if (ctx && ctx->name[0]) {
         bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
         if (sent) {
-            start_login_poll_timer(ctx->name);
+            const bool auto_open_room = ctx->password[0] == '\0' &&
+                                        contact_is_room_server(ctx->name);
+            start_login_poll_timer(ctx->name, auto_open_room);
             if (ctx->save_password && ctx->password[0]) {
                 sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
             }
@@ -621,6 +630,7 @@ void show_login_password_dialog(const char* contact_name)
 struct LoginPollCtx {
     char* name;
     Screen origin_screen;
+    bool auto_open_room;
 
     uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
@@ -651,12 +661,17 @@ static void on_login_poll_timer(lv_timer_t* t) {
     uint8_t st = sigurdos::mesh::getLoginStatus(ctx->name);
     if (st == LOGIN_STATUS_OK) {
         char* n = strdup(ctx->name);
+        const bool auto_open_room = ctx->auto_open_room;
         free(ctx->name);
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
-        // Rebuild screen in post-login mode
-        repeater_detail_screen_show(n, true);
+        if (auto_open_room) {
+            chat_screen_open_room(n);
+        } else {
+            // Rebuild screen in post-login mode
+            repeater_detail_screen_show(n, true);
+        }
         free(n);
     } else if (st == LOGIN_STATUS_FAILED) {
         // Rebuild pre-login view so it shows "Login failed" and the Login button
@@ -671,7 +686,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
     // LOGIN_PENDING or LOGIN_NONE → keep polling
 }
 
-static void start_login_poll_timer(const char* name) {
+static void start_login_poll_timer(const char* name, bool auto_open_room) {
     if (!name) return;
     // Cancel any existing timer first
     if (g_login_poll_timer) {
@@ -682,7 +697,8 @@ static void start_login_poll_timer(const char* name) {
     }
 
     g_login_poll_gen++;
-    LoginPollCtx* ctx = new(std::nothrow) LoginPollCtx{strdup(name), current_screen(), g_login_poll_gen};
+    LoginPollCtx* ctx =
+        new(std::nothrow) LoginPollCtx{strdup(name), current_screen(), auto_open_room, g_login_poll_gen};
     if (!ctx || !ctx->name) {
         if (ctx) {
             free(ctx->name);

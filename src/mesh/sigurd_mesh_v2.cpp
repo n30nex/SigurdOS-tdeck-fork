@@ -589,7 +589,17 @@ namespace mesh {
                 }
             }
 
-            sigurdos::mesh::mesh_v2_queue_push(sender_name, channel, body ? body : "", rssi, snr,
+            char room_conversation[37];
+            snprintf(room_conversation, sizeof(room_conversation), "Room:%s", contact.name);
+
+            char room_body[256];
+            const char* queued_body = body ? body : "";
+            if (strcmp(channel, sigurdos::mesh::PUBLIC_CHANNEL_NAME) != 0) {
+                snprintf(room_body, sizeof(room_body), "[%s] %s", channel, queued_body);
+                queued_body = room_body;
+            }
+
+            sigurdos::mesh::mesh_v2_queue_push(sender_name, room_conversation, queued_body, rssi, snr,
                                                sender_timestamp, companion_path_len,
                                                prefix_for_store,
                                                2,              // COMPANION_TXT_SIGNED_PLAIN

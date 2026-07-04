@@ -46,6 +46,13 @@ bool sendChannelMessageWithScopeKey(const char* channel_name, const char* text, 
     return sendChannelMessage(channel_name, text);
 }
 
+uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
+    (void)contact_name;
+    (void)channel_name;
+    (void)text;
+    return 0;
+}
+
 int pollMessages(MeshMessage* out, int max) {
     int drained = 0;
     while (drained < max && mock_msg_count > 0) {

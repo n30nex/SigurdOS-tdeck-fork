@@ -28,12 +28,19 @@ using sigurdos::ui::chat_screen_emoji_page_end;
 using sigurdos::ui::chat_screen_emoji_page_start;
 using sigurdos::ui::chat_screen_filter_accepts_channel;
 using sigurdos::ui::chat_screen_format_public_reply_prefix;
+using sigurdos::ui::chat_screen_format_room_name;
 using sigurdos::ui::chat_screen_is_dm_name;
+using sigurdos::ui::chat_screen_is_room_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_public_message_actions_available;
 using sigurdos::ui::chat_screen_public_message_dm_available;
 using sigurdos::ui::chat_screen_render_limit_for_channel;
+using sigurdos::ui::chat_screen_room_contact_name;
 using sigurdos::ui::chat_screen_visible_message_start;
+
+// Constants matching chat_screen.cpp
+static constexpr int MAX_NAME_LEN  = 31;
+static constexpr int CHANNEL_BUF_SZ = CHAT_SCREEN_CHANNEL_NAME_CAP;
 
 TEST(ChatConfig, ZeroUsesDefaultMessageCap) {
     EXPECT_EQ(chat_screen_normalize_message_cap(0), CHAT_SCREEN_MESSAGE_CAP_DEFAULT);
@@ -70,9 +77,33 @@ TEST(ChatConfig, DmNameDetectionUsesConversationPrefix) {
     EXPECT_FALSE(chat_screen_is_dm_name(nullptr));
 }
 
+TEST(ChatConfig, RoomNameDetectionUsesConversationPrefix) {
+    EXPECT_TRUE(chat_screen_is_room_name("Room:Krabs Lagoon"));
+    EXPECT_TRUE(chat_screen_is_room_name("Room:"));
+    EXPECT_FALSE(chat_screen_is_room_name("Public"));
+    EXPECT_FALSE(chat_screen_is_room_name("DM: Alice"));
+    EXPECT_FALSE(chat_screen_is_room_name(nullptr));
+}
+
+TEST(ChatConfig, RoomNameFormattingFitsChannelBuffer) {
+    char max_name[32];
+    memset(max_name, 'R', MAX_NAME_LEN);
+    max_name[MAX_NAME_LEN] = '\0';
+
+    char room_name[CHAT_SCREEN_CHANNEL_NAME_CAP];
+    chat_screen_format_room_name(max_name, room_name, sizeof(room_name));
+
+    EXPECT_EQ(strlen(room_name), static_cast<size_t>(5 + MAX_NAME_LEN));
+    EXPECT_EQ(strncmp(room_name, "Room:", 5), 0);
+    EXPECT_EQ(strncmp(room_name + 5, max_name, MAX_NAME_LEN), 0);
+    EXPECT_STREQ(chat_screen_room_contact_name(room_name), max_name);
+    EXPECT_STREQ(chat_screen_room_contact_name("Public"), "");
+}
+
 TEST(ChatConfig, ChannelFilterKeepsPublicAndHashtagChannels) {
     EXPECT_TRUE(chat_screen_filter_accepts_channel(1, "Public"));
     EXPECT_TRUE(chat_screen_filter_accepts_channel(1, "#general"));
+    EXPECT_TRUE(chat_screen_filter_accepts_channel(1, "Room:Krabs Lagoon"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(1, "DM: Alice"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(1, ""));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(1, nullptr));
@@ -89,6 +120,7 @@ TEST(ChatConfig, DmFilterKeepsOnlyDmConversations) {
     EXPECT_TRUE(chat_screen_filter_accepts_channel(2, "DM: Alice"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Public"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "#general"));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Room:Krabs Lagoon"));
 }
 
 TEST(ChatConfig, EmojiPickerUsesBoundedPages) {
@@ -172,10 +204,6 @@ TEST(ChatConfig, PublicReplyPrefixMentionsSender) {
 
 // ── Issue #543: DM name buffer overflow tests ──────────────────────────
 
-// Constants matching chat_screen.cpp
-static constexpr int MAX_NAME_LEN  = 31;
-static constexpr int CHANNEL_BUF_SZ = 32;
-
 // Simulates the DM name formatting that caused stack overflow #543
 static void formatDmName(const char* contact_name, char* out, size_t out_sz) {
     snprintf(out, out_sz, "DM: %s", contact_name);
@@ -230,9 +258,8 @@ TEST(ChatScreenDmName, ChannelCopyFits) {
     channel_buf[CHANNEL_BUF_SZ - 1] = '\0';
 
     // No crash — buffer is fully valid
-    EXPECT_EQ(strlen(channel_buf), (size_t)(CHANNEL_BUF_SZ - 1))
-        << "DM name truncated to fit channel buffer (4+len=" << (4 + MAX_NAME_LEN)
-        << " > " << (CHANNEL_BUF_SZ - 1) << ")";
+    EXPECT_EQ(strlen(channel_buf), static_cast<size_t>(4 + MAX_NAME_LEN))
+        << "DM name should fit in the full channel buffer";
 }
 
 TEST(ChatPersistenceConfig, RecordBytesMatchWriterLayout) {

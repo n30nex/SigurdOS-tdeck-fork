@@ -121,7 +121,8 @@ static constexpr int MSG_LIST_H = DISPLAY_H - TOP_H - DIVIDER_H - INPUT_H - DIVI
 static int message_limit_for_channel(const char* channel)
 {
     if (chat_screen_is_dm_name(channel)) return MAX_MSG_BYTES;
-    size_t room_limit = sigurdos::mesh::roomMessageMaxBodyBytes(channel);
+    if (!chat_screen_is_room_name(channel)) return MAX_MSG_BYTES;
+    size_t room_limit = sigurdos::mesh::roomMessageMaxBodyBytes(PUBLIC_CHANNEL_NAME);
     if (room_limit == 0 || room_limit > (size_t)MAX_MSG_BYTES) return MAX_MSG_BYTES;
     return (int)room_limit;
 }
@@ -491,32 +492,32 @@ static void refresh_channels()
         }
     }
 
-    // ── Restore DM entries ───────────────────────────────
-    // DM conversations are synthetic entries (prefixed "DM:")
-    // that aren't part of the mesh channel export. Re-append
+    // ── Restore synthetic entries ─────────────────────────
+    // DM and room conversations are synthetic entries that aren't
+    // part of the mesh channel export. Re-append
     // any that existed before the refresh so they persist.
-    // Skip when filtering to channels only (mode 1).
-    if (chat_filter_mode != 1) {
-        for (int old_idx = 0; old_idx < old_count; old_idx++) {
-            if (old_names[old_idx][0] == '\0') continue;
-            if (strncmp(old_names[old_idx], "DM:", 3) != 0) continue;
-            if (dyn_count >= MAX_CHANNELS) {
-                // No room — free the orphaned buffer
-                if (old_msgs[old_idx]) {
-                    heap_caps_free(old_msgs[old_idx]);
-                    old_msgs[old_idx] = nullptr;
-                }
-                continue;
+    for (int old_idx = 0; old_idx < old_count; old_idx++) {
+        if (old_names[old_idx][0] == '\0') continue;
+        const bool is_dm = chat_screen_is_dm_name(old_names[old_idx]);
+        const bool is_room = chat_screen_is_room_name(old_names[old_idx]);
+        if (!is_dm && !is_room) continue;
+        if (!chat_conversation_visible_for_current_filter(old_names[old_idx])) continue;
+        if (dyn_count >= MAX_CHANNELS) {
+            // No room — free the orphaned buffer
+            if (old_msgs[old_idx]) {
+                heap_caps_free(old_msgs[old_idx]);
+                old_msgs[old_idx] = nullptr;
             }
-            int new_idx = dyn_count++;
-            strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
-            dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
-            ch_msgs[new_idx] = old_msgs[old_idx];
-            ch_msg_capacity[new_idx] = old_caps[old_idx];
-            ch_msg_count[new_idx] = old_counts[old_idx];
-            ch_meta[new_idx] = old_meta[old_idx];
-            old_msgs[old_idx] = nullptr; // claimed
+            continue;
         }
+        int new_idx = dyn_count++;
+        strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
+        dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
+        ch_msgs[new_idx] = old_msgs[old_idx];
+        ch_msg_capacity[new_idx] = old_caps[old_idx];
+        ch_msg_count[new_idx] = old_counts[old_idx];
+        ch_meta[new_idx] = old_meta[old_idx];
+        old_msgs[old_idx] = nullptr; // claimed
     }
 
     // ── Free orphaned buffers ────────────────────────────
@@ -2114,7 +2115,8 @@ static void do_send()
     text[len] = '\0';
 
     const char* chan = dyn_channels[active_channel];
-    bool is_dm = (strncmp(chan, "DM: ", 4) == 0);
+    const bool is_dm = (strncmp(chan, "DM: ", 4) == 0);
+    const bool is_room = chat_screen_is_room_name(chan);
     const char* dest = is_dm ? (chan + 4) : chan;
 
     const ChatPrivateScopeState* scope = get_chat_private_scope(chan);
@@ -2126,6 +2128,11 @@ static void do_send()
         uint32_t send_ts = sigurdos::mesh::sendMessageWithScopeKey(dest, text, scope_key);
         sent = (send_ts != 0);
         if (sent) ts = send_ts;  // use the timestamp the mesh layer tracked the ACK with
+    } else if (is_room) {
+        const char* room_name = chat_screen_room_contact_name(chan);
+        uint32_t send_ts = sigurdos::mesh::sendRoomMessage(room_name, PUBLIC_CHANNEL_NAME, text);
+        sent = (send_ts != 0);
+        if (sent) ts = send_ts;
     } else {
         sent = sigurdos::mesh::sendChannelMessageWithScopeKey(dest, text, scope_key);
     }
@@ -2945,6 +2952,7 @@ void chat_screen_open_dm(const char* contact_name)
     if (!contact_name || !contact_name[0]) return;
 
     chat_screen_set_filter(2);
+    sigurdos::mesh::clearActiveRoomServer();
     const bool opened_from_chat = (current_screen() == Screen::Chat);
 
     // Signal chat_screen_show() to skip the channel-list screen
@@ -2978,6 +2986,7 @@ void chat_screen_open_channel(const char* channel_name)
     if (!channel_name || !channel_name[0]) return;
 
     chat_screen_set_filter(1);
+    sigurdos::mesh::clearActiveRoomServer();
     const bool opened_from_chat = (current_screen() == Screen::Chat);
     if (sigurdos::mesh::isPublicChannelName(channel_name)) {
         sigurdos::mesh::joinPublicChannel();
@@ -2993,6 +3002,37 @@ void chat_screen_open_channel(const char* channel_name)
         chat_conversation_visible_for_current_filter(channel_name)) {
         idx = dyn_count;
         strncpy(dyn_channels[idx], channel_name, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
+        dyn_count++;
+    }
+
+    if (idx >= 0 && idx < MAX_CHANNELS) {
+        request_open_channel_messaging(idx);
+    }
+}
+
+void chat_screen_open_room(const char* room_name)
+{
+    if (!room_name || !room_name[0]) return;
+
+    chat_screen_set_filter(1);
+    sigurdos::mesh::clearActiveRoomServer();
+    const bool opened_from_chat = (current_screen() == Screen::Chat);
+
+    g_skip_channel_list = true;
+    g_direct_open_returns_to_previous = !opened_from_chat;
+    navigate_to(Screen::Chat);
+    refresh_channels();
+
+    char room_channel[CHANNEL_NAME_CAP];
+    chat_screen_format_room_name(room_name, room_channel, sizeof(room_channel));
+    if (!room_channel[0]) return;
+
+    int idx = find_channel_idx(room_channel);
+    if (idx < 0 && dyn_count < MAX_CHANNELS &&
+        chat_conversation_visible_for_current_filter(room_channel)) {
+        idx = dyn_count;
+        strncpy(dyn_channels[idx], room_channel, sizeof(dyn_channels[idx]) - 1);
         dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
     }
@@ -3401,9 +3441,11 @@ void chat_load_messages()
 
         int idx = find_channel_idx(ch_name);
 
-        // DM pseudo-channels ("DM: <name>") aren't returned by exportChannels(),
+        // Synthetic pseudo-channels aren't returned by exportChannels(),
         // so they won't be found in dyn_channels. Create them on demand.
-        if (idx < 0 && strncmp(ch_name, "DM: ", 4) == 0 && dyn_count < MAX_CHANNELS) {
+        if (idx < 0 &&
+            (chat_screen_is_dm_name(ch_name) || chat_screen_is_room_name(ch_name)) &&
+            dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
             strncpy(dyn_channels[idx], ch_name, sizeof(dyn_channels[idx]) - 1);
             dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';

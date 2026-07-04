@@ -59,6 +59,29 @@ inline bool chat_screen_is_dm_name(const char* name)
     return name && std::strncmp(name, "DM:", 3) == 0;
 }
 
+inline bool chat_screen_is_room_name(const char* name)
+{
+    return name && std::strncmp(name, "Room:", 5) == 0;
+}
+
+inline const char* chat_screen_room_contact_name(const char* name)
+{
+    return chat_screen_is_room_name(name) ? (name + 5) : "";
+}
+
+inline void chat_screen_format_room_name(const char* contact_name,
+                                         char* out,
+                                         size_t out_sz)
+{
+    if (!out || out_sz == 0) return;
+    if (!contact_name || !contact_name[0]) {
+        out[0] = '\0';
+        return;
+    }
+    std::snprintf(out, out_sz, "Room:%s", contact_name);
+    out[out_sz - 1] = '\0';
+}
+
 inline bool chat_screen_filter_accepts_channel(int mode, const char* name)
 {
     if (mode == 2) return chat_screen_is_dm_name(name);
@@ -135,6 +158,9 @@ void chat_screen_open_dm(const char* contact_name);
 
 // Open a channel conversation directly (creates the Public channel if needed)
 void chat_screen_open_channel(const char* channel_name);
+
+// Open a room-server chat conversation without routing normal Public traffic.
+void chat_screen_open_room(const char* room_name);
 
 // Set which conversations to show: 1=channels only, 2=DMs only.
 // Other values fall back to channels only.

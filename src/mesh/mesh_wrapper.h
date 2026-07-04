@@ -88,7 +88,9 @@ void mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,
 
 struct MeshMessage {
     char sender[32];
-    char channel[32];
+    // Matches the chat UI conversation cap so synthetic entries such as
+    // "Room:" + a 31-byte contact name are not truncated in the runtime queue.
+    char channel[37];
     char text[256];
     uint32_t timestamp;
     bool is_self;
