@@ -13,6 +13,10 @@ namespace {
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_DEFAULT;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MAX;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MIN;
+using sigurdos::ui::CHAT_EMOJI_PICKER_PAGE_SIZE;
+using sigurdos::ui::chat_screen_emoji_page_count;
+using sigurdos::ui::chat_screen_emoji_page_end;
+using sigurdos::ui::chat_screen_emoji_page_start;
 using sigurdos::ui::chat_screen_filter_accepts_channel;
 using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
@@ -64,6 +68,24 @@ TEST(ChatConfig, DmFilterKeepsOnlyDmConversations) {
     EXPECT_TRUE(chat_screen_filter_accepts_channel(2, "DM: Alice"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Public"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "#general"));
+}
+
+TEST(ChatConfig, EmojiPickerUsesBoundedPages) {
+    EXPECT_EQ(CHAT_EMOJI_PICKER_PAGE_SIZE, 16);
+    EXPECT_EQ(chat_screen_emoji_page_count(0), 0);
+    EXPECT_EQ(chat_screen_emoji_page_count(1), 1);
+    EXPECT_EQ(chat_screen_emoji_page_count(16), 1);
+    EXPECT_EQ(chat_screen_emoji_page_count(17), 2);
+    EXPECT_EQ(chat_screen_emoji_page_count(52), 4);
+}
+
+TEST(ChatConfig, EmojiPickerClampsPageRanges) {
+    EXPECT_EQ(chat_screen_emoji_page_start(-1, 52), 0);
+    EXPECT_EQ(chat_screen_emoji_page_end(-1, 52), 16);
+    EXPECT_EQ(chat_screen_emoji_page_start(3, 52), 48);
+    EXPECT_EQ(chat_screen_emoji_page_end(3, 52), 52);
+    EXPECT_EQ(chat_screen_emoji_page_start(99, 52), 48);
+    EXPECT_EQ(chat_screen_emoji_page_end(99, 52), 52);
 }
 
 // ── Issue #543: DM name buffer overflow tests ──────────────────────────

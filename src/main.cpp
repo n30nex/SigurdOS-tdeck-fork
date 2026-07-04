@@ -214,6 +214,9 @@ void loop()
         static uint32_t last_gps_poll = 0;
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
         if (gp.gps_enabled) {
+            if (!sigurdos_gps_initialized()) {
+                sigurdos_gps_init();
+            }
             uint32_t now = millis();
             uint32_t interval_ms = (uint32_t)gp.gps_interval * 1000;
             if (interval_ms == 0 || (now - last_gps_poll >= interval_ms)) {

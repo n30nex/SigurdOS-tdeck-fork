@@ -404,7 +404,7 @@ public:
 
     bool shouldOverwriteWhenFull() const override { return true; }
     uint8_t getAutoAddMaxHops() const override {
-        return sigurdos::prefs_get().flood_max_hops;
+        return sigurdos::prefs_get().autoadd_max_hops;
     }
     void onContactsFull() override {
         sigurdos::mesh::mesh_v2_companion_contacts_full_push();

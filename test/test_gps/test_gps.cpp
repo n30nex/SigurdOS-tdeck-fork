@@ -390,6 +390,7 @@ TEST_F(GPSIntegrationTest, ValidGGAReportsFixWithCoordinateDirections) {
 }
 
 TEST_F(GPSIntegrationTest, InitUsesLilyGoGpsShieldUartContract) {
+    EXPECT_TRUE(sigurdos_gps_initialized());
     EXPECT_TRUE(Serial1.mock_was_begun());
     EXPECT_EQ(Serial1.mock_last_baud(), GPS_PRIMARY_BAUD_RATE);
     EXPECT_EQ(Serial1.mock_last_config(), SERIAL_8N1);

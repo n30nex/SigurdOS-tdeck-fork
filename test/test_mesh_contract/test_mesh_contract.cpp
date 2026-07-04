@@ -17,6 +17,7 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstddef>
+#include <cstdint>
 
 #include <gtest/gtest.h>
 
@@ -39,6 +40,22 @@ TEST(MeshContractTest, AdvertTypesMatchMeshCoreCompanionValues) {
     EXPECT_EQ(ADV_TYPE_REPEATER, 2);
     EXPECT_EQ(ADV_TYPE_ROOM, 3);
     EXPECT_EQ(ADV_TYPE_SENSOR, 4);
+}
+
+TEST(MeshContractTest, AutoAddConfigAllowsConfiguredAdvertTypes) {
+    EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_CHAT, 0x1E));
+    EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_REPEATER, 0x1E));
+    EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_ROOM, 0x1E));
+    EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_SENSOR, 0x1E));
+    EXPECT_FALSE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_NONE, 0x1E));
+}
+
+TEST(MeshContractTest, AutoAddConfigCanDisableOnlyRepeaters) {
+    uint8_t no_repeaters = (1u << ADV_TYPE_CHAT)
+                         | (1u << ADV_TYPE_ROOM)
+                         | (1u << ADV_TYPE_SENSOR);
+    EXPECT_TRUE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_CHAT, no_repeaters));
+    EXPECT_FALSE(sigurdos::mesh::autoAddConfigAllowsContactType(ADV_TYPE_REPEATER, no_repeaters));
 }
 
 TEST(MeshContractTest, PublicChannelDefaultsStayStable) {

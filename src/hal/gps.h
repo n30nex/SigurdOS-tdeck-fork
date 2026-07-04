@@ -23,6 +23,9 @@
 // Initialize GPS module on Serial1 with primary/fallback baud probing.
 void sigurdos_gps_init();
 
+// True after the UART/parser state has been initialized.
+bool sigurdos_gps_initialized();
+
 // Call each frame to read and parse incoming NMEA data
 void sigurdos_gps_loop();
 

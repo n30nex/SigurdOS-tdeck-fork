@@ -30,6 +30,7 @@ namespace sigurdos::ui {
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MAX     = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_DEFAULT = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MIN     = 8;
+static constexpr int CHAT_EMOJI_PICKER_PAGE_SIZE = 16;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
 {
@@ -49,6 +50,28 @@ inline bool chat_screen_filter_accepts_channel(int mode, const char* name)
     if (mode == 1) return name && name[0] && !chat_screen_is_dm_name(name);
     if (mode == 2) return chat_screen_is_dm_name(name);
     return true;
+}
+
+inline int chat_screen_emoji_page_count(int emoji_count)
+{
+    if (emoji_count <= 0) return 0;
+    return (emoji_count + CHAT_EMOJI_PICKER_PAGE_SIZE - 1) / CHAT_EMOJI_PICKER_PAGE_SIZE;
+}
+
+inline int chat_screen_emoji_page_start(int page, int emoji_count)
+{
+    const int pages = chat_screen_emoji_page_count(emoji_count);
+    if (pages == 0) return 0;
+    if (page < 0) page = 0;
+    if (page >= pages) page = pages - 1;
+    return page * CHAT_EMOJI_PICKER_PAGE_SIZE;
+}
+
+inline int chat_screen_emoji_page_end(int page, int emoji_count)
+{
+    int end = chat_screen_emoji_page_start(page, emoji_count) + CHAT_EMOJI_PICKER_PAGE_SIZE;
+    if (end > emoji_count) end = emoji_count;
+    return end;
 }
 
 // Create and show the chat screen

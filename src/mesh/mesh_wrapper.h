@@ -97,6 +97,12 @@ struct PacketLogEntry {
     char     type[16];
 };
 
+inline bool autoAddConfigAllowsContactType(uint8_t type, uint8_t config)
+{
+    if (type < ADV_TYPE_CHAT || type > ADV_TYPE_SENSOR) return false;
+    return (config & (1u << type)) != 0;
+}
+
 bool init(bool spiffs_ok = true);
 void loop();
 

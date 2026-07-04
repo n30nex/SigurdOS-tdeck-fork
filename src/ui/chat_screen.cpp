@@ -34,6 +34,7 @@
 #include <lvgl.h>
 #include <cstring>
 #include <cstdio>
+#include <new>
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include "utils/utf8_util.h"
@@ -1517,10 +1518,96 @@ static const char* emoji_picker_items[] = {
 };
 static constexpr int EMOJI_COUNT = sizeof(emoji_picker_items) / sizeof(emoji_picker_items[0]);
 
+struct EmojiPickerCtx {
+    lv_obj_t* dlg;
+    lv_obj_t* grid;
+    lv_obj_t* page_label;
+    lv_obj_t* target;
+    int page;
+};
+
+static lv_obj_t* emoji_picker_dialog = nullptr;
+
+static void close_emoji_picker(bool restore_focus)
+{
+    lv_obj_t* target = input_field;
+    if (emoji_picker_dialog && lv_obj_is_valid(emoji_picker_dialog)) {
+        lv_obj_t* closing = emoji_picker_dialog;
+        emoji_picker_dialog = nullptr;
+        lv_obj_del_async(closing);
+    } else {
+        emoji_picker_dialog = nullptr;
+    }
+
+    if (restore_focus && target && lv_obj_is_valid(target) && lv_group_get_default()) {
+        lv_group_focus_obj(target);
+    }
+}
+
+static void render_emoji_picker_page(EmojiPickerCtx* ctx)
+{
+    if (!ctx || !ctx->grid || !lv_obj_is_valid(ctx->grid)) return;
+
+    const int pages = chat_screen_emoji_page_count(EMOJI_COUNT);
+    if (pages <= 0) return;
+    if (ctx->page < 0) ctx->page = 0;
+    if (ctx->page >= pages) ctx->page = pages - 1;
+
+    if (ctx->page_label && lv_obj_is_valid(ctx->page_label)) {
+        char page_buf[20];
+        snprintf(page_buf, sizeof(page_buf), "%d/%d", ctx->page + 1, pages);
+        lv_label_set_text(ctx->page_label, page_buf);
+    }
+
+    lv_obj_clean(ctx->grid);
+
+    lv_group_t* g = lv_group_get_default();
+    const int start = chat_screen_emoji_page_start(ctx->page, EMOJI_COUNT);
+    const int end = chat_screen_emoji_page_end(ctx->page, EMOJI_COUNT);
+    for (int i = start; i < end; i++) {
+        lv_obj_t* btn = lv_btn_create(ctx->grid);
+        lv_obj_set_size(btn, 38, 34);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(BG_TERTIARY), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, emoji_picker_items[i]);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_16, 0);
+        lv_obj_center(lbl);
+
+        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            const char* em = (const char*)lv_event_get_user_data(e);
+            if (em && input_field && lv_obj_is_valid(input_field)) {
+                lv_textarea_add_text(input_field, em);
+            }
+            close_emoji_picker(true);
+        }, LV_EVENT_CLICKED, (void*)emoji_picker_items[i]);
+
+        if (g) lv_group_add_obj(g, btn);
+    }
+}
+
 static void show_emoji_picker(lv_obj_t* parent)
 {
+    if (!parent) return;
+    if (!input_field || !lv_obj_is_valid(input_field)) return;
+
+    close_emoji_picker(false);
+
     auto dlg_sz = dialog_size(296, 200);
     lv_obj_t* dlg = lv_obj_create(parent);
+    if (!dlg) return;
+
+    auto* ctx = new(std::nothrow) EmojiPickerCtx{dlg, nullptr, nullptr, input_field, 0};
+    if (!ctx) {
+        lv_obj_del_async(dlg);
+        return;
+    }
+
+    emoji_picker_dialog = dlg;
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
     lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
@@ -1528,8 +1615,15 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_radius(dlg, 0, 0);
     lv_obj_set_style_border_width(dlg, 0, 0);
     lv_obj_set_style_pad_all(dlg, 4, 0);
+    lv_obj_remove_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Close button
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        if (emoji_picker_dialog == (lv_obj_t*)lv_event_get_target(e)) {
+            emoji_picker_dialog = nullptr;
+        }
+        delete (EmojiPickerCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, (void*)ctx);
+
     lv_obj_t* close_btn = lv_btn_create(dlg);
     lv_obj_set_size(close_btn, 24, 20);
     lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -4, 4);
@@ -1542,9 +1636,8 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(close_lbl, lv_color_hex(0xffffff), 0);
     lv_obj_center(close_lbl);
-    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
-        lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
-        if (d) lv_obj_del_async(d);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t*) {
+        close_emoji_picker(true);
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* title = lv_label_create(dlg);
@@ -1553,9 +1646,44 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-    // Scrollable grid container
+    lv_obj_t* prev_btn = lv_btn_create(dlg);
+    lv_obj_set_size(prev_btn, 38, 22);
+    lv_obj_align(prev_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+    apply_pixel_btn_outline(prev_btn);
+    lv_obj_t* prev_lbl = lv_label_create(prev_btn);
+    lv_label_set_text(prev_lbl, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_font(prev_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(prev_lbl);
+    lv_obj_add_event_cb(prev_btn, [](lv_event_t* e) {
+        auto* c = (EmojiPickerCtx*)lv_event_get_user_data(e);
+        if (!c) return;
+        c->page--;
+        render_emoji_picker_page(c);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
+    ctx->page_label = lv_label_create(dlg);
+    lv_obj_set_style_text_color(ctx->page_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(ctx->page_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(ctx->page_label, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    lv_obj_t* next_btn = lv_btn_create(dlg);
+    lv_obj_set_size(next_btn, 38, 22);
+    lv_obj_align(next_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    apply_pixel_btn_outline(next_btn);
+    lv_obj_t* next_lbl = lv_label_create(next_btn);
+    lv_label_set_text(next_lbl, LV_SYMBOL_RIGHT);
+    lv_obj_set_style_text_font(next_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(next_lbl);
+    lv_obj_add_event_cb(next_btn, [](lv_event_t* e) {
+        auto* c = (EmojiPickerCtx*)lv_event_get_user_data(e);
+        if (!c) return;
+        c->page++;
+        render_emoji_picker_page(c);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
     lv_obj_t* grid = lv_obj_create(dlg);
-    lv_obj_set_size(grid, dlg_sz.w - 8, dlg_sz.h - 32);
+    ctx->grid = grid;
+    lv_obj_set_size(grid, dlg_sz.w - 8, dlg_sz.h - 60);
     lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(grid, 0, 0);
@@ -1567,31 +1695,13 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_remove_flag(grid, (lv_obj_flag_t)(
         LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN));
 
-    for (int i = 0; i < EMOJI_COUNT; i++) {
-        lv_obj_t* btn = lv_btn_create(grid);
-        lv_obj_set_size(btn, 28, 26);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(BG_TERTIARY), 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(btn, 2, 0);
-        lv_obj_set_style_border_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, emoji_picker_items[i]);
-        lv_obj_set_style_text_font(lbl, &emoji_font, 0);
-        lv_obj_center(lbl);
-
-        const char* emoji_text = emoji_picker_items[i];
-        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
-            const char* em = (const char*)lv_event_get_user_data(e);
-            if (input_field) {
-                lv_textarea_add_text(input_field, em);
-            }
-            lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
-            if (d) d = lv_obj_get_parent(d);
-            if (d) lv_obj_del_async(d);
-        }, LV_EVENT_CLICKED, (void*)emoji_text);
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, prev_btn);
+        lv_group_add_obj(g, next_btn);
+        lv_group_add_obj(g, close_btn);
     }
+    render_emoji_picker_page(ctx);
 }
 
 // ════════════════════════════════════════════════════
@@ -1709,8 +1819,9 @@ static void create_input_bar()
         lv_obj_center(el);
     }
     lv_obj_add_event_cb(emoji_btn, [](lv_event_t*) {
+        if (!input_bar || !lv_obj_is_valid(input_bar)) return;
         lv_obj_t* scr = lv_obj_get_screen(input_bar);
-        if (scr) show_emoji_picker(scr);
+        if (scr && input_field && lv_obj_is_valid(input_field)) show_emoji_picker(scr);
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* send_btn = lv_btn_create(input_bar);
@@ -1812,6 +1923,7 @@ static void open_channel_messaging(int idx)
     // NOTE: ch_list is NOT nulled here — show_channel_list() may have
     // already set it to a new list before this delete callback fires.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        emoji_picker_dialog = nullptr;
         scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
         search_bar = nullptr;
         search_input = nullptr;

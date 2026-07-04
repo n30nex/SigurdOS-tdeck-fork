@@ -416,6 +416,10 @@ namespace mesh {
 
         // Fan out to the phone app (NEW_ADVERT for a new contact, else ADVERT).
         sigurdos::mesh::mesh_v2_companion_advert_push(&contact, is_new);
+        if (is_new && contact.type != ADV_TYPE_NONE &&
+            lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE)) {
+            sigurdos::mesh::saveContacts();
+        }
 
 #if SIGURDOS_DEBUG_MESH
         Serial.printf("[mesh] %s contact: %s (type=%d)\n",
@@ -804,7 +808,8 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::shouldAutoAddContactType(uint8_t type) const {
-        return type == ADV_TYPE_CHAT || type == ADV_TYPE_ROOM || type == ADV_TYPE_REPEATER || type == ADV_TYPE_NONE;
+        return sigurdos::mesh::autoAddConfigAllowsContactType(
+            type, sigurdos::prefs_get().autoadd_config);
     }
 
     int SigurdMeshV2::addLoginEntry(const char* name) {

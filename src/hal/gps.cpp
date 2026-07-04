@@ -340,6 +340,10 @@ void sigurdos_gps_init() {
     gps.initialized = true;
 }
 
+bool sigurdos_gps_initialized() {
+    return gps.initialized;
+}
+
 void sigurdos_gps_loop() {
     if (!gps.initialized) return;
 
