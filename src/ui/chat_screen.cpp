@@ -122,7 +122,7 @@ static int message_limit_for_channel(const char* channel)
 {
     if (chat_screen_is_dm_name(channel)) return MAX_MSG_BYTES;
     if (!chat_screen_is_room_name(channel)) return MAX_MSG_BYTES;
-    size_t room_limit = sigurdos::mesh::roomMessageMaxBodyBytes(PUBLIC_CHANNEL_NAME);
+    size_t room_limit = sigurdos::mesh::roomMessageMaxBodyBytes(sigurdos::mesh::PUBLIC_CHANNEL_NAME);
     if (room_limit == 0 || room_limit > (size_t)MAX_MSG_BYTES) return MAX_MSG_BYTES;
     return (int)room_limit;
 }
@@ -2130,7 +2130,8 @@ static void do_send()
         if (sent) ts = send_ts;  // use the timestamp the mesh layer tracked the ACK with
     } else if (is_room) {
         const char* room_name = chat_screen_room_contact_name(chan);
-        uint32_t send_ts = sigurdos::mesh::sendRoomMessage(room_name, PUBLIC_CHANNEL_NAME, text);
+        uint32_t send_ts =
+            sigurdos::mesh::sendRoomMessage(room_name, sigurdos::mesh::PUBLIC_CHANNEL_NAME, text);
         sent = (send_ts != 0);
         if (sent) ts = send_ts;
     } else {
