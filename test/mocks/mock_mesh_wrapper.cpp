@@ -11,6 +11,8 @@ static MeshMessage     mock_msgs[8];
 static int             mock_msg_count = 0;
 static uint32_t        mock_drop_count = 0;
 static int             mock_unread_count = 0;
+static int             mock_unread_channels = 0;
+static int             mock_unread_dms = 0;
 static int             mock_unread_contacts = 0;
 static int             mock_unread_repeaters = 0;
 static uint32_t        mock_activity_seq = 0;
@@ -56,12 +58,57 @@ int pollMessages(MeshMessage* out, int max) {
 int pendingMessageCount() { return mock_msg_count; }
 uint32_t getQueueDropCount() { return mock_drop_count; }
 int getUnreadMessageCount() { return mock_unread_count; }
-void resetUnreadMessageCount() { mock_unread_count = 0; }
+void resetUnreadMessageCount() {
+    mock_unread_count = 0;
+    mock_unread_channels = 0;
+    mock_unread_dms = 0;
+}
+int getUnreadChannelMessageCount() { return mock_unread_channels; }
+void resetUnreadChannelMessageCount() {
+    mock_unread_count -= mock_unread_channels;
+    if (mock_unread_count < 0) mock_unread_count = 0;
+    mock_unread_channels = 0;
+}
+int getUnreadDmMessageCount() { return mock_unread_dms; }
+void resetUnreadDmMessageCount() {
+    mock_unread_count -= mock_unread_dms;
+    if (mock_unread_count < 0) mock_unread_count = 0;
+    mock_unread_dms = 0;
+}
 int getUnreadContactCount() { return mock_unread_contacts; }
 void resetUnreadContactCount() { mock_unread_contacts = 0; }
 int getUnreadRepeaterCount() { return mock_unread_repeaters; }
 void resetUnreadRepeaterCount() { mock_unread_repeaters = 0; }
 uint32_t getMeshActivitySeq() { return mock_activity_seq; }
+
+void mesh_v2_queue_push(const char* sender, const char* channel,
+                        const char* text, int rssi, float snr,
+                        uint32_t sender_timestamp, uint8_t path_len,
+                        const uint8_t* sender_prefix,
+                        uint8_t txt_type,
+                        const uint8_t* extra,
+                        uint8_t extra_len) {
+    (void)rssi;
+    (void)snr;
+    (void)sender_prefix;
+    (void)txt_type;
+    (void)extra;
+    (void)extra_len;
+    if (mock_msg_count >= 8) return;
+    MeshMessage& m = mock_msgs[mock_msg_count++];
+    strncpy(m.sender, sender ? sender : "", sizeof(m.sender) - 1);
+    m.sender[sizeof(m.sender) - 1] = '\0';
+    strncpy(m.channel, channel ? channel : "", sizeof(m.channel) - 1);
+    m.channel[sizeof(m.channel) - 1] = '\0';
+    strncpy(m.text, text ? text : "", sizeof(m.text) - 1);
+    m.text[sizeof(m.text) - 1] = '\0';
+    m.timestamp = sender_timestamp;
+    m.is_self = false;
+    mock_unread_count++;
+    if (channel && channel[0]) mock_unread_channels++;
+    else mock_unread_dms++;
+    mock_activity_seq++;
+}
 
 void mesh_v2_note_contact_activity(uint8_t contact_type, bool is_new_visible_contact) {
     if (contact_type == ADV_TYPE_NONE) return;
@@ -97,6 +144,25 @@ bool removeChannel(int idx) { (void)idx; return true; }
 
 bool removeContact(const char* name) { (void)name; return false; }
 bool resetPathTo(const char* name) { (void)name; return false; }
+
+// ── Room server context ─────────────────────────
+
+static char mock_active_room_server[32] = "";
+
+bool setActiveRoomServer(const char* contact_name) {
+    if (!contact_name || !contact_name[0]) return false;
+    strncpy(mock_active_room_server, contact_name, sizeof(mock_active_room_server) - 1);
+    mock_active_room_server[sizeof(mock_active_room_server) - 1] = '\0';
+    return true;
+}
+
+void clearActiveRoomServer() {
+    mock_active_room_server[0] = '\0';
+}
+
+const char* getActiveRoomServer() {
+    return mock_active_room_server;
+}
 
 // ── Radio stats ──────────────────────────────────
 
@@ -194,6 +260,9 @@ void mock_push_message(const char* sender, const char* text) {
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.timestamp = 0;
     m.is_self = false;
+    mock_unread_count++;
+    mock_unread_dms++;
+    mock_activity_seq++;
 }
 
 void mock_set_noise(int v)  { mock_noise = v; }

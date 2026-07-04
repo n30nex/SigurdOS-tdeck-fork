@@ -630,11 +630,11 @@ namespace mesh {
         // text arrives as "<sender_name>: <message>" (BaseChatMesh wire format)
         const char* sender_name = text;
         const char* msg_text = "";
+        char sender_buf[32];
         const char* colon = strstr(text, ": ");
         if (colon && colon > text) {
             size_t nlen = colon - text;
             if (nlen > 31) nlen = 31;
-            char sender_buf[32];
             memcpy(sender_buf, text, nlen);
             sender_buf[nlen] = '\0';
             sender_name = sender_buf;

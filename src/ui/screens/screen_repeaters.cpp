@@ -41,10 +41,18 @@ using namespace responsive;
 
 static int g_repeaters_page = 0;
 static bool g_repeater_detail_open = false;
+static Screen g_repeater_detail_source = Screen::Repeaters;
 
 static bool repeater_detail_back_override()
 {
-    repeaters_screen_show();
+    Screen source = g_repeater_detail_source;
+    clear_back_override();
+    g_repeater_detail_open = false;
+    if (source == Screen::Contacts) {
+        contacts_screen_show();
+    } else {
+        repeaters_screen_show();
+    }
     return true;
 }
 
@@ -478,6 +486,9 @@ static void repeater_input_dialog(const char* contact_name,
 void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 {
     if (!contact_name || !contact_name[0]) return;
+    if (!g_repeater_detail_open) {
+        g_repeater_detail_source = current_screen();
+    }
     g_repeater_detail_open = true;
     set_back_override(repeater_detail_back_override);
     char safe_contact_name[32];
@@ -893,9 +904,24 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_t* vl = lv_obj_get_child(r, 1);
             if (vl && lv_obj_check_type(vl, &lv_label_class))
                 lv_obj_set_style_text_color(vl, lv_color_hex(ACCENT), 0);
-            lv_obj_add_event_cb(r, [](lv_event_t*) {
-                chat_screen_open_channel("Public");
-            }, LV_EVENT_CLICKED, nullptr);
+            struct RoomChatCtx { char* name; };
+            auto* room_ctx = new(std::nothrow) RoomChatCtx{strdup(contact_name)};
+            if (room_ctx && room_ctx->name) {
+                lv_obj_set_user_data(r, room_ctx);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    auto* c = (RoomChatCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (c && c->name && sigurdos::mesh::setActiveRoomServer(c->name)) {
+                        chat_screen_open_channel("Public");
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    auto* c = (RoomChatCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (c) { free(c->name); delete c; }
+                }, LV_EVENT_DELETE, nullptr);
+            } else if (room_ctx) {
+                free(room_ctx->name);
+                delete room_ctx;
+            }
             row++;
         }
 

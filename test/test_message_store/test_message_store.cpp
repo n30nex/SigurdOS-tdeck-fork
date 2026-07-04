@@ -87,6 +87,22 @@ TEST_F(MessageStoreTest, LoadRecentFiltersAndPreservesOrder) {
     EXPECT_STREQ(out[1].text, "three");
 }
 
+TEST_F(MessageStoreTest, MaxLengthDmConversationRoundTrips) {
+    const char* convo = "DM: ABCDEFGHIJKLMNOPQRSTUVWXYZ12345";
+    static_assert(sizeof("DM: ABCDEFGHIJKLMNOPQRSTUVWXYZ12345") <=
+                  sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN,
+                  "max-length DM conversation must fit message store");
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg(convo, "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345", "hello", 42, false, false)));
+
+    sigurdos::mesh::StoredMessage out[2]{};
+    int n = sigurdos::mesh::messageStoreLoadRecent(convo, out, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_STREQ(out[0].conversation, convo);
+    EXPECT_STREQ(out[0].text, "hello");
+}
+
 TEST_F(MessageStoreTest, StoreRotatesToNewestRecords) {
     for (uint32_t i = 1; i <= 70; i++) {
         char text[24];

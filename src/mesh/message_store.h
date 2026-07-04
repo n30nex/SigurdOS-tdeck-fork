@@ -9,7 +9,7 @@
 namespace sigurdos {
 namespace mesh {
 
-static constexpr size_t SIGURDOS_MSG_CONVERSATION_LEN = 32;
+static constexpr size_t SIGURDOS_MSG_CONVERSATION_LEN = 40;
 static constexpr size_t SIGURDOS_MSG_SENDER_LEN = 32;
 static constexpr size_t SIGURDOS_MSG_TEXT_LEN = 160;
 static constexpr size_t SIGURDOS_MSG_PREFIX_LEN = 6;
@@ -46,11 +46,13 @@ struct StoredMessage {
 
 namespace detail {
 static constexpr uint32_t MESSAGE_STORE_MAGIC = 0x534d5347; // "SMSG"
+// v5 widened conversation names so "DM: " + a max-length contact name survives
+// reboot without truncating into a different conversation.
 // v4 added store_id (4), txt_type (1), extra_len (1), and extra[8] (8) for
 // exact companion message metadata. Old v3 records are rejected by readHeader
 // (version mismatch) and the store is rebuilt — acceptable for a persisted
 // message cache.
-static constexpr uint8_t MESSAGE_STORE_VERSION = 4;
+static constexpr uint8_t MESSAGE_STORE_VERSION = 5;
 static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     4 +  // store_id
     SIGURDOS_MSG_CONVERSATION_LEN +

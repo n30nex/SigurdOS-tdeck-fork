@@ -61,7 +61,7 @@ struct IconDef {
 // MUST match home_screen.cpp exactly (same order, same targets)
 static const IconDef icons[] = {
     {"CHATS",     "\x0e",  true,  Screen::Chat},
-    {"DMs",       "\x0f",  false, Screen::Chat},
+    {"DMs",       "\x0f",  true,  Screen::Chat},
     {"ROOMS",     "\x10",  false, Screen::Contacts},
     {"CONTACTS",  "\x11",  true,  Screen::Contacts},
     {"REPEATERS", "\x15",  true,  Screen::Repeaters},
@@ -100,6 +100,8 @@ TEST(HomeScreenIconTest, RepeatersTargetsRepeaters) {
 TEST(HomeScreenIconTest, ChatsAndDmsBothOpenChatWithDifferentFilters) {
     EXPECT_EQ(icons[0].target, Screen::Chat);
     EXPECT_EQ(icons[1].target, Screen::Chat);
+    EXPECT_TRUE(icons[0].badge);
+    EXPECT_TRUE(icons[1].badge);
     EXPECT_STREQ(icons[0].label, "CHATS");
     EXPECT_STREQ(icons[1].label, "DMs");
 }

@@ -107,6 +107,8 @@ static uint32_t      msg_drop_count = 0;
 // Unread message count — incremented on every incoming (non-self) message,
 // reset to 0 when the chat screen is opened. Used by the home screen badge.
 static int           unread_count = 0;
+static int           unread_channel_count = 0;
+static int           unread_dm_count = 0;
 static int           unread_contact_count = 0;
 static int           unread_repeater_count = 0;
 static uint32_t      mesh_activity_seq = 0;
@@ -205,6 +207,8 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     m.is_self = false;
     if (strcmp(sender, own_name) != 0) {
         unread_count++;
+        if (channel && channel[0]) unread_channel_count++;
+        else unread_dm_count++;
         mesh_activity_seq++;
     }
     msg_head = (msg_head + 1) % MAX_QUEUED;
@@ -279,6 +283,8 @@ static void queue_push(const char* sender, const char* channel, const char* text
     // Increment unread count for incoming messages (reset when chat is opened)
     if (strcmp(sender, own_name) != 0) {
         unread_count++;
+        if (channel && channel[0]) unread_channel_count++;
+        else unread_dm_count++;
         mesh_activity_seq++;
     }
     msg_head = (msg_head + 1) % MAX_QUEUED;
@@ -562,6 +568,34 @@ void clearRoomMsgFetch() {
 }
 
 // ── Room message posting ───────────────────────────
+static char g_active_room_server[32] = "";
+
+bool setActiveRoomServer(const char* contact_name) {
+    if (!contact_name || !contact_name[0]) return false;
+    if (g_mesh) {
+        bool found_room = false;
+        for (int i = 0; i < g_mesh->getContactCount(); i++) {
+            auto* c = g_mesh->getContact(i);
+            if (c && strcmp(c->name, contact_name) == 0) {
+                found_room = (c->type == ADV_TYPE_ROOM);
+                break;
+            }
+        }
+        if (!found_room) return false;
+    }
+    strncpy(g_active_room_server, contact_name, sizeof(g_active_room_server) - 1);
+    g_active_room_server[sizeof(g_active_room_server) - 1] = '\0';
+    return true;
+}
+
+void clearActiveRoomServer() {
+    g_active_room_server[0] = '\0';
+}
+
+const char* getActiveRoomServer() {
+    return g_active_room_server;
+}
+
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
     if (!radioTxAllowed()) return 0;
     if (!g_mesh || !contact_name || !channel_name || !text) return 0;
@@ -783,6 +817,8 @@ void injectMessage(const char* sender, const char* channel, const char* text)
 {
     if (!sender || !text) return;
     queue_push(sender, channel, text);
+    storeIncomingMessageForCompanion(sender, channel, text, -50, 8.0f,
+                                     0, 0xFF, nullptr, 0);
     if (!channel || channel[0] == '\0') {
         pushPacketLog(sender, -50, 8.0f, "DM");
     } else {
@@ -1160,15 +1196,20 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
             break;
         }
     }
-    // Also forward the message to any logged-in room server contacts. MeshCore
-    // room servers store posts from peer TXT_MSG payloads; channel floods alone
-    // are not a reliable room-post mechanism.
-    int n_room = getLoggedInRoomServerCount();
-    for (int ri = 0; ri < n_room; ri++) {
-        const char* room_name = getLoggedInRoomServerName(ri);
-        if (room_name && room_name[0]) {
-            uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
-            if (room_ts != 0) sent = true;
+    // If the user opened chat from a specific room server, post only to that
+    // room. Otherwise keep the previous best-effort behavior for logged-in
+    // room servers so normal Public chat can still bridge to known rooms.
+    if (g_active_room_server[0]) {
+        uint32_t room_ts = sendRoomMessage(g_active_room_server, channel_name, text);
+        if (room_ts != 0) sent = true;
+    } else {
+        int n_room = getLoggedInRoomServerCount();
+        for (int ri = 0; ri < n_room; ri++) {
+            const char* room_name = getLoggedInRoomServerName(ri);
+            if (room_name && room_name[0]) {
+                uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
+                if (room_ts != 0) sent = true;
+            }
         }
     }
     return sent;
@@ -1197,7 +1238,23 @@ int pendingMessageCount() { return msg_count; }
 uint32_t getQueueDropCount() { return msg_drop_count; }
 
 int getUnreadMessageCount() { return unread_count; }
-void resetUnreadMessageCount() { unread_count = 0; }
+void resetUnreadMessageCount() {
+    unread_count = 0;
+    unread_channel_count = 0;
+    unread_dm_count = 0;
+}
+int getUnreadChannelMessageCount() { return unread_channel_count; }
+void resetUnreadChannelMessageCount() {
+    unread_count -= unread_channel_count;
+    if (unread_count < 0) unread_count = 0;
+    unread_channel_count = 0;
+}
+int getUnreadDmMessageCount() { return unread_dm_count; }
+void resetUnreadDmMessageCount() {
+    unread_count -= unread_dm_count;
+    if (unread_count < 0) unread_count = 0;
+    unread_dm_count = 0;
+}
 int getUnreadContactCount() { return unread_contact_count; }
 void resetUnreadContactCount() { unread_contact_count = 0; }
 int getUnreadRepeaterCount() { return unread_repeater_count; }

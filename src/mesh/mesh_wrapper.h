@@ -203,6 +203,10 @@ int  pendingMessageCount();
 uint32_t getQueueDropCount();
 int  getUnreadMessageCount();
 void resetUnreadMessageCount();
+int  getUnreadChannelMessageCount();
+void resetUnreadChannelMessageCount();
+int  getUnreadDmMessageCount();
+void resetUnreadDmMessageCount();
 int  getUnreadContactCount();
 void resetUnreadContactCount();
 int  getUnreadRepeaterCount();
@@ -422,6 +426,10 @@ inline bool parseRoomMessageText(const char* text,
 }
 
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text);
+
+bool setActiveRoomServer(const char* contact_name);
+void clearActiveRoomServer();
+const char* getActiveRoomServer();
 
 // Count room server contacts that are currently logged in.
 int getLoggedInRoomServerCount();

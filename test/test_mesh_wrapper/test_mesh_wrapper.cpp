@@ -32,6 +32,10 @@
 // Include our mesh wrapper header (uses mocks for MeshCore)
 #include "mesh/mesh_wrapper.h"
 
+namespace sigurdos::mesh {
+void mock_push_message(const char* sender, const char* text);
+}
+
 namespace {
 
 class MeshWrapperTest : public ::testing::Test {
@@ -127,6 +131,29 @@ TEST_F(MeshWrapperTest, MeshActivityCountersSeparateContactsAndRepeaters) {
     EXPECT_EQ(sigurdos::mesh::getUnreadContactCount(), 1);
     EXPECT_EQ(sigurdos::mesh::getUnreadRepeaterCount(), 1);
     EXPECT_EQ(sigurdos::mesh::getMeshActivitySeq(), before + 3);
+}
+
+TEST_F(MeshWrapperTest, UnreadMessageCountersSeparateDmsFromChannels) {
+    sigurdos::mesh::resetUnreadMessageCount();
+
+    sigurdos::mesh::mock_push_message("Alice", "hello");
+    sigurdos::mesh::mesh_v2_queue_push("Bob", "Public", "hi", -60, 7.0f);
+
+    EXPECT_EQ(sigurdos::mesh::getUnreadMessageCount(), 2);
+    EXPECT_EQ(sigurdos::mesh::getUnreadDmMessageCount(), 1);
+    EXPECT_EQ(sigurdos::mesh::getUnreadChannelMessageCount(), 1);
+
+    sigurdos::mesh::resetUnreadDmMessageCount();
+
+    EXPECT_EQ(sigurdos::mesh::getUnreadMessageCount(), 1);
+    EXPECT_EQ(sigurdos::mesh::getUnreadDmMessageCount(), 0);
+    EXPECT_EQ(sigurdos::mesh::getUnreadChannelMessageCount(), 1);
+
+    sigurdos::mesh::resetUnreadChannelMessageCount();
+
+    EXPECT_EQ(sigurdos::mesh::getUnreadMessageCount(), 0);
+    EXPECT_EQ(sigurdos::mesh::getUnreadDmMessageCount(), 0);
+    EXPECT_EQ(sigurdos::mesh::getUnreadChannelMessageCount(), 0);
 }
 
 // ── Noise floor is within realistic range ───────────────

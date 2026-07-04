@@ -62,7 +62,7 @@ struct IconDef {
 
 static const IconDef icons[] = {
     {"CHATS",     LV_SYMBOL_ENVELOPE,   true,  Screen::Chat},
-    {"DMs",       LV_SYMBOL_FILE,       false, Screen::Chat},
+    {"DMs",       LV_SYMBOL_FILE,       true,  Screen::Chat},
     {"ROOMS",     LV_SYMBOL_DIRECTORY,  false, Screen::Contacts},
     {"CONTACTS",  LV_SYMBOL_CALL,       true,  Screen::Contacts},
     {"REPEATERS", LV_SYMBOL_WIFI,       true,  Screen::Repeaters},
@@ -184,9 +184,13 @@ static void open_icon(int idx)
 
         // Apply filter based on which icon was clicked
         if (strcmp(icons[idx].label, "DMs") == 0) {
+            sigurdos::mesh::clearActiveRoomServer();
             chat_screen_set_filter(2);       // DMs only
+            sigurdos::mesh::resetUnreadDmMessageCount();
         } else if (strcmp(icons[idx].label, "CHATS") == 0) {
+            sigurdos::mesh::clearActiveRoomServer();
             chat_screen_set_filter(1);       // channels only
+            sigurdos::mesh::resetUnreadChannelMessageCount();
         } else if (strcmp(icons[idx].label, "ROOMS") == 0) {
             contacts_screen_set_filter(ADV_TYPE_ROOM);  // room servers only
         } else if (strcmp(icons[idx].label, "CONTACTS") == 0) {
@@ -521,7 +525,9 @@ void home_screen_update_badges()
 
         int n = 0;
         if (strcmp(icons[i].label, "CHATS") == 0) {
-            n = sigurdos::mesh::getUnreadMessageCount();
+            n = sigurdos::mesh::getUnreadChannelMessageCount();
+        } else if (strcmp(icons[i].label, "DMs") == 0) {
+            n = sigurdos::mesh::getUnreadDmMessageCount();
         } else if (strcmp(icons[i].label, "CONTACTS") == 0) {
             n = sigurdos::mesh::getUnreadContactCount();
         } else if (strcmp(icons[i].label, "REPEATERS") == 0) {

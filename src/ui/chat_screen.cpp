@@ -143,6 +143,7 @@ static constexpr int CHANNEL_NAME_CAP = 37;
 static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
+static bool  g_direct_open_returns_to_previous = false;
 static int   active_channel = 0;
 static lv_timer_t* g_pending_channel_list_timer = nullptr;
 static lv_timer_t* g_pending_channel_open_timer = nullptr;
@@ -162,6 +163,17 @@ static bool chat_conversation_visible_for_current_filter(const char* conversatio
 }
 
 static void chat_load_companion_messages();
+
+static void reset_unread_for_current_filter()
+{
+    if (chat_filter_mode == 1) {
+        sigurdos::mesh::resetUnreadChannelMessageCount();
+    } else if (chat_filter_mode == 2) {
+        sigurdos::mesh::resetUnreadDmMessageCount();
+    } else {
+        sigurdos::mesh::resetUnreadMessageCount();
+    }
+}
 
 // ── Per-channel metadata ───────────────────────────────────
 struct ChannelMeta {
@@ -189,7 +201,7 @@ struct MessageActionCtx {
 
 
 struct ChatPrivateScopeState {
-    char conversation[32];
+    char conversation[CHANNEL_NAME_CAP];
     char name[31];
     uint8_t key[16];
     bool has_scope;
@@ -835,6 +847,16 @@ static void request_open_channel_messaging(int idx)
     }
 }
 
+static void return_from_message_view()
+{
+    if (g_direct_open_returns_to_previous) {
+        g_direct_open_returns_to_previous = false;
+        go_back();
+        return;
+    }
+    request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+}
+
 static void channel_select_timer_cb(lv_timer_t* timer)
 {
     if (timer) lv_timer_del(timer);
@@ -1411,7 +1433,7 @@ static void create_top_bar()
     lv_obj_center(bl);
     disable_scroll(bl);
     lv_obj_add_event_cb(back, [](lv_event_t*) {
-        request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        return_from_message_view();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
@@ -2879,13 +2901,12 @@ void chat_screen_show()
     // open_channel_messaging() will create the messaging screen instead.
     if (g_skip_channel_list) {
         g_skip_channel_list = false;
-        // Reset unread badge counter when the user opens chat
-        sigurdos::mesh::resetUnreadMessageCount();
+        reset_unread_for_current_filter();
         return;
     }
+    g_direct_open_returns_to_previous = false;
     request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
-    // Reset unread badge counter when the user opens chat
-    sigurdos::mesh::resetUnreadMessageCount();
+    reset_unread_for_current_filter();
 }
 
 void chat_screen_open_dm(const char* contact_name)
@@ -2893,12 +2914,14 @@ void chat_screen_open_dm(const char* contact_name)
     if (!contact_name || !contact_name[0]) return;
 
     chat_screen_set_filter(2);
+    const bool opened_from_chat = (current_screen() == Screen::Chat);
 
     // Signal chat_screen_show() to skip the channel-list screen
     // so we go directly to the messaging view without a wasteful
     // intermediate lv_scr_load_anim that causes a crash when
     // open_channel_messaging() triggers a second screen load.
     g_skip_channel_list = true;
+    g_direct_open_returns_to_previous = !opened_from_chat;
     navigate_to(Screen::Chat);
     refresh_channels();
 
@@ -2924,11 +2947,13 @@ void chat_screen_open_channel(const char* channel_name)
     if (!channel_name || !channel_name[0]) return;
 
     chat_screen_set_filter(1);
+    const bool opened_from_chat = (current_screen() == Screen::Chat);
     if (sigurdos::mesh::isPublicChannelName(channel_name)) {
         sigurdos::mesh::joinPublicChannel();
     }
 
     g_skip_channel_list = true;
+    g_direct_open_returns_to_previous = !opened_from_chat;
     navigate_to(Screen::Chat);
     refresh_channels();
 
@@ -3042,7 +3067,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             }
             case SigurdOSTrackballEvent::Left:
                 hide_search();
-                request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+                return_from_message_view();
                 return true;
             default:
                 return true;
@@ -3064,7 +3089,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             return true;
         }
         case SigurdOSTrackballEvent::Left:
-            request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+            return_from_message_view();
             return true;
         case SigurdOSTrackballEvent::Right:
             if (input_field && lv_obj_is_valid(input_field)) {
@@ -3195,13 +3220,13 @@ const char* chat_screen_get_active_channel_name()
 // ════════════════════════════════════════════════════
 
 static constexpr uint32_t MSG_MAGIC = 0x536d534c; // "SLmS"
-static constexpr uint8_t  MSG_VERSION = 1;
+static constexpr uint8_t  MSG_VERSION = 2;
 static constexpr size_t   MSG_MAX_CHANNELS = 16;
 static constexpr size_t   MSG_MAX_PER_CHANNEL = CHAT_MSGS_MAX;
-static constexpr size_t   MSG_RECORD_BYTES = 32 + 160 + 4 + 1;
+static constexpr size_t   MSG_RECORD_BYTES = CHANNEL_NAME_CAP + 160 + 4 + 1;
 static constexpr size_t   MSG_MAX_FILE_SIZE =
     4 + 1 + 1 +
-    MSG_MAX_CHANNELS * (32 + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES);
+    MSG_MAX_CHANNELS * (CHANNEL_NAME_CAP + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES);
 
 void chat_save_messages()
 {
@@ -3233,9 +3258,9 @@ void chat_save_messages()
         if (!has_channel_buffer(i)) continue;
         uint8_t mc = ch_msg_count[i] > cap ? (uint8_t)cap : (uint8_t)ch_msg_count[i];
 
-        uint8_t ch_buf[32] = {0};
-        memcpy(ch_buf, dyn_channels[i], strnlen(dyn_channels[i], 31));
-        f.write(ch_buf, 32);
+        uint8_t ch_buf[CHANNEL_NAME_CAP] = {0};
+        memcpy(ch_buf, dyn_channels[i], strnlen(dyn_channels[i], CHANNEL_NAME_CAP - 1));
+        f.write(ch_buf, CHANNEL_NAME_CAP);
 
         f.write(&mc, 1);
         for (int j = 0; j < mc; j++) {
@@ -3302,10 +3327,11 @@ void chat_load_messages()
     if (ch_count > MSG_MAX_CHANNELS) { f.close(); return; }
 
     for (int ci = 0; ci < ch_count; ci++) {
-        if (f.position() + 33 > file_size) break;
+        if (f.position() + CHANNEL_NAME_CAP + 1 > file_size) break;
 
-        char ch_name[33] = {0};
-        if (f.read((uint8_t*)ch_name, 32) != 32) break;
+        char ch_name[CHANNEL_NAME_CAP] = {0};
+        if (f.read((uint8_t*)ch_name, CHANNEL_NAME_CAP) != CHANNEL_NAME_CAP) break;
+        ch_name[CHANNEL_NAME_CAP - 1] = '\0';
 
         uint8_t msg_count;
         if (f.read(&msg_count, 1) != 1) break;
