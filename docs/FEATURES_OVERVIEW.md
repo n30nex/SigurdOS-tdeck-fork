@@ -371,8 +371,8 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 **Sources:** [`src/hal/tdeck_pins.h`](../src/hal/tdeck_pins.h), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`lib/meshcore/`](../lib/meshcore/)
 
 ### Buzzer
-- **Pin:** GPIO 46 (active low)
-- **Non-blocking pattern playback** — notification patterns (short/double beep) are stepped by `buzzer_loop()` from the main loop instead of blocking delays
+- **Pin:** GPIO 46, active-high GPIO output
+- **Non-blocking pattern playback** — notification patterns (short/double beep) are stepped by `buzzer_loop()` from the main loop instead of blocking delays; no LEDC/PWM channel is used
 - **Quiet mode** — buzzer can be silenced via preferences
 **Sources:** [`src/hal/buzzer.cpp`](../src/hal/buzzer.cpp), [`src/hal/buzzer.h`](../src/hal/buzzer.h)
 

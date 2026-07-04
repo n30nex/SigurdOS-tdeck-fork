@@ -56,7 +56,7 @@
 | 43  | GPS TX              | UART      | Serial1 TX                          |
 | 44  | GPS RX              | UART      | Serial1 RX                          |
 | 45  | LoRa DIO1           | GPIO      | Radio interrupt / wake source       |
-| 46  | Buzzer              | GPIO      | Active-low buzzer output            |
+| 46  | Buzzer              | GPIO      | Active-high buzzer output           |
 
 ---
 
@@ -624,7 +624,7 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 > The buzzer is driven as a GPIO output - no PWM tone generation is implemented.
 > **Non-blocking loop-driven playback:** `buzzer_loop()` is called once per
 > main-loop iteration (`main.cpp:189`) and advances through the active pattern's
-> step table (`src/hal/buzzer.h`). Each `BuzzerPatternStep` has a `level_high`
+> step table (`src/hal/buzzer.h`). Each `BuzzerPatternStep` has a `tone_on`
 > (bool) and `duration_ms` field. Steps with `duration_ms = 0` are terminal
 > markers that apply the level and then idle LOW until the next pattern starts.
 > Starting a new beep while one is playing replaces it immediately (restart

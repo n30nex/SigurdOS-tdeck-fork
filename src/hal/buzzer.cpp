@@ -11,12 +11,6 @@ namespace hal {
 
 namespace {
 
-#if defined(ESP32_PLATFORM) || defined(SIGURDOS_NATIVE_PREFERENCES)
-#define SIGURDOS_BUZZER_USE_TONE 1
-#else
-#define SIGURDOS_BUZZER_USE_TONE 0
-#endif
-
 // Non-blocking playback state — buzzer_loop() advances through the active
 // pattern. Starting a beep while one is playing replaces it (restart
 // semantics); no call site can trigger overlap today: the only caller is
@@ -28,20 +22,13 @@ uint32_t s_step_started_ms = 0;
 bool s_active = false;
 
 void buzzer_stop_output() {
-#if SIGURDOS_BUZZER_USE_TONE
-    noTone(PIN_BUZZER);
-#endif
     digitalWrite(PIN_BUZZER, LOW);
 }
 
 void buzzer_apply_step() {
     const BuzzerPatternStep& step = s_pattern[s_idx];
     if (step.tone_on) {
-#if SIGURDOS_BUZZER_USE_TONE
-        tone(PIN_BUZZER, step.frequency_hz);
-#else
         digitalWrite(PIN_BUZZER, HIGH);
-#endif
     } else {
         buzzer_stop_output();
     }

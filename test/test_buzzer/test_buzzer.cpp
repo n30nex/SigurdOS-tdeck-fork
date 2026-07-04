@@ -130,17 +130,15 @@ TEST_F(BuzzerPlaybackTest, ShortBeepReturnsImmediatelyAndPlaysSequence) {
     // proves the call no longer blocks (the old code burned 80 ms here).
     EXPECT_EQ(arduino_mock::current_millis, 1000UL);
     EXPECT_EQ(pin(), HIGH);
-    EXPECT_EQ(arduino_mock::tone_calls, 1);
-    EXPECT_EQ(arduino_mock::last_tone_pin, PIN_BUZZER);
-    EXPECT_EQ(arduino_mock::last_tone_frequency, SIGURDOS_BUZZER_TONE_HZ);
-    EXPECT_EQ(arduino_mock::last_tone_duration_ms, 0UL);
+    EXPECT_EQ(arduino_mock::tone_calls, 0)
+        << "T-Deck uses an active GPIO buzzer; PWM/tone must stay disabled";
 
     loop_at(1079);  // 1 ms before the ON step ends
     EXPECT_EQ(pin(), HIGH);
 
     loop_at(1080);  // ON step elapsed — advance to terminal LOW
     EXPECT_EQ(pin(), LOW);
-    EXPECT_GE(arduino_mock::no_tone_calls, 1);
+    EXPECT_EQ(arduino_mock::no_tone_calls, 0);
 
     loop_at(1081);  // pattern finished — further loops are no-ops
     EXPECT_EQ(pin(), LOW);
@@ -151,26 +149,27 @@ TEST_F(BuzzerPlaybackTest, ShortBeepReturnsImmediatelyAndPlaysSequence) {
 TEST_F(BuzzerPlaybackTest, InitConfiguresBuzzerPinAsOutputAndIdleLow) {
     EXPECT_GT(arduino_mock::pin_mode_calls[PIN_BUZZER], 0);
     EXPECT_EQ(pin(), LOW);
-    EXPECT_GT(arduino_mock::no_tone_calls, 0);
+    EXPECT_EQ(arduino_mock::no_tone_calls, 0)
+        << "init must not call noTone before LEDC is attached";
 }
 
 TEST_F(BuzzerPlaybackTest, DoubleBeepPlaysOnGapOnSequence) {
     sigurdos::hal::buzzer_beep_double();
     EXPECT_EQ(arduino_mock::current_millis, 1000UL);
     EXPECT_EQ(pin(), HIGH);
-    EXPECT_EQ(arduino_mock::tone_calls, 1);
+    EXPECT_EQ(arduino_mock::tone_calls, 0);
 
     loop_at(1059);
     EXPECT_EQ(pin(), HIGH);
     loop_at(1060);  // first ON elapsed → gap
     EXPECT_EQ(pin(), LOW);
-    EXPECT_GE(arduino_mock::no_tone_calls, 1);
+    EXPECT_EQ(arduino_mock::no_tone_calls, 0);
 
     loop_at(1119);
     EXPECT_EQ(pin(), LOW);
     loop_at(1120);  // gap elapsed → second ON
     EXPECT_EQ(pin(), HIGH);
-    EXPECT_EQ(arduino_mock::tone_calls, 2);
+    EXPECT_EQ(arduino_mock::tone_calls, 0);
 
     loop_at(1180);  // second ON elapsed → terminal LOW
     EXPECT_EQ(pin(), LOW);
@@ -200,13 +199,13 @@ TEST_F(BuzzerPlaybackTest, NewBeepRestartsActivePattern) {
 TEST_F(BuzzerPlaybackTest, SelfTestUsesDoublePattern) {
     sigurdos::hal::buzzer_self_test();
     EXPECT_EQ(pin(), HIGH);
-    EXPECT_EQ(arduino_mock::tone_calls, 1);
+    EXPECT_EQ(arduino_mock::tone_calls, 0);
 
     loop_at(1060);
     EXPECT_EQ(pin(), LOW);
     loop_at(1120);
     EXPECT_EQ(pin(), HIGH);
-    EXPECT_EQ(arduino_mock::tone_calls, 2);
+    EXPECT_EQ(arduino_mock::tone_calls, 0);
 }
 
 } // namespace
