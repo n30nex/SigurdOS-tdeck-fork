@@ -32,7 +32,9 @@ namespace sigurdos::ui {
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MAX     = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_DEFAULT = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MIN     = 8;
-static constexpr uint16_t CHAT_SCREEN_RENDER_MAX          = 60;
+// Keep the visible tail small on T-Deck hardware. Each chat bubble is several
+// LVGL objects, so rendering too many at once can starve input or trip WDT.
+static constexpr uint16_t CHAT_SCREEN_RENDER_MAX          = 24;
 static constexpr int CHAT_EMOJI_PICKER_PAGE_SIZE = 16;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)

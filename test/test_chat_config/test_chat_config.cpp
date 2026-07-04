@@ -105,6 +105,10 @@ TEST(ChatConfig, MessageRenderTailKeepsRecentMessagesBounded) {
     EXPECT_EQ(chat_screen_visible_message_start(200, 0), 0);
 }
 
+TEST(ChatConfig, RenderTailStaysSmallForTDeckLvglBudget) {
+    EXPECT_LE(CHAT_SCREEN_RENDER_MAX, static_cast<uint16_t>(24));
+}
+
 TEST(ChatConfig, PublicMessageActionsOnlyApplyToIncomingPublicMessages) {
     EXPECT_TRUE(chat_screen_public_message_actions_available("Public", "Alice", false));
     EXPECT_FALSE(chat_screen_public_message_actions_available("Public", "Alice", true));

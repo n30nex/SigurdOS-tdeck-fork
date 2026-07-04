@@ -1038,6 +1038,8 @@ static lv_obj_t* make_chat_list_screen()
 // ════════════════════════════════════════════════════
 static void show_channel_list(lv_scr_load_anim_t anim)
 {
+    const bool from_messaging_view = msg_list && lv_obj_is_valid(msg_list);
+
     // Null messaging-view pointers — they're invalid once we leave
     scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
     ch_list = ch_back_btn = ch_add_btn = nullptr;
@@ -1087,7 +1089,11 @@ static void show_channel_list(lv_scr_load_anim_t anim)
         show_add_channel_options(scr);
     }, LV_EVENT_CLICKED, nullptr);
 
-    lv_scr_load_anim(s, anim, 200, 0, true);
+    if (from_messaging_view) {
+        lv_scr_load_anim(s, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    } else {
+        lv_scr_load_anim(s, anim, 200, 0, true);
+    }
 }
 
 // ════════════════════════════════════════════════════
@@ -2193,7 +2199,7 @@ static void open_channel_messaging(int idx)
         lv_group_focus_obj(input_field);
     }
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 static void refresh_chat_list_view(lv_obj_t* scr) {
