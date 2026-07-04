@@ -3105,7 +3105,7 @@ void chat_screen_open_room(const char* room_name)
     }
 }
 
-void chat_screen_add_msg(const char* channel, const char* sender, const char* text,
+bool chat_screen_add_msg(const char* channel, const char* sender, const char* text,
                          bool is_self, uint8_t txt_type)
 {
     uint32_t now = sigurdos::mesh::getCurrentTime();
@@ -3127,10 +3127,10 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
             dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
             dyn_count++;
         } else {
-            return;
+            return false;
         }
     }
-    if (idx >= MAX_CHANNELS) return;
+    if (idx >= MAX_CHANNELS) return false;
 
     append_channel_message(idx, sender, text, now, is_self, txt_type);
     chat_save_messages();
@@ -3142,10 +3142,10 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
         if (ch_list && lv_obj_is_valid(ch_list) && current_screen() == Screen::Chat) {
             refresh_chat_list_view(lv_scr_act());
         }
-        return;
+        return false;
     }
 
-    if (!in_current_filter) return;
+    if (!in_current_filter) return false;
 
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
@@ -3161,6 +3161,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
         lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
         if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
     }
+    return true;
 }
 
 // ════════════════════════════════════════════════════

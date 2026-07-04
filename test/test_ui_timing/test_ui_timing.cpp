@@ -75,4 +75,17 @@ TEST(UINotifications, ChannelMessagesUseDoubleBuzzPattern) {
     EXPECT_EQ(plan.buzz_pattern, sigurdos::hal::BuzzerPatternKind::Double);
 }
 
+TEST(UINotifications, VisibleIncomingMessageSuppressesGlobalFlashOnly) {
+    const auto plan = activity_notification_plan(true, false, true, true, true);
+    EXPECT_FALSE(plan.flash);
+    EXPECT_TRUE(plan.buzz);
+    EXPECT_EQ(plan.buzz_pattern, sigurdos::hal::BuzzerPatternKind::Double);
+}
+
+TEST(UINotifications, MixedVisibleAndOffscreenMessagesStillFlash) {
+    const auto plan = activity_notification_plan(true, false, true, true, false);
+    EXPECT_TRUE(plan.flash);
+    EXPECT_TRUE(plan.buzz);
+}
+
 } // anonymous namespace

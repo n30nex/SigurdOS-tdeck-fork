@@ -181,8 +181,9 @@ void chat_screen_open_room(const char* room_name);
 // Other values fall back to channels only.
 void chat_screen_set_filter(int mode);
 
-// Add a message to the chat display
-void chat_screen_add_msg(const char* channel, const char* sender, const char* text,
+// Add a message to the chat display. Returns true when the message was rendered
+// directly into the currently visible conversation.
+bool chat_screen_add_msg(const char* channel, const char* sender, const char* text,
                          bool is_self, uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN);
 
 // Handle trackball events for the chat screen. Returns true if consumed.

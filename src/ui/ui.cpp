@@ -241,22 +241,31 @@ void loop()
             int n = sigurdos::mesh::pollMessages(msgs, 4);
             bool incoming_msg = false;
             bool incoming_channel_msg = false;
+            int incoming_count = 0;
+            int incoming_visible_count = 0;
             for (int i = 0; i < n; i++) {
-                chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text,
-                                    msgs[i].is_self, msgs[i].txt_type);
+                const bool rendered_visible =
+                    chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text,
+                                        msgs[i].is_self, msgs[i].txt_type);
                 if (!msgs[i].is_self) {
                     incoming_msg = true;
+                    incoming_count++;
+                    if (rendered_visible) incoming_visible_count++;
                     if (msgs[i].channel[0]) incoming_channel_msg = true;
                 }
             }
             static uint32_t last_activity_seq = 0;
             const uint32_t activity_seq = sigurdos::mesh::getMeshActivitySeq();
             const bool got_new_activity = (activity_seq != last_activity_seq);
+            const bool all_incoming_visible =
+                incoming_count > 0 && incoming_visible_count == incoming_count;
             const auto notification = activity_notification_plan(
                 got_new_activity, sigurdos::prefs_get().buzzer_quiet,
-                incoming_msg, incoming_channel_msg);
-            if (notification.flash) {
+                incoming_msg, incoming_channel_msg, all_incoming_visible);
+            if (got_new_activity) {
                 last_activity_seq = activity_seq;
+            }
+            if (notification.flash) {
                 show_activity_flash();
                 home_screen_update_badges();
             }
