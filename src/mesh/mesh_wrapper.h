@@ -183,6 +183,7 @@ inline size_t roomMessagePrefixBytes(const char* channel_name)
     const char* ch = channel_name;
     while (*ch == '#') ++ch;
     if (!*ch) return 0;
+    if (std::strcmp(ch, PUBLIC_CHANNEL_NAME) == 0) return 0;
     return 2u + std::strlen(ch);  // '#' + channel + ' '
 }
 
@@ -350,10 +351,13 @@ inline bool formatRoomMessageText(const char* channel_name, const char* text,
     while (*ch == '#') ++ch;
     if (!*ch) return false;
     const size_t prefix_len = roomMessagePrefixBytes(channel_name);
-    if (prefix_len == 0 || prefix_len >= ROOM_SERVER_MAX_POST_TEXT_BYTES) return false;
+    const bool public_room = std::strcmp(ch, PUBLIC_CHANNEL_NAME) == 0;
+    if (!public_room && (prefix_len == 0 || prefix_len >= ROOM_SERVER_MAX_POST_TEXT_BYTES)) return false;
     const size_t max_body = ROOM_SERVER_MAX_POST_TEXT_BYTES - prefix_len;
     if (std::strlen(text) > max_body) return false;
-    int n = std::snprintf(out, out_sz, "#%s %s", ch, text);
+    int n = public_room
+        ? std::snprintf(out, out_sz, "%s", text)
+        : std::snprintf(out, out_sz, "#%s %s", ch, text);
     if (n <= 0) {
         out[0] = '\0';
         return false;
@@ -365,6 +369,11 @@ inline bool formatRoomMessageText(const char* channel_name, const char* text,
 
 inline size_t roomMessageMaxBodyBytes(const char* channel_name)
 {
+    if (channel_name) {
+        const char* ch = channel_name;
+        while (*ch == '#') ++ch;
+        if (std::strcmp(ch, PUBLIC_CHANNEL_NAME) == 0) return ROOM_SERVER_MAX_POST_TEXT_BYTES;
+    }
     const size_t prefix_len = roomMessagePrefixBytes(channel_name);
     if (prefix_len == 0 || prefix_len >= ROOM_SERVER_MAX_POST_TEXT_BYTES) return 0;
     return ROOM_SERVER_MAX_POST_TEXT_BYTES - prefix_len;

@@ -160,15 +160,19 @@ TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_FALSE(sigurdos::mesh::loginPasswordInputSubmittable(nullptr));
 }
 
-TEST(MeshContractTest, RoomMessageFormattingUsesSingleChannelPrefix) {
+TEST(MeshContractTest, RoomMessageFormattingUsesPlainPublicPost) {
     char out[64];
     EXPECT_TRUE(sigurdos::mesh::formatRoomMessageText("Public", "hello",
                                                       out, sizeof(out)));
-    EXPECT_STREQ(out, "#Public hello");
+    EXPECT_STREQ(out, "hello");
 
     EXPECT_TRUE(sigurdos::mesh::formatRoomMessageText("#Public", "hello",
                                                       out, sizeof(out)));
-    EXPECT_STREQ(out, "#Public hello");
+    EXPECT_STREQ(out, "hello");
+
+    EXPECT_TRUE(sigurdos::mesh::formatRoomMessageText("#general", "hello",
+                                                      out, sizeof(out)));
+    EXPECT_STREQ(out, "#general hello");
 
     EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("#", "hello",
                                                        out, sizeof(out)));
@@ -190,20 +194,20 @@ TEST(MeshContractTest, ChannelSendWrappersRejectNullInputs) {
 
 TEST(MeshContractTest, RoomMessageFormattingHonorsRoomServerPostLimit) {
     EXPECT_EQ(sigurdos::mesh::ROOM_SERVER_MAX_POST_TEXT_BYTES, 151u);
-    EXPECT_EQ(sigurdos::mesh::roomMessagePrefixBytes("Public"), 8u);
-    EXPECT_EQ(sigurdos::mesh::roomMessageMaxBodyBytes("Public"), 143u);
+    EXPECT_EQ(sigurdos::mesh::roomMessagePrefixBytes("Public"), 0u);
+    EXPECT_EQ(sigurdos::mesh::roomMessageMaxBodyBytes("Public"), 151u);
 
-    char body[145];
-    std::memset(body, 'a', 143);
-    body[143] = '\0';
+    char body[153];
+    std::memset(body, 'a', 151);
+    body[151] = '\0';
 
     char out[160];
     EXPECT_TRUE(sigurdos::mesh::formatRoomMessageText("Public", body,
                                                       out, sizeof(out)));
     EXPECT_EQ(std::strlen(out), sigurdos::mesh::ROOM_SERVER_MAX_POST_TEXT_BYTES);
 
-    body[143] = 'b';
-    body[144] = '\0';
+    body[151] = 'b';
+    body[152] = '\0';
     EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("Public", body,
                                                        out, sizeof(out)));
 

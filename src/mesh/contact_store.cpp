@@ -117,11 +117,14 @@ void writeContactRecord(const StoredContact& contact, uint8_t* rec, size_t len)
 
     rec[pos++] = contact.type;
     rec[pos++] = contact.perm;
+
+    std::memcpy(rec + pos, &contact.sync_since, 4);
+    pos += 4;
 }
 
 bool readContactRecord(StoredContact& contact, const uint8_t* rec, size_t len)
 {
-    if (!rec || len < CONTACT_STORE_RECORD_SIZE) return false;
+    if (!rec || len < CONTACT_STORE_RECORD_SIZE_V1) return false;
 
     size_t pos = 0;
     std::memset(&contact, 0, sizeof(contact));
@@ -134,6 +137,9 @@ bool readContactRecord(StoredContact& contact, const uint8_t* rec, size_t len)
 
     contact.type = rec[pos++];
     contact.perm = rec[pos++];
+    if (len >= CONTACT_STORE_RECORD_SIZE) {
+        std::memcpy(&contact.sync_since, rec + pos, 4);
+    }
     return true;
 }
 
@@ -209,6 +215,7 @@ int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
 #endif
 
     int count = 0;
+    size_t record_size = detail::CONTACT_STORE_RECORD_SIZE_V1;
     if (ok && std::memcmp(head, detail::CONTACT_STORE_MAGIC, sizeof(head)) == 0) {
         // Versioned format: magic + version + count + records.
         uint8_t version = 0;
@@ -221,6 +228,11 @@ int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
         ok = ok && version <= detail::CONTACT_STORE_VERSION;
         ok = ok && std::fread(&count, 1, sizeof(count), f) == sizeof(count);
 #endif
+        if (ok) {
+            record_size = (version >= 2)
+                ? detail::CONTACT_STORE_RECORD_SIZE
+                : detail::CONTACT_STORE_RECORD_SIZE_V1;
+        }
         if (ok && count > MAX_CONTACTS) count = MAX_CONTACTS;
     } else if (ok) {
         // Legacy format: bare count + records. A legacy count can never
@@ -241,13 +253,14 @@ int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
     int loaded = 0;
     uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
     for (int i = 0; i < count; i++) {
+        std::memset(rec, 0, sizeof(rec));
 #if defined(ESP32_PLATFORM)
-        if (f.read(rec, sizeof(rec)) != sizeof(rec)) break;
+        if (f.read(rec, record_size) != record_size) break;
 #else
-        if (std::fread(rec, 1, sizeof(rec), f) != sizeof(rec)) break;
+        if (std::fread(rec, 1, record_size, f) != record_size) break;
 #endif
         StoredContact contact{};
-        if (!detail::readContactRecord(contact, rec, sizeof(rec))) break;
+        if (!detail::readContactRecord(contact, rec, record_size)) break;
         if (!write(contact, ctx)) break;
         loaded++;
     }

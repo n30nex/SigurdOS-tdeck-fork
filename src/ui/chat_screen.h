@@ -129,6 +129,9 @@ void chat_screen_show();
 // Open a direct message conversation with a contact (creates if needed)
 void chat_screen_open_dm(const char* contact_name);
 
+// Open a channel conversation directly (creates the Public channel if needed)
+void chat_screen_open_channel(const char* channel_name);
+
 // Set which conversations to show: 0=all, 1=channels only, 2=DMs only
 void chat_screen_set_filter(int mode);
 

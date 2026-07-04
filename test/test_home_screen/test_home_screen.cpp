@@ -61,15 +61,15 @@ struct IconDef {
 // MUST match home_screen.cpp exactly (same order, same targets)
 static const IconDef icons[] = {
     {"CHATS",     "\x0e",  true,  Screen::Chat},
-    {"CONTACTS",  "\x0f",  false, Screen::Contacts},
-    {"REPEATERS", "\x15",  false, Screen::Repeaters},
-    {"FINDER",    "\x12",  false, Screen::Network},
-    {"PACKETS",   "\x0b",  false, Screen::Heard},
-    {"MAP",       "\x13",  false, Screen::Map},
+    {"DMs",       "\x0f",  false, Screen::Chat},
+    {"ROOMS",     "\x10",  false, Screen::Contacts},
+    {"CONTACTS",  "\x11",  true,  Screen::Contacts},
+    {"REPEATERS", "\x15",  true,  Screen::Repeaters},
     {"ADVERTISE", "\x07",  false, Screen::Advertise},
-    {"SETTINGS",  "\x16",  false, Screen::Settings},
-    {"TRACE",     "\x17",  false, Screen::Trace},
+    {"MAP",       "\x13",  false, Screen::Map},
     {"TERMINAL",  "\x0c",  false, Screen::Terminal},
+    {"PACKETS",   "\x0b",  false, Screen::Heard},
+    {"SETTINGS",  "\x16",  false, Screen::Settings},
     {"SETUP",     "\x16",  false, Screen::Onboarding},
     {"SIGNAL",    "\x19",  false, Screen::Signal},
 };
@@ -78,9 +78,9 @@ static constexpr int ICON_COUNT = sizeof(icons) / sizeof(icons[0]);
 
 // ── Tests ────────────────────────────────────────────────
 
-TEST(HomeScreenIconTest, AllTilesHaveUniqueTargets) {
-    // Each tile should navigate to a distinct screen.
-    // After fix: only PACKETS points to Heard (1 tile), no duplicates.
+TEST(HomeScreenIconTest, OnlyPacketsTargetsHeard) {
+    // CHATS/DMs and ROOMS/CONTACTS intentionally share targets with different
+    // filters; Heard should remain exclusive to the PACKETS tile.
     int heard_count = 0;
     for (int i = 0; i < ICON_COUNT; i++) {
         if (icons[i].target == Screen::Heard)
@@ -93,29 +93,25 @@ TEST(HomeScreenIconTest, AllTilesHaveUniqueTargets) {
 
 TEST(HomeScreenIconTest, RepeatersTargetsRepeaters) {
     // REPEATERS now goes to Screen::Repeaters (dedicated repeaters-only view)
-    EXPECT_EQ(icons[2].target, Screen::Repeaters)
+    EXPECT_EQ(icons[4].target, Screen::Repeaters)
         << "REPEATERS should target Repeaters screen (repeaters only)";
 }
 
-TEST(HomeScreenIconTest, RepeatersAndFinderAreDifferent) {
-    // REPEATERS and FINDER should go to different screens
-    EXPECT_NE(icons[2].target, icons[3].target)
-        << "REPEATERS and FINDER should go to different screens";
+TEST(HomeScreenIconTest, ChatsAndDmsBothOpenChatWithDifferentFilters) {
+    EXPECT_EQ(icons[0].target, Screen::Chat);
+    EXPECT_EQ(icons[1].target, Screen::Chat);
+    EXPECT_STREQ(icons[0].label, "CHATS");
+    EXPECT_STREQ(icons[1].label, "DMs");
 }
 
 TEST(HomeScreenIconTest, PacketsTargetsHeard) {
     // PACKETS should stay on Heard (raw packets log)
-    EXPECT_EQ(icons[4].target, Screen::Heard);
-}
-
-TEST(HomeScreenIconTest, FinderTargetsNetwork) {
-    // FINDER correctly shows the Network screen (nearby nodes)
-    EXPECT_EQ(icons[3].target, Screen::Network);
+    EXPECT_EQ(icons[8].target, Screen::Heard);
 }
 
 TEST(HomeScreenIconTest, RepeatersAndPacketsAreDifferent) {
     // FIXED: REPEATERS (Network) and PACKETS (Heard) now go to different screens
-    EXPECT_NE(icons[2].target, icons[4].target)
+    EXPECT_NE(icons[4].target, icons[8].target)
         << "REPEATERS and PACKETS should go to different screens";
 }
 
@@ -128,27 +124,27 @@ TEST(HomeScreenIconTest, ChatsTargetsChat) {
 }
 
 TEST(HomeScreenIconTest, ContactsTargetsContacts) {
-    EXPECT_EQ(icons[1].target, Screen::Contacts);
+    EXPECT_EQ(icons[3].target, Screen::Contacts);
 }
 
 TEST(HomeScreenIconTest, MapTargetsMap) {
-    EXPECT_EQ(icons[5].target, Screen::Map);
+    EXPECT_EQ(icons[6].target, Screen::Map);
 }
 
 TEST(HomeScreenIconTest, AdvertiseTargetsAdvertise) {
-    EXPECT_EQ(icons[6].target, Screen::Advertise);
+    EXPECT_EQ(icons[5].target, Screen::Advertise);
 }
 
 TEST(HomeScreenIconTest, SettingsTargetsSettings) {
-    EXPECT_EQ(icons[7].target, Screen::Settings);
+    EXPECT_EQ(icons[9].target, Screen::Settings);
 }
 
-TEST(HomeScreenIconTest, TraceTargetsTrace) {
-    EXPECT_EQ(icons[8].target, Screen::Trace);
+TEST(HomeScreenIconTest, RoomsTargetsContacts) {
+    EXPECT_EQ(icons[2].target, Screen::Contacts);
 }
 
 TEST(HomeScreenIconTest, TerminalTargetsTerminal) {
-    EXPECT_EQ(icons[9].target, Screen::Terminal);
+    EXPECT_EQ(icons[7].target, Screen::Terminal);
 }
 
 TEST(HomeScreenIconTest, SetupTargetsOnboarding) {

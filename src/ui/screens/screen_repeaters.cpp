@@ -885,6 +885,19 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         sec_header("  Live Requests");
         add_query(LV_SYMBOL_SETTINGS "  Request Status", RepeaterManagementRequest::Status);
         add_query(LV_SYMBOL_WIFI "  Request Telemetry", RepeaterManagementRequest::Telemetry);
+        if (target->type == ADV_TYPE_ROOM) {
+            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_ENVELOPE "  Open Public Chat", ">");
+            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_t* vl = lv_obj_get_child(r, 1);
+            if (vl && lv_obj_check_type(vl, &lv_label_class))
+                lv_obj_set_style_text_color(vl, lv_color_hex(ACCENT), 0);
+            lv_obj_add_event_cb(r, [](lv_event_t*) {
+                chat_screen_open_channel("Public");
+            }, LV_EVENT_CLICKED, nullptr);
+            row++;
+        }
 
         // Determine if the user has admin permission
         // Server permission encoding: 1 = Admin, 0 = Read-Write, 2 = Guest
@@ -893,16 +906,15 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // ── Section: Radio Settings ──────────────────────
         if (is_admin) {
         sec_header("  Radio Settings");
-        add_set(LV_SYMBOL_WIFI "  Freq (MHz)",  "Set Freq",       "e.g. 868.0",       "set freq ",  false);
-        add_set(LV_SYMBOL_WIFI "  Bandwidth",   "Set Bandwidth",  "e.g. 125.0",       "set bw ",    false);
-        add_set(LV_SYMBOL_WIFI "  Spreading Factor", "Set SF",    "Range 5-12",       "set sf ",    false);
-        add_set(LV_SYMBOL_WIFI "  Coding Rate",  "Set CR",        "Range 5-8",        "set cr ",    false);
+        add_set(LV_SYMBOL_WIFI "  Radio Params", "Set Radio",     "freq bw sf cr",    "set radio ", false);
+        add_set(LV_SYMBOL_WIFI "  Temporary Radio", "Temp Radio",  "freq bw sf cr mins", "tempradio ", false);
         }
 
         // ── Section: Management ──────────────────────────
         if (is_admin) {
         sec_header("  Management");
-        add_set(LV_SYMBOL_REFRESH "  Advert Duration", "Advert Duration", "Hours (24/72/168)", "set advert.duration ", false);
+        add_set(LV_SYMBOL_REFRESH "  Local Advert", "Local Advert", "Minutes 60-240 or 0", "set advert.interval ", false);
+        add_set(LV_SYMBOL_REFRESH "  Flood Advert", "Flood Advert", "Hours 3-168 or 0", "set flood.advert.interval ", false);
         add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
         add_set(LV_SYMBOL_CLOSE "  Admin Password",   "Admin Password",   "New admin password", "password ",  true);
         add_set(LV_SYMBOL_CLOSE "  Guest Password",   "Guest Password",   "New guest password", "set guest.password ", false);

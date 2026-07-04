@@ -564,33 +564,40 @@ namespace mesh {
         if (contact.type == ADV_TYPE_ROOM) {
             char channel[32];
             const char* body = nullptr;
-            if (sigurdos::mesh::parseRoomMessageText(text, channel, sizeof(channel), &body)) {
-                const char* sender_name = contact.name;
-                char fallback[20];
-                uint8_t companion_prefix[sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN] = {};
-                const uint8_t* prefix_for_store = contact.id.pub_key;
-
-                if (sender_prefix) {
-                    memcpy(companion_prefix, sender_prefix, 4);
-                    prefix_for_store = companion_prefix;
-                    ::ContactInfo* author = lookupContactByPubKey(sender_prefix, 4);
-                    if (author && author->name[0]) {
-                        sender_name = author->name;
-                        prefix_for_store = author->id.pub_key;
-                    } else {
-                        snprintf(fallback, sizeof(fallback), "room_%02x%02x",
-                                 sender_prefix[0], sender_prefix[1]);
-                        sender_name = fallback;
-                    }
-                }
-
-                sigurdos::mesh::mesh_v2_queue_push(sender_name, channel, body, rssi, snr,
-                                                   sender_timestamp, companion_path_len,
-                                                   prefix_for_store,
-                                                   2,              // COMPANION_TXT_SIGNED_PLAIN
-                                                   sender_prefix, sender_prefix ? 4 : 0);
-                return;
+            if (!sigurdos::mesh::parseRoomMessageText(text, channel, sizeof(channel), &body)) {
+                strncpy(channel, sigurdos::mesh::PUBLIC_CHANNEL_NAME, sizeof(channel) - 1);
+                channel[sizeof(channel) - 1] = '\0';
+                body = text;
             }
+
+            const char* sender_name = contact.name;
+            char fallback[20];
+            uint8_t companion_prefix[sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN] = {};
+            const uint8_t* prefix_for_store = contact.id.pub_key;
+
+            if (sender_prefix) {
+                memcpy(companion_prefix, sender_prefix, 4);
+                prefix_for_store = companion_prefix;
+                ::ContactInfo* author = lookupContactByPubKey(sender_prefix, 4);
+                if (author && author->name[0]) {
+                    sender_name = author->name;
+                    prefix_for_store = author->id.pub_key;
+                } else {
+                    snprintf(fallback, sizeof(fallback), "room_%02x%02x",
+                             sender_prefix[0], sender_prefix[1]);
+                    sender_name = fallback;
+                }
+            }
+
+            sigurdos::mesh::mesh_v2_queue_push(sender_name, channel, body ? body : "", rssi, snr,
+                                               sender_timestamp, companion_path_len,
+                                               prefix_for_store,
+                                               2,              // COMPANION_TXT_SIGNED_PLAIN
+                                               sender_prefix, sender_prefix ? 4 : 0);
+            // BaseChatMesh has advanced ContactInfo::sync_since before this
+            // callback; persist it so room history resumes after reboot.
+            sigurdos::mesh::saveContacts();
+            return;
         }
         uint8_t signed_prefix[sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN] = {};
         const uint8_t* signed_prefix_for_store = contact.id.pub_key;

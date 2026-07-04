@@ -1624,6 +1624,7 @@ static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, voi
     memcpy(out->name, c->name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
     out->type = c->type;
     out->perm = (c->flags >> 1) & 0x03;
+    out->sync_since = c->sync_since;
     return true;
 }
 
@@ -1636,6 +1637,7 @@ static bool writeStoredContact(const sigurdos::mesh::StoredContact& stored, void
     memcpy(c.name, stored.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
     c.type = stored.type;
     c.flags = (c.flags & 0x01) | ((stored.perm & 0x03) << 1);
+    c.sync_since = stored.sync_since;
     c.name[31] = '\0';
     c.out_path_len = OUT_PATH_UNKNOWN;
     c.shared_secret_valid = false;

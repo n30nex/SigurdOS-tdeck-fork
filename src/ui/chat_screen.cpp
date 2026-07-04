@@ -156,6 +156,13 @@ static bool g_channel_transition_pending = false;
 // 0 = show all, 1 = channels only, 2 = DMs only
 static int   chat_filter_mode = 0;
 
+static bool chat_conversation_visible_for_current_filter(const char* conversation)
+{
+    return chat_screen_filter_accepts_channel(chat_filter_mode, conversation);
+}
+
+static void chat_load_companion_messages();
+
 // ── Per-channel metadata ───────────────────────────────────
 struct ChannelMeta {
     char     preview[64];
@@ -511,6 +518,11 @@ static void refresh_channels()
             old_msgs[i] = nullptr;
         }
     }
+
+    // Pull immediately persisted messages into the currently visible filter.
+    // This keeps the DMs tile and channel rows in sync with live RX even when
+    // the message arrived while a different filtered chat list was open.
+    chat_load_companion_messages();
 
     // ── Update active_channel by name, not by index ──────
     active_channel = 0;
@@ -1006,6 +1018,7 @@ static void chat_load_companion_messages()
     int n = sigurdos::mesh::messageStoreLoadRecent(nullptr, recent, kRecentCap);
     for (int i = 0; i < n; i++) {
         const sigurdos::mesh::StoredMessage& msg = recent[i];
+        if (!chat_conversation_visible_for_current_filter(msg.conversation)) continue;
         int idx = ensure_loaded_conversation(msg.conversation);
         if (idx < 0 || idx >= MAX_CHANNELS) continue;
 
@@ -2074,6 +2087,7 @@ static void do_send()
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
     }
     append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts, true);
+    chat_save_messages();
     mark_channel_used(sent_channel);
     render_active_messages();
     lv_textarea_set_text(input_field, "");
@@ -2878,6 +2892,8 @@ void chat_screen_open_dm(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) return;
 
+    chat_screen_set_filter(2);
+
     // Signal chat_screen_show() to skip the channel-list screen
     // so we go directly to the messaging view without a wasteful
     // intermediate lv_scr_load_anim that causes a crash when
@@ -2903,6 +2919,33 @@ void chat_screen_open_dm(const char* contact_name)
     }
 }
 
+void chat_screen_open_channel(const char* channel_name)
+{
+    if (!channel_name || !channel_name[0]) return;
+
+    chat_screen_set_filter(1);
+    if (sigurdos::mesh::isPublicChannelName(channel_name)) {
+        sigurdos::mesh::joinPublicChannel();
+    }
+
+    g_skip_channel_list = true;
+    navigate_to(Screen::Chat);
+    refresh_channels();
+
+    int idx = find_channel_idx(channel_name);
+    if (idx < 0 && dyn_count < MAX_CHANNELS &&
+        chat_conversation_visible_for_current_filter(channel_name)) {
+        idx = dyn_count;
+        strncpy(dyn_channels[idx], channel_name, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
+        dyn_count++;
+    }
+
+    if (idx >= 0 && idx < MAX_CHANNELS) {
+        request_open_channel_messaging(idx);
+    }
+}
+
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
 {
     uint32_t now = sigurdos::mesh::getCurrentTime();
@@ -2916,6 +2959,9 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     int idx = find_channel_idx(channel);
     if (idx < 0) {
+        if (!chat_conversation_visible_for_current_filter(channel)) {
+            return;
+        }
         if (dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
             strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
@@ -2928,6 +2974,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     if (idx >= MAX_CHANNELS) return;
 
     append_channel_message(idx, sender, text, now, is_self);
+    chat_save_messages();
 
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
