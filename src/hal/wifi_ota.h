@@ -8,6 +8,7 @@
 #pragma once
 #include <cstdint>
 #include <cstdlib>
+#include "prefs.h"
 
 namespace sigurdos {
 namespace ota {
@@ -94,6 +95,24 @@ enum class Status {
     Connected,
     Failed
 };
+
+static constexpr uint32_t AUTO_RECONNECT_INTERVAL_MS = 30000UL;
+
+inline bool hasSavedCredentials(const NodePrefs& prefs) {
+    return prefs.wifi_ssid[0] != '\0';
+}
+
+inline bool shouldStartSavedCredentialConnect(const NodePrefs& prefs,
+                                              Status status,
+                                              bool connected) {
+    return hasSavedCredentials(prefs) &&
+           !connected &&
+           status != Status::Connecting;
+}
+
+inline bool reconnectBackoffElapsed(uint32_t now_ms, uint32_t last_attempt_ms) {
+    return (uint32_t)(now_ms - last_attempt_ms) >= AUTO_RECONNECT_INTERVAL_MS;
+}
 
 // Start connecting to an access point. Returns immediately.
 // Poll with getStatus() to check progress.

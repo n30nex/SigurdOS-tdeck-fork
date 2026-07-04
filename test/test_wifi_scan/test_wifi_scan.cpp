@@ -94,4 +94,52 @@ TEST(WifiScanTest, SortByRssiHandlesNullAndTrivialInputs) {
     EXPECT_EQ(ap.rssi, -50);
 }
 
+TEST(WifiStaAutoJoinTest, SavedCredentialsRequireSsid) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+
+    EXPECT_FALSE(sigurdos::wifi_sta::hasSavedCredentials(prefs));
+
+    std::strncpy(prefs.wifi_password, "secret", sizeof(prefs.wifi_password) - 1);
+    EXPECT_FALSE(sigurdos::wifi_sta::hasSavedCredentials(prefs));
+
+    std::strncpy(prefs.wifi_ssid, "Workshop", sizeof(prefs.wifi_ssid) - 1);
+    EXPECT_TRUE(sigurdos::wifi_sta::hasSavedCredentials(prefs));
+}
+
+TEST(WifiStaAutoJoinTest, AutoJoinStartsOnlyWhenIdleOrFailed) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    std::strncpy(prefs.wifi_ssid, "Workshop", sizeof(prefs.wifi_ssid) - 1);
+
+    EXPECT_TRUE(sigurdos::wifi_sta::shouldStartSavedCredentialConnect(
+        prefs, sigurdos::wifi_sta::Status::Idle, false));
+    EXPECT_TRUE(sigurdos::wifi_sta::shouldStartSavedCredentialConnect(
+        prefs, sigurdos::wifi_sta::Status::Failed, false));
+    EXPECT_FALSE(sigurdos::wifi_sta::shouldStartSavedCredentialConnect(
+        prefs, sigurdos::wifi_sta::Status::Connecting, false));
+    EXPECT_FALSE(sigurdos::wifi_sta::shouldStartSavedCredentialConnect(
+        prefs, sigurdos::wifi_sta::Status::Connected, true));
+}
+
+TEST(WifiStaAutoJoinTest, AutoJoinDoesNotStartWithoutSavedSsid) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+
+    EXPECT_FALSE(sigurdos::wifi_sta::shouldStartSavedCredentialConnect(
+        prefs, sigurdos::wifi_sta::Status::Idle, false));
+    EXPECT_FALSE(sigurdos::wifi_sta::shouldStartSavedCredentialConnect(
+        prefs, sigurdos::wifi_sta::Status::Failed, false));
+}
+
+TEST(WifiStaAutoJoinTest, ReconnectBackoffUsesThirtySecondWindow) {
+    EXPECT_FALSE(sigurdos::wifi_sta::reconnectBackoffElapsed(29999, 0));
+    EXPECT_TRUE(sigurdos::wifi_sta::reconnectBackoffElapsed(30000, 0));
+    EXPECT_TRUE(sigurdos::wifi_sta::reconnectBackoffElapsed(30001, 0));
+
+    EXPECT_FALSE(sigurdos::wifi_sta::reconnectBackoffElapsed(1000, 0));
+    EXPECT_TRUE(sigurdos::wifi_sta::reconnectBackoffElapsed(
+        1000, 1000 - sigurdos::wifi_sta::AUTO_RECONNECT_INTERVAL_MS));
+}
+
 } // namespace

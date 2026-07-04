@@ -215,7 +215,7 @@ void setup()
     // Auto-connect WiFi if credentials are saved
     {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        if (p.wifi_ssid[0]) {
+        if (sigurdos::wifi_sta::hasSavedCredentials(p)) {
             sigurdos::wifi_sta::beginConnect(p.wifi_ssid, p.wifi_password);
         }
     }

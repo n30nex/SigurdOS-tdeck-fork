@@ -366,19 +366,15 @@ void loop() {
     }
 
     // ── Auto-reconnect ──────────────────────────────────────
-    // If we have saved credentials and aren't connected/connecting,
-    // periodically attempt to reconnect (every 30 seconds).
-    if (!s_connected && s_status != Status::Connecting) {
-        static unsigned long last_reconnect = 0;
-        if (millis() - last_reconnect > 30000) {
-            last_reconnect = millis();
-            const NodePrefs& p = sigurdos::prefs_get();
-            if (p.wifi_ssid[0]) {
-                SIG_LOGD("[wifi-sta] auto-reconnecting to %s...",
-                         p.wifi_ssid);
-                beginConnect(p.wifi_ssid, p.wifi_password);
-            }
-        }
+    // If saved credentials exist and WiFi is idle/failed, retry with a
+    // non-blocking backoff so boot and UI responsiveness are unaffected.
+    static uint32_t last_reconnect = 0;
+    const NodePrefs& p = sigurdos::prefs_get();
+    if (shouldStartSavedCredentialConnect(p, s_status, s_connected) &&
+        reconnectBackoffElapsed((uint32_t)millis(), last_reconnect)) {
+        last_reconnect = (uint32_t)millis();
+        SIG_LOGD("[wifi-sta] auto-reconnecting to %s...", p.wifi_ssid);
+        beginConnect(p.wifi_ssid, p.wifi_password);
     }
 }
 
