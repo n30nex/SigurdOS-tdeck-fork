@@ -21,6 +21,7 @@
 #include "channel_menu.h"
 #include "navigation.h"
 #include "screens.h"
+#include "screens_common.h"
 #include "theme.h"
 #include "responsive.h"
 #include "../hal/tdeck_pins.h"
