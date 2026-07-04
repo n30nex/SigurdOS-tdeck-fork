@@ -26,6 +26,11 @@ sigurdos::mesh::StoredMessage makeMsg(const char* conversation,
     return msg;
 }
 
+void setPrefix(sigurdos::mesh::StoredMessage& msg, uint8_t base)
+{
+    for (int i = 0; i < 6; i++) msg.sender_prefix[i] = (uint8_t)(base + i);
+}
+
 void writeRawStoreWithIds(const char* path, const uint32_t* ids, int count)
 {
     FILE* f = std::fopen(path, "wb");
@@ -110,6 +115,50 @@ TEST_F(MessageStoreTest, AppendLoadAndDedup) {
     EXPECT_STREQ(out[0].text, "hello");
     EXPECT_EQ(out[0].timestamp, 42u);
     EXPECT_FALSE(out[0].is_self);
+}
+
+TEST_F(MessageStoreTest, DedupeUsesSenderPrefixForSameNameContacts) {
+    auto first = makeMsg("Public", "Alex", "Alex: one", 100, false, true);
+    auto second = makeMsg("Public", "Alex", "Alex: two", 100, false, true);
+    setPrefix(first, 0xA0);
+    setPrefix(second, 0xB0);
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(first));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(second));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+}
+
+TEST_F(MessageStoreTest, DedupeSurvivesSenderRenameWhenPrefixMatches) {
+    auto first = makeMsg("DM: Alice", "Alice", "hello", 101, false, false);
+    auto renamed = makeMsg("DM: Alice", "Alice New", "hello again", 101, false, false);
+    setPrefix(first, 0xC0);
+    setPrefix(renamed, 0xC0);
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(first));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(renamed));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+}
+
+TEST_F(MessageStoreTest, RepeatedPacketDeliveryDedupesByPrefixAndTimestamp) {
+    auto first = makeMsg("Public", "Bob", "Bob: replay", 102, false, true);
+    auto replay = makeMsg("Public", "Bob", "Bob: replay", 102, false, true);
+    setPrefix(first, 0xD0);
+    setPrefix(replay, 0xD0);
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(first));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(replay));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+}
+
+TEST_F(MessageStoreTest, DedupeFallsBackToSenderNameWhenNoPrefixExists) {
+    auto first = makeMsg("DM: Legacy", "Legacy", "hello", 103, false, false);
+    auto replay = makeMsg("DM: Legacy", "Legacy", "hello", 103, false, false);
+    std::memset(first.sender_prefix, 0, sizeof(first.sender_prefix));
+    std::memset(replay.sender_prefix, 0, sizeof(replay.sender_prefix));
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(first));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(replay));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
 }
 
 TEST_F(MessageStoreTest, PathLenRoundTrips) {

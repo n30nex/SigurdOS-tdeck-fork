@@ -461,10 +461,29 @@ static bool trimStoreToRecent(uint32_t max_records)
 
 namespace detail {
 
+static bool storedMessageHasSenderPrefix(const StoredMessage& msg)
+{
+    for (size_t i = 0; i < SIGURDOS_MSG_PREFIX_LEN; i++) {
+        if (msg.sender_prefix[i] != 0) return true;
+    }
+    return false;
+}
+
 bool storedMessageSameIdentity(const StoredMessage& a, const StoredMessage& b)
 {
+    const bool a_has_prefix = storedMessageHasSenderPrefix(a);
+    const bool b_has_prefix = storedMessageHasSenderPrefix(b);
+    bool same_sender = false;
+    if (a_has_prefix || b_has_prefix) {
+        same_sender = a_has_prefix && b_has_prefix &&
+                      std::memcmp(a.sender_prefix, b.sender_prefix,
+                                  SIGURDOS_MSG_PREFIX_LEN) == 0;
+    } else {
+        same_sender = std::strncmp(a.sender, b.sender, SIGURDOS_MSG_SENDER_LEN) == 0;
+    }
+
     return std::strncmp(a.conversation, b.conversation, SIGURDOS_MSG_CONVERSATION_LEN) == 0 &&
-           std::strncmp(a.sender, b.sender, SIGURDOS_MSG_SENDER_LEN) == 0 &&
+           same_sender &&
            a.timestamp == b.timestamp &&
            a.is_self == b.is_self &&
            a.is_channel == b.is_channel;
