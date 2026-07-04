@@ -35,7 +35,7 @@ The Terminal screen serves as a developer-facing diagnostic and control interfac
 - Sign diagnostic payloads with the node identity
 - Back up / restore the node private key (`exportkey`, `importkey`)
 - Import `meshcore://` contact/channel URIs
-- Send anonymous messages, room-server fetch requests, and raw group-data test payloads
+- Send anonymous messages and raw group-data test payloads
 - Manage small custom variables in SPIFFS (`getvar`, `setvar`, `delvar`, `listvars`)
 - Browse the full emoji character set available on the device
 - Obtain a command reference without external documentation
@@ -137,7 +137,7 @@ help
 **Example Output**:
 ```
 > help
-Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list exportkey importkey import getvar setvar delvar listvars
+Commands: help status advert ping tileurl sign anon groupdata emoji-list exportkey importkey import getvar setvar delvar listvars
 ```
 
 **Notes**:
@@ -154,9 +154,9 @@ Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list expor
 | `status` | `status` | Show last RSSI/SNR/noise plus contact/channel counts. |
 | `advert` | `advert` | Broadcast this node's advert. |
 | `ping` | `ping` | Local uptime check. |
+| `tileurl` | `tileurl [http(s)://host/path\|default]` | Show or update the map tile provider URL. |
 | `sign` | `sign <data>` | Sign arbitrary text with the node identity and print signature hex. |
 | `anon` | `anon <64hex_pubkey> <text>` | Send an anonymous message to a public key. |
-| `fetchmsgs` | `fetchmsgs <contact> <channel>` | Request room-server messages for a channel. |
 | `groupdata` | `groupdata <channel_idx> <type_hex> <hex_payload>` | Send raw group data to a channel for protocol testing. |
 | `emoji-list` | `emoji-list` | Print the compiled emoji font inventory. |
 | `exportkey` | `exportkey` | Print the private key hex; keep this secret. |
@@ -425,7 +425,7 @@ Colours referenced by the Terminal screen, defined in `src/ui/theme.h`:
 
 | Command | Purpose | Typical Output | Colour |
 |---|---|---|---|
-| `help` | List available commands | `Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list exportkey importkey import getvar setvar delvar listvars` | Default green |
+| `help` | List available commands | `Commands: help status advert ping tileurl sign anon groupdata emoji-list exportkey importkey import getvar setvar delvar listvars` | Default green |
 | `status` | Show mesh radio diagnostics | `RSSI:-67dBm SNR:12.3dB Noise:-98dBm Contacts:3 Channels:5` | Accent Cyan |
 | `advert` | Broadcast advert | `Advert sent` or `Send failed` | Green / Red |
 | `ping` | Device responsiveness + uptime | `Pong! Uptime: 734152ms` | Accent Green |

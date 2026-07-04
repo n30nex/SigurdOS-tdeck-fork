@@ -24,6 +24,50 @@ The JSON report records `ESP-ROM`, reset, panic, assert, and backtrace
 signatures with timestamps. A non-zero exit with `--expect-no-reset` means the
 manual flow produced reset/crash evidence that should be attached to the issue.
 
+## Guided Release-Firmware UI Journey
+
+For repeatable issue evidence on the normal release firmware, use the guided
+journey harness. It still requires a human to perform the physical touch,
+trackball, and keyboard actions, but it records one raw serial log per step and
+writes a summary JSON that fails on reset/crash signatures:
+
+```powershell
+python scripts\validation\hardware_ui_journey.py `
+  --port COM8 `
+  --profile chat-public-login `
+  --forbid-port COM11 `
+  --forbid-port COM12 `
+  --forbid-port COM16 `
+  --forbid-port COM29 `
+  --out-dir .pio\hardware-ui-journeys\pr21-chat-public-login
+```
+
+Useful built-in profiles:
+
+- `chat-public-login` covers Chat, Public touch/trackball entry, Krabs Lagoon
+  login, local repeater login, and repeater detail back navigation.
+- `core-navigation` covers the main Home tiles and the Map/GPS/Settings path.
+
+By default the harness is passive after opening the serial port. It does not
+inject UI input, does not reset the board, and does not switch to remote-test
+firmware. It also refuses `COM11`, `COM12`, `COM16`, and `COM29` by default so
+the known non-target devices are not opened accidentally. Screenshot capture is
+optional because release builds normally keep serial commands disabled. Only
+enable screenshot attempts when the flashed firmware is known to support
+`SCREENSHOT`:
+
+```powershell
+python scripts\validation\hardware_ui_journey.py `
+  --port COM8 `
+  --profile core-navigation `
+  --screenshot-mode attempt `
+  --out-dir .pio\hardware-ui-journeys\core-navigation-screens
+```
+
+Use `--screenshot-mode require` only for a build where screenshot support is a
+required part of the test. If screenshot support is unavailable, the raw logs
+and summary JSON are still valid crash/no-crash evidence.
+
 ## Setup And Radio Input
 
 Evidence to capture:

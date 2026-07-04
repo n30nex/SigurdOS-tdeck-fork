@@ -140,7 +140,7 @@ static void print_help() {
 
     Serial.println(F("║  addroomserver <name>        Add test room server    ║"));
     Serial.println(F("║  login <name> <pw>            Login to room server      ║"));
-    Serial.println(F("║  fetchmsgs <name> [chan]      Fetch room messages       ║"));
+    Serial.println(F("║  fetchmsgs <name> [chan]      Unsupported stock fetch   ║"));
 
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
@@ -1525,6 +1525,10 @@ static bool dispatch(const char* line) {
         cmd_backlight(arg);
     } else if (strcmp(cmd, "fetchmsgs") == 0) {
         if (!arg) { Serial.println("[test] fetchmsgs: usage: fetchmsgs <contact> <channel>"); return true; }
+        if (!sigurdos::mesh::roomMessageFetchSupported()) {
+            Serial.println("[test] fetchmsgs: unsupported by stock MeshCore room servers");
+            return true;
+        }
         // Parse: fetchmsgs <contact> <channel>
         char name[64], channel[32];
         const char* p = arg;

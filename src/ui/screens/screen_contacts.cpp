@@ -909,146 +909,18 @@ void admin_cmd_show(const char* contact_name) {
     show_admin_cmd_dialog(contact_name);
 }
 
-// ── Room message fetch dialog (Phase 4.6) ──────────
-// Shows a modal dialog for entering a channel name to fetch messages from.
+// ── Room message fetch compatibility placeholder ──────────
+// Stock MeshCore room servers do not currently expose a compatible history
+// fetch/read request. Keep this hook fail-closed for older call sites.
 void show_fetch_msgs_dialog(const char* contact_name)
 {
     if (!contact_name) return;
-
-    lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
-    auto dlg_sz = dialog_size(260, 124);
-    lv_obj_t* dlg = lv_obj_create(scr);
-    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
-    lv_obj_center(dlg);
-    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
-    lv_obj_set_style_radius(dlg, 0, 0);
-    lv_obj_set_style_border_width(dlg, 0, 0);
-    lv_obj_set_style_pad_all(dlg, 8, 0);
-
-    // Title
-    lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Fetch room messages");
-    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
-
-    // Hint
-    lv_obj_t* hint = lv_label_create(dlg);
-    lv_label_set_text(hint, "Enter channel name (e.g. #general)");
-    lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(hint, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 24);
-
-    // Channel name textarea
-    lv_obj_t* ta = lv_textarea_create(dlg);
-    lv_obj_set_size(ta, dlg_sz.w - 16, 28);
-    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 38);
-    lv_textarea_set_placeholder_text(ta, "#channel");
-    lv_textarea_set_one_line(ta, true);
-    lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_radius(ta, 0, 0);
-    lv_obj_set_style_border_color(ta, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_border_width(ta, 2, 0);
-    lv_group_t* g = lv_group_get_default();
-    if (g) lv_group_focus_obj(ta);
-
-    // Cancel button
-    lv_obj_t* cancel_btn = lv_btn_create(dlg);
-    lv_obj_set_size(cancel_btn, 80, 24);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_radius(cancel_btn, 0, 0);
-    lv_obj_t* cl = lv_label_create(cancel_btn);
-    lv_label_set_text(cl, "Cancel");
-    lv_obj_center(cl);
-    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Fetch button
-    struct FetchDialogData { char* name; lv_obj_t* ta; bool submitted; };
-    char* fm_name = strdup(contact_name);
-    if (!fm_name) {
-        lv_obj_del_async(dlg);
-        return;
-    }
-    FetchDialogData* fd = new(std::nothrow) FetchDialogData{fm_name, ta, false};
-    if (!fd) {
-        free(fm_name);
-        lv_obj_del_async(dlg);
-        return;
-    }
-    lv_obj_t* fetch_btn = lv_btn_create(dlg);
-    lv_obj_set_size(fetch_btn, 80, 24);
-    lv_obj_align(fetch_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
-    lv_obj_set_style_bg_color(fetch_btn, lv_color_hex(0x0088cc), 0);
-    lv_obj_set_style_radius(fetch_btn, 0, 0);
-    lv_obj_t* fb = lv_label_create(fetch_btn);
-    lv_label_set_text(fb, "Fetch");
-    lv_obj_center(fb);
-    lv_obj_set_style_text_color(fb, lv_color_hex(0xffffff), 0);
-    lv_obj_set_user_data(fetch_btn, fd);
-
-    lv_obj_add_event_cb(fetch_btn, [](lv_event_t* le) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(le);
-        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data(btn);
-        bool sent = false;
-        if (d && d->name && !d->submitted) {
-            d->submitted = true;
-            const char* channel = (d->ta && lv_obj_is_valid(d->ta))
-                ? lv_textarea_get_text(d->ta)
-                : "";
-            if (channel && channel[0]) {
-                char name_copy[32];
-                char channel_copy[32];
-                snprintf(name_copy, sizeof(name_copy), "%s", d->name);
-                snprintf(channel_copy, sizeof(channel_copy), "%s", channel);
-                char confirm[64];
-                sent = sigurdos::mesh::sendRoomMsgFetchRequest(name_copy, channel_copy);
-                snprintf(confirm, sizeof(confirm),
-                         sent ? "Fetching msgs from %s channel %s"
-                              : "! Fetch failed for %s channel %s",
-                         name_copy, channel_copy);
-                sigurdos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
-            }
-        }
-        lv_obj_t* dlg = lv_obj_get_parent(btn);
-        lv_obj_del_async(dlg);
-        if (sent) schedule_chat_navigation();
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Enter-key handler on textarea
-    lv_obj_add_event_cb(ta, [](lv_event_t* te) {
-        lv_obj_t* t = (lv_obj_t*)lv_event_get_target(te);
-        uint32_t key = lv_event_get_key(te);
-        if (key == LV_KEY_ENTER) {
-            lv_obj_t* parent = lv_obj_get_parent(t);
-            if (parent) {
-                uint32_t c = lv_obj_get_child_cnt(parent);
-                for (uint32_t i = 0; i < c; i++) {
-                    lv_obj_t* child = lv_obj_get_child(parent, i);
-                    if (child && lv_obj_check_type(child, &lv_button_class)) {
-                        FetchDialogData* data = (FetchDialogData*)lv_obj_get_user_data(child);
-                        if (data && !data->submitted) {
-                            lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }, LV_EVENT_KEY, nullptr);
-
-    // Cleanup
-    lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
-        if (d) {
-            free(d->name);
-            delete d;
-        }
-    }, LV_EVENT_DELETE, nullptr);
-    lv_obj_set_user_data(dlg, fd);
+    sigurdos::mesh::mesh_v2_queue_push(
+        "System",
+        "",
+        "! Room fetch unsupported by stock MeshCore room servers",
+        0,
+        0.0f);
 }
 
 // ════════════════════════════════════════════════════════
