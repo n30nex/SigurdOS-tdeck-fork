@@ -39,6 +39,7 @@ class JourneyStep:
     name: str
     prompt: str
     duration_s: float
+    allow_reset: bool = False
 
 
 PROFILES: dict[str, list[JourneyStep]] = {
@@ -87,6 +88,44 @@ PROFILES: dict[str, list[JourneyStep]] = {
         JourneyStep("open-map", "Open Map, press Use GPS/Finding Sats if visible, then return Home.", 60.0),
         JourneyStep("open-settings", "Open Settings and visit GPS/System status rows.", 60.0),
     ],
+    "chat-dm-persistence": [
+        JourneyStep(
+            "home-ready",
+            "Start on Home. Verify the device is awake and responsive.",
+            20.0,
+        ),
+        JourneyStep(
+            "open-chats-public",
+            "Open CHATS, then open Public with touch and trackball. Confirm no freeze or reboot.",
+            60.0,
+        ),
+        JourneyStep(
+            "receive-public",
+            "Send a Public message from another node. Confirm the unread/toast behavior and visible history.",
+            75.0,
+        ),
+        JourneyStep(
+            "receive-dm",
+            "Send a DM from another node while this device is on the chat list. Confirm toast/unread and that a DM row appears immediately.",
+            90.0,
+        ),
+        JourneyStep(
+            "verify-dm-filter",
+            "Open DMs and confirm the DM is there, then return to CHATS and confirm the DM row is not listed under CHATS.",
+            75.0,
+        ),
+        JourneyStep(
+            "reboot-for-persistence",
+            "Reboot the T-Deck, wait for Home, then reopen CHATS and DMs to confirm Public history and DM history persisted.",
+            120.0,
+            allow_reset=True,
+        ),
+        JourneyStep(
+            "post-reboot-public-click",
+            "After the reboot check, open Public again using the trackball click. Confirm no reboot.",
+            60.0,
+        ),
+    ],
 }
 
 
@@ -120,6 +159,7 @@ def load_steps(args: argparse.Namespace) -> list[JourneyStep]:
                     name=str(raw.get("name") or f"step-{idx}"),
                     prompt=str(raw["prompt"]),
                     duration_s=float(raw.get("duration_s", args.default_step_duration)),
+                    allow_reset=bool(raw.get("allow_reset", False)),
                 ),
             )
         return steps
@@ -129,7 +169,7 @@ def load_steps(args: argparse.Namespace) -> list[JourneyStep]:
 def apply_duration_override(steps: list[JourneyStep], override: float | None) -> list[JourneyStep]:
     if override is None:
         return steps
-    return [JourneyStep(step.name, step.prompt, override) for step in steps]
+    return [JourneyStep(step.name, step.prompt, override, step.allow_reset) for step in steps]
 
 
 def split_lines(pending: str, text: str) -> tuple[list[str], str]:
@@ -185,18 +225,20 @@ def monitor_step(ser, step: JourneyStep, raw_path: Path, echo: bool) -> dict[str
         record_line(pending, start, events, echo)
 
     ended = datetime.now().isoformat(timespec="seconds")
-    has_reset_or_crash = any(event["kind"] in ("reset", "crash") for event in events)
+    has_crash = any(event["kind"] == "crash" for event in events)
+    has_reset = any(event["kind"] == "reset" for event in events)
     return {
         "name": step.name,
         "prompt": step.prompt,
         "duration_s": step.duration_s,
+        "allow_reset": step.allow_reset,
         "started": started,
         "ended": ended,
         "raw_bytes": raw_count,
         "raw_log": str(raw_path),
         "event_count": len(events),
         "events": events,
-        "passed": not has_reset_or_crash,
+        "passed": not has_crash and (step.allow_reset or not has_reset),
     }
 
 
@@ -327,7 +369,8 @@ def print_profile_list() -> None:
     for name, steps in PROFILES.items():
         print(f"{name}:")
         for step in steps:
-            print(f"  - {step.name}: {step.duration_s:g}s")
+            reset_note = " (reset allowed)" if step.allow_reset else ""
+            print(f"  - {step.name}: {step.duration_s:g}s{reset_note}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -351,7 +394,8 @@ def main(argv: list[str] | None = None) -> int:
     steps = apply_duration_override(load_steps(args), args.step_duration)
     print(f"hardware UI journey profile={args.profile} steps={len(steps)}")
     for idx, step in enumerate(steps, start=1):
-        print(f"{idx}. {step.name} ({step.duration_s:g}s): {step.prompt}")
+        reset_note = ", reset allowed" if step.allow_reset else ""
+        print(f"{idx}. {step.name} ({step.duration_s:g}s{reset_note}): {step.prompt}")
 
     if args.dry_run:
         return 0
