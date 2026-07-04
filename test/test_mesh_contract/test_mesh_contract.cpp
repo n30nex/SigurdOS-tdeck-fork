@@ -165,6 +165,11 @@ TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable("123456789012345"));
     EXPECT_FALSE(sigurdos::mesh::loginPasswordInputSubmittable("1234567890123456"));
     EXPECT_FALSE(sigurdos::mesh::loginPasswordInputSubmittable(nullptr));
+
+    EXPECT_TRUE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_ROOM, ""));
+    EXPECT_TRUE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_ROOM, "admin"));
+    EXPECT_FALSE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_REPEATER, ""));
+    EXPECT_TRUE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_REPEATER, "guest"));
 }
 
 TEST(MeshContractTest, RoomMessageFormattingUsesPlainPublicPost) {

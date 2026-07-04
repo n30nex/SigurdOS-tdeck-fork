@@ -239,10 +239,13 @@ void loop()
             last_msg_poll = millis();
             static sigurdos::mesh::MeshMessage msgs[4];  // static to avoid ~1300B stack in loop()
             int n = sigurdos::mesh::pollMessages(msgs, 4);
+            bool incoming_msg = false;
             bool incoming_channel_msg = false;
             for (int i = 0; i < n; i++) {
-                chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text, msgs[i].is_self);
+                chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text,
+                                    msgs[i].is_self, msgs[i].txt_type);
                 if (!msgs[i].is_self) {
+                    incoming_msg = true;
                     if (msgs[i].channel[0]) incoming_channel_msg = true;
                 }
             }
@@ -250,7 +253,8 @@ void loop()
             const uint32_t activity_seq = sigurdos::mesh::getMeshActivitySeq();
             const bool got_new_activity = (activity_seq != last_activity_seq);
             const auto notification = activity_notification_plan(
-                got_new_activity, sigurdos::prefs_get().buzzer_quiet, incoming_channel_msg);
+                got_new_activity, sigurdos::prefs_get().buzzer_quiet,
+                incoming_msg, incoming_channel_msg);
             if (notification.flash) {
                 last_activity_seq = activity_seq;
                 show_activity_flash();

@@ -603,6 +603,7 @@ bool storedMessageSameIdentity(const StoredMessage& a, const StoredMessage& b)
     return std::strncmp(a.conversation, b.conversation, SIGURDOS_MSG_CONVERSATION_LEN) == 0 &&
            same_sender &&
            a.timestamp == b.timestamp &&
+           a.txt_type == b.txt_type &&
            a.is_self == b.is_self &&
            a.is_channel == b.is_channel;
 }

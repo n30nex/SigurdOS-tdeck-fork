@@ -37,26 +37,32 @@ TEST(UITiming, SplashTimingHandlesMillisRollover) {
 }
 
 TEST(UINotifications, NoActivityDoesNotFlashOrBuzz) {
-    const auto plan = activity_notification_plan(false, false, false);
+    const auto plan = activity_notification_plan(false, false, false, false);
     EXPECT_FALSE(plan.flash);
     EXPECT_FALSE(plan.buzz);
 }
 
 TEST(UINotifications, QuietModeSuppressesBuzzButKeepsFlash) {
-    const auto plan = activity_notification_plan(true, true, false);
+    const auto plan = activity_notification_plan(true, true, true, false);
+    EXPECT_TRUE(plan.flash);
+    EXPECT_FALSE(plan.buzz);
+}
+
+TEST(UINotifications, ActivityWithoutMessageFlashesWithoutBuzz) {
+    const auto plan = activity_notification_plan(true, false, false, false);
     EXPECT_TRUE(plan.flash);
     EXPECT_FALSE(plan.buzz);
 }
 
 TEST(UINotifications, DirectMessagesUseShortBuzzPattern) {
-    const auto plan = activity_notification_plan(true, false, false);
+    const auto plan = activity_notification_plan(true, false, true, false);
     EXPECT_TRUE(plan.flash);
     EXPECT_TRUE(plan.buzz);
     EXPECT_EQ(plan.buzz_pattern, sigurdos::hal::BuzzerPatternKind::Short);
 }
 
 TEST(UINotifications, ChannelMessagesUseDoubleBuzzPattern) {
-    const auto plan = activity_notification_plan(true, false, true);
+    const auto plan = activity_notification_plan(true, false, true, true);
     EXPECT_TRUE(plan.flash);
     EXPECT_TRUE(plan.buzz);
     EXPECT_EQ(plan.buzz_pattern, sigurdos::hal::BuzzerPatternKind::Double);

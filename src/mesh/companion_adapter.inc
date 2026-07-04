@@ -59,7 +59,8 @@ static void generate_random_ble_pin() {
 }
 
 static void queue_push_outgoing(const char* conversation, const char* sender,
-                                const char* text, uint32_t timestamp)
+                                const char* text, uint32_t timestamp,
+                                uint8_t txt_type = sigurdos::comms::COMPANION_TXT_PLAIN)
 {
     if (!conversation || !sender || !text) return;
     if (msg_count >= MAX_QUEUED) {
@@ -74,6 +75,7 @@ static void queue_push_outgoing(const char* conversation, const char* sender,
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
+    m.txt_type = txt_type;
     m.is_self = true;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
@@ -159,7 +161,8 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
 }
 
 static void storeOutgoingMessageForCompanion(const char* conversation, const char* text,
-                                             uint32_t timestamp, bool is_channel)
+                                             uint32_t timestamp, bool is_channel,
+                                             uint8_t txt_type = sigurdos::comms::COMPANION_TXT_PLAIN)
 {
     sigurdos::mesh::StoredMessage msg{};
     strncpy(msg.conversation, conversation ? conversation : "", sizeof(msg.conversation) - 1);
@@ -172,6 +175,7 @@ static void storeOutgoingMessageForCompanion(const char* conversation, const cha
     msg.rssi = 0;
     msg.snr_quarters = 0;
     msg.path_len = 0xFF;  // self-sent; never mirrored to the app, value unused
+    msg.txt_type = txt_type;
     if (g_mesh) memcpy(msg.sender_prefix, g_mesh->self_id.pub_key,
                        sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
     sigurdos::mesh::messageStoreAppend(msg);
@@ -315,8 +319,8 @@ public:
 
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), contact->name);
-        storeOutgoingMessageForCompanion(conversation, text, ts, false);
-        queue_push_outgoing(conversation, own_name, text, ts);
+        storeOutgoingMessageForCompanion(conversation, text, ts, false, txt_type);
+        queue_push_outgoing(conversation, own_name, text, ts, txt_type);
         sigurdos::mesh::pushPacketLog(own_name, 0, 0.0f, "TX_DM");
 
         result.ok = true;

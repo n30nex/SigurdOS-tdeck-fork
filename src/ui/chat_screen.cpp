@@ -189,6 +189,7 @@ struct ChannelMessage {
     char     sender[32];
     char     text[160];
     uint32_t timestamp;
+    uint8_t  txt_type;
     bool     is_self;
     bool     acked;
 };
@@ -910,11 +911,17 @@ static void request_select_channel(int idx)
     }
 }
 
-static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
+static void update_channel_meta(int idx, const char* text, uint32_t timestamp,
+                                uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
     // Truncate preview to fit the display: ~25 chars + "..." works in all row layouts
+    char command_preview[72];
     const char* src = text ? text : "";
+    if (chat_screen_message_is_command(txt_type)) {
+        snprintf(command_preview, sizeof(command_preview), "[CLI] %s", src);
+        src = command_preview;
+    }
     size_t slen = strlen(src);
     constexpr size_t MAX_PREVIEW_CHARS = 25;
     if (slen > MAX_PREVIEW_CHARS) {
@@ -928,7 +935,8 @@ static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
 }
 
 static void append_channel_message(int idx, const char* sender, const char* text,
-                                   uint32_t timestamp, bool is_self)
+                                   uint32_t timestamp, bool is_self,
+                                   uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
     ensure_channel_buffer(idx);
@@ -955,14 +963,16 @@ static void append_channel_message(int idx, const char* sender, const char* text
     strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
     msg.text[sizeof(msg.text) - 1] = '\0';
     msg.timestamp = timestamp;
+    msg.txt_type = chat_screen_normalize_text_type(txt_type);
     msg.is_self = is_self;
     msg.acked = false;
 
-    update_channel_meta(idx, msg.text, timestamp);
+    update_channel_meta(idx, msg.text, timestamp, msg.txt_type);
 }
 
 static bool loaded_message_exists(int idx, const char* sender, const char* text,
-                                  uint32_t timestamp, bool is_self)
+                                  uint32_t timestamp, bool is_self,
+                                  uint8_t txt_type)
 {
     if (idx < 0 || idx >= MAX_CHANNELS || !has_channel_buffer(idx)) return false;
     const char* safe_sender = sender ? sender : "";
@@ -973,6 +983,7 @@ static bool loaded_message_exists(int idx, const char* sender, const char* text,
             ? msg.timestamp - timestamp
             : timestamp - msg.timestamp;
         if (msg.is_self == is_self && delta <= 2 &&
+            msg.txt_type == chat_screen_normalize_text_type(txt_type) &&
             strcmp(msg.sender, safe_sender) == 0 &&
             strcmp(msg.text, safe_text) == 0) {
             return true;
@@ -982,11 +993,13 @@ static bool loaded_message_exists(int idx, const char* sender, const char* text,
 }
 
 static bool append_loaded_channel_message(int idx, const char* sender, const char* text,
-                                          uint32_t timestamp, bool is_self, bool acked)
+                                          uint32_t timestamp, bool is_self, bool acked,
+                                          uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return false;
     ensure_channel_buffer(idx);
-    if (loaded_message_exists(idx, sender, text, timestamp, is_self)) {
+    txt_type = chat_screen_normalize_text_type(txt_type);
+    if (loaded_message_exists(idx, sender, text, timestamp, is_self, txt_type)) {
         if (acked && has_channel_buffer(idx)) {
             for (uint16_t i = 0; i < ch_msg_count[idx]; i++) {
                 ChannelMessage& msg = ch_msgs[idx][i];
@@ -994,6 +1007,7 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
                     ? msg.timestamp - timestamp
                     : timestamp - msg.timestamp;
                 if (msg.is_self == is_self && delta <= 2 &&
+                    msg.txt_type == txt_type &&
                     strcmp(msg.sender, sender ? sender : "") == 0 &&
                     strcmp(msg.text, text ? text : "") == 0) {
                     msg.acked = true;
@@ -1003,7 +1017,7 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
         return false;
     }
 
-    append_channel_message(idx, sender, text, timestamp, is_self);
+    append_channel_message(idx, sender, text, timestamp, is_self, txt_type);
     if (acked && has_channel_buffer(idx) && ch_msg_count[idx] > 0) {
         ch_msgs[idx][ch_msg_count[idx] - 1].acked = true;
     }
@@ -1054,7 +1068,7 @@ static void chat_load_companion_messages()
             }
         }
         append_loaded_channel_message(idx, msg.sender, text, msg.timestamp,
-                                      msg.is_self, msg.acked);
+                                      msg.is_self, msg.acked, msg.txt_type);
     }
     heap_caps_free(recent);
 }
@@ -1085,7 +1099,7 @@ static void chat_load_companion_messages_for_conversation(const char* conversati
             }
         }
         append_loaded_channel_message(idx, msg.sender, text, msg.timestamp,
-                                      msg.is_self, msg.acked);
+                                      msg.is_self, msg.acked, msg.txt_type);
     }
     heap_caps_free(recent);
 }
@@ -1676,8 +1690,9 @@ static void show_message_action_toast(const MessageActionCtx* source)
 
 static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
                                 const char* text, uint32_t timestamp,
-                                bool is_self, bool acked)
+                                bool is_self, bool acked, uint8_t txt_type)
 {
+    const bool is_command = chat_screen_message_is_command(txt_type);
     lv_obj_t* container = lv_obj_create(parent);
     lv_obj_set_width(container, LV_PCT(100));
     lv_obj_set_height(container, LV_SIZE_CONTENT);
@@ -1693,15 +1708,22 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     }
 
     lv_obj_t* bubble = lv_obj_create(container);
-    lv_obj_set_width(bubble, LV_PCT(78));
+    lv_obj_set_width(bubble, is_command ? LV_PCT(92) : LV_PCT(78));
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(bubble, 0, 0);
     lv_obj_set_style_pad_all(bubble, 6, 0);
-    lv_obj_set_style_border_width(bubble, 0, 0);
+    lv_obj_set_style_border_width(bubble, is_command ? 1 : 0, 0);
+    if (is_command) {
+        lv_obj_set_style_border_color(bubble, lv_color_hex(ACCENT_ORANGE), 0);
+        lv_obj_set_style_border_opa(bubble, LV_OPA_COVER, 0);
+    }
     lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_COLUMN);
     disable_scroll(bubble);
 
-    if (is_self) {
+    if (is_command) {
+        lv_obj_set_style_bg_color(bubble, lv_color_hex(BG_TERTIARY), 0);
+        lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
+    } else if (is_self) {
         lv_obj_set_style_bg_color(bubble, lv_color_hex(ACCENT), 0);
         lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
     } else {
@@ -1722,9 +1744,16 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* name = lv_label_create(header);
-    lv_label_set_text(name, sender);
+    char sender_label[48];
+    if (is_command) {
+        snprintf(sender_label, sizeof(sender_label), "> CLI %s", sender ? sender : "");
+        lv_label_set_text(name, sender_label);
+    } else {
+        lv_label_set_text(name, sender);
+    }
     lv_obj_set_style_text_color(name,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT), 0);
+        is_command ? lv_color_hex(ACCENT_ORANGE) :
+        (is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT)), 0);
     lv_obj_set_style_text_font(name, emoji_wrapped_montserrat_10, 0);
 
     char time_buf[10];
@@ -1744,12 +1773,14 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_t* msg_text = lv_label_create(bubble);
     lv_label_set_text(msg_text, text);
     lv_obj_set_style_text_color(msg_text,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+        is_command ? lv_color_hex(ACCENT_YELLOW) :
+        (is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY)), 0);
     lv_obj_set_style_text_font(msg_text, emoji_wrapped_montserrat_12, 0);
     lv_label_set_long_mode(msg_text, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msg_text, LV_PCT(100));
 
     if (active_channel >= 0 && active_channel < dyn_count &&
+        !is_command &&
         chat_screen_public_message_actions_available(dyn_channels[active_channel],
                                                      sender, is_self)) {
         lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
@@ -1821,7 +1852,8 @@ static void render_active_messages()
                 if (idx < 0 || idx >= ch_msg_count[active_channel]) continue;
                 ChannelMessage& msg = ch_msgs[active_channel][idx];
                 lv_obj_t* bubble = create_bubble(msg_list, msg.sender, msg.text,
-                                                  msg.timestamp, msg.is_self, msg.acked);
+                                                  msg.timestamp, msg.is_self, msg.acked,
+                                                  msg.txt_type);
                 // Highlight the current search match
                 if (i == search_current_match && bubble) {
                     lv_obj_t* first_child = lv_obj_get_child(bubble, 0);
@@ -1876,7 +1908,8 @@ static void render_active_messages()
             }
         }
 
-        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self, msg.acked);
+        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self, msg.acked,
+                      msg.txt_type);
     }
 
     uint32_t count = lv_obj_get_child_cnt(msg_list);
@@ -2146,7 +2179,8 @@ static void do_send()
     } else {
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
     }
-    append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts, true);
+    append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts,
+                           true, CHAT_SCREEN_TEXT_PLAIN);
     chat_save_messages();
     mark_channel_used(sent_channel);
     render_active_messages();
@@ -3043,7 +3077,8 @@ void chat_screen_open_room(const char* room_name)
     }
 }
 
-void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
+void chat_screen_add_msg(const char* channel, const char* sender, const char* text,
+                         bool is_self, uint8_t txt_type)
 {
     uint32_t now = sigurdos::mesh::getCurrentTime();
 
@@ -3069,7 +3104,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     }
     if (idx >= MAX_CHANNELS) return;
 
-    append_channel_message(idx, sender, text, now, is_self);
+    append_channel_message(idx, sender, text, now, is_self, txt_type);
     chat_save_messages();
 
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
@@ -3086,7 +3121,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
 
-    create_bubble(msg_list, sender, text, now, is_self, false);
+    create_bubble(msg_list, sender, text, now, is_self, false, txt_type);
 
     const uint16_t cap = chat_msg_cap();
     if (lv_obj_get_child_cnt(msg_list) > cap)
@@ -3298,10 +3333,11 @@ const char* chat_screen_get_active_channel_name()
 // ════════════════════════════════════════════════════
 
 static constexpr uint32_t MSG_MAGIC = 0x536d534c; // "SLmS"
-static constexpr uint8_t  MSG_VERSION = 2;
+static constexpr uint8_t  MSG_VERSION = 3;
 static constexpr size_t   MSG_MAX_CHANNELS = 16;
 static constexpr size_t   MSG_MAX_PER_CHANNEL = CHAT_MSGS_MAX;
 static constexpr size_t   MSG_RECORD_BYTES = CHAT_SCREEN_PERSIST_RECORD_BYTES;
+static constexpr size_t   MSG_RECORD_BYTES_V2 = CHAT_SCREEN_PERSIST_RECORD_BYTES_V2;
 static constexpr size_t   MSG_MAX_FILE_SIZE =
     4 + 1 + 1 +
     MSG_MAX_CHANNELS * (CHANNEL_NAME_CAP + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES);
@@ -3357,6 +3393,8 @@ void chat_save_messages()
             f.write((const uint8_t*)&msg.timestamp, 4);
             uint8_t self = msg.is_self ? 1 : 0;
             f.write(&self, 1);
+            uint8_t txt_type = chat_screen_normalize_text_type(msg.txt_type);
+            f.write(&txt_type, 1);
         }
     }
     f.close();
@@ -3414,7 +3452,7 @@ void chat_load_messages()
     }
 
     uint8_t ver;
-    if (f.read(&ver, 1) != 1 || ver != MSG_VERSION) {
+    if (f.read(&ver, 1) != 1 || (ver != MSG_VERSION && ver != 2)) {
         close_and_load_companion();
         return;
     }
@@ -3456,8 +3494,9 @@ void chat_load_messages()
         // Keep loaded history bounded by the normal append-path. This preserves
         // existing cap semantics and keeps the newest messages when historical
         // files contain more entries than the configured runtime cap.
+        const size_t record_bytes = (ver >= 3) ? MSG_RECORD_BYTES : MSG_RECORD_BYTES_V2;
         for (int j = 0; j < msg_count; j++) {
-            if (f.position() + MSG_RECORD_BYTES > file_size) {
+            if (f.position() + record_bytes > file_size) {
                 close_and_load_companion();
                 return;
             }
@@ -3488,6 +3527,12 @@ void chat_load_messages()
                 return;
             }
 
+            uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN;
+            if (ver >= 3 && f.read(&txt_type, 1) != 1) {
+                close_and_load_companion();
+                return;
+            }
+
             sender[CHAT_SCREEN_PERSIST_SENDER_BYTES - 1] = '\0';
             text[CHAT_SCREEN_PERSIST_TEXT_BYTES - 1] = '\0';
 
@@ -3495,7 +3540,7 @@ void chat_load_messages()
                 continue;
             }
 
-            append_channel_message(idx, sender, text, timestamp, self != 0);
+            append_channel_message(idx, sender, text, timestamp, self != 0, txt_type);
         }
     }
     f.close();

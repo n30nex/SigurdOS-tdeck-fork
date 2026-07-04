@@ -1639,7 +1639,8 @@ void contact_detail_screen_show(const char* contact_name)
                     lv_obj_t* t = (lv_obj_t*)lv_event_get_target(ce);
                     const char* n = (const char*)lv_obj_get_user_data(t);
                     if (n) {
-                        sigurdos::mesh::sendLogout(n); // clears pending/failed state
+                        sigurdos::mesh::sendLogout(n);
+                        sigurdos::mesh::clearLoginState(n);
                         go_back();
                     }
                 }, LV_EVENT_CLICKED, nullptr);

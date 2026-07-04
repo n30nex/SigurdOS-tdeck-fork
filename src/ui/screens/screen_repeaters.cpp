@@ -51,6 +51,7 @@ static void clear_repeater_pending_login(const char* name)
     uint8_t st = sigurdos::mesh::getLoginStatus(name);
     if (st == LOGIN_STATUS_PENDING || st == LOGIN_STATUS_FAILED) {
         sigurdos::mesh::sendLogout(name);
+        sigurdos::mesh::clearLoginState(name);
     }
 }
 
@@ -785,6 +786,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     snprintf(safe_name, sizeof(safe_name), "%s", name);
                     cancel_login_poll_for(safe_name);
                     sigurdos::mesh::sendLogout(safe_name);
+                    sigurdos::mesh::clearLoginState(safe_name);
                     repeater_detail_screen_show(safe_name, false);
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {

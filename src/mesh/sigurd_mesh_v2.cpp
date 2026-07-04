@@ -92,6 +92,9 @@ namespace mesh {
 
     int SigurdMeshV2::sendLoginCompanion(const ::ContactInfo& contact, const char* password, uint32_t& est_timeout) {
         est_timeout = 0;
+        if (!sigurdos::mesh::loginPasswordAllowedForContactType(contact.type, password ? password : "")) {
+            return MSG_SEND_FAILED;
+        }
         int login_idx = addLoginEntry(contact.name);
         if (login_idx < 0) return MSG_SEND_FAILED;
         int r = BaseChatMesh::sendLogin(contact, password ? password : "", est_timeout);
@@ -931,6 +934,7 @@ namespace mesh {
 
     bool SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {
         if (!password) return false;
+        if (!sigurdos::mesh::loginPasswordAllowedForContactType(contact.type, password)) return false;
         int login_idx = addLoginEntry(contact.name);
         if (login_idx < 0) return false;
         uint32_t est_timeout = 0;

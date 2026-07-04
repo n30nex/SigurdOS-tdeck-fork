@@ -204,6 +204,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
+    m.txt_type = txt_type;
     m.is_self = false;
     if (strcmp(sender, own_name) != 0) {
         unread_count++;
@@ -279,6 +280,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = rtc_clock.getCurrentTime();
+    m.txt_type = 0;
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
     if (strcmp(sender, own_name) != 0) {
@@ -1953,14 +1955,19 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
+                if (!loginPasswordAllowedForContactType(c->type, password)) return false;
                 return g_mesh->sendLoginTo(*c, password);
             }
         }
         return false;
     }
 
+    void clearLoginState(const char* name) {
+        if (!g_mesh || !name || !name[0]) return;
+        g_mesh->removeLoginEntry(name);
+    }
+
     void sendLogout(const char* name) {
-        if (!radioTxAllowed()) return;
         if (!g_mesh || !name) return;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
@@ -1969,6 +1976,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
                 return;
             }
         }
+        clearLoginState(name);
     }
 
     bool sendCommand(const char* name, const char* text) {

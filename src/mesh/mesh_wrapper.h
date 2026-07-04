@@ -93,6 +93,9 @@ struct MeshMessage {
     char channel[37];
     char text[256];
     uint32_t timestamp;
+    // MeshCore companion TXT_TYPE_* value. 0 = plain, 1 = CLI data,
+    // 2 = signed plain. The UI uses this to keep command replies distinct.
+    uint8_t txt_type;
     bool is_self;
 };
 
@@ -534,8 +537,19 @@ inline bool loginPasswordInputSubmittable(const char* password) {
     return password != nullptr && std::strlen(password) <= LOGIN_PASSWORD_MAX_BYTES;
 }
 
+inline bool loginPasswordAllowedForContactType(uint8_t contact_type, const char* password) {
+    if (!loginPasswordInputSubmittable(password)) return false;
+    // MeshCore room servers encode sync_since before the password, so a blank
+    // room login is a valid read-only/guest request. Repeaters encode only the
+    // password after the timestamp; a blank repeater login is ACL-only and gives
+    // no useful UI result for field guest access, so fail fast instead.
+    if (contact_type == ADV_TYPE_REPEATER && password[0] == '\0') return false;
+    return true;
+}
+
 bool sendLogin(const char* name, const char* password);
 void sendLogout(const char* name);
+void clearLoginState(const char* name);
 bool sendCommand(const char* name, const char* text);
 bool isLoggedIn(const char* name);
 uint8_t getLoginPermission(const char* name);

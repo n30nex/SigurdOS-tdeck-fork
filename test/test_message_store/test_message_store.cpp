@@ -173,6 +173,28 @@ TEST_F(MessageStoreTest, RepeatedPacketDeliveryDedupesByPrefixAndTimestamp) {
     EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
 }
 
+TEST_F(MessageStoreTest, DedupeKeepsCliDataDistinctFromPlainText) {
+    auto plain = makeMsg("DM: Repeater", "Repeater", "status", 104, false, false);
+    auto cli = makeMsg("DM: Repeater", "Repeater", "status", 104, false, false);
+    setPrefix(plain, 0xE0);
+    setPrefix(cli, 0xE0);
+    plain.txt_type = 0;  // COMPANION_TXT_PLAIN
+    cli.txt_type = 1;    // COMPANION_TXT_CLI_DATA
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(plain));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(cli));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(cli));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+
+    sigurdos::mesh::StoredMessage out[2]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(out, 2);
+    ASSERT_EQ(n, 2);
+    EXPECT_EQ(out[0].txt_type, 0u);
+    EXPECT_EQ(out[1].txt_type, 1u);
+}
+
 TEST_F(MessageStoreTest, DedupeFallsBackToSenderNameWhenNoPrefixExists) {
     auto first = makeMsg("DM: Legacy", "Legacy", "hello", 103, false, false);
     auto replay = makeMsg("DM: Legacy", "Legacy", "hello", 103, false, false);

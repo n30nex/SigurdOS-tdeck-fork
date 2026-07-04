@@ -18,10 +18,14 @@ using sigurdos::ui::CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS;
 using sigurdos::ui::CHAT_SCREEN_CHANNEL_NAME_CAP;
 using sigurdos::ui::CHAT_SCREEN_LIST_LOAD_ANIM_MS;
 using sigurdos::ui::CHAT_SCREEN_PERSIST_RECORD_BYTES;
+using sigurdos::ui::CHAT_SCREEN_PERSIST_RECORD_BYTES_V2;
 using sigurdos::ui::CHAT_SCREEN_PERSIST_SENDER_BYTES;
 using sigurdos::ui::CHAT_SCREEN_PERSIST_TEXT_BYTES;
 using sigurdos::ui::CHAT_SCREEN_PUBLIC_RENDER_MAX;
 using sigurdos::ui::CHAT_SCREEN_RENDER_MAX;
+using sigurdos::ui::CHAT_SCREEN_TEXT_CLI_DATA;
+using sigurdos::ui::CHAT_SCREEN_TEXT_PLAIN;
+using sigurdos::ui::CHAT_SCREEN_TEXT_SIGNED_PLAIN;
 using sigurdos::ui::CHAT_EMOJI_PICKER_PAGE_SIZE;
 using sigurdos::ui::chat_screen_emoji_page_count;
 using sigurdos::ui::chat_screen_emoji_page_end;
@@ -30,6 +34,8 @@ using sigurdos::ui::chat_screen_filter_accepts_channel;
 using sigurdos::ui::chat_screen_format_public_reply_prefix;
 using sigurdos::ui::chat_screen_format_room_name;
 using sigurdos::ui::chat_screen_is_dm_name;
+using sigurdos::ui::chat_screen_message_is_command;
+using sigurdos::ui::chat_screen_normalize_text_type;
 using sigurdos::ui::chat_screen_is_room_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_public_message_actions_available;
@@ -266,7 +272,17 @@ TEST(ChatPersistenceConfig, RecordBytesMatchWriterLayout) {
     EXPECT_EQ(CHAT_SCREEN_CHANNEL_NAME_CAP, 37);
     EXPECT_EQ(CHAT_SCREEN_PERSIST_SENDER_BYTES, 32u);
     EXPECT_EQ(CHAT_SCREEN_PERSIST_TEXT_BYTES, 160u);
-    EXPECT_EQ(CHAT_SCREEN_PERSIST_RECORD_BYTES, 197u);
+    EXPECT_EQ(CHAT_SCREEN_PERSIST_RECORD_BYTES_V2, 197u);
+    EXPECT_EQ(CHAT_SCREEN_PERSIST_RECORD_BYTES, 198u);
+}
+
+TEST(ChatPersistenceConfig, TextTypeHelpersNormalizeCommandData) {
+    EXPECT_EQ(chat_screen_normalize_text_type(CHAT_SCREEN_TEXT_PLAIN), CHAT_SCREEN_TEXT_PLAIN);
+    EXPECT_EQ(chat_screen_normalize_text_type(CHAT_SCREEN_TEXT_CLI_DATA), CHAT_SCREEN_TEXT_CLI_DATA);
+    EXPECT_EQ(chat_screen_normalize_text_type(CHAT_SCREEN_TEXT_SIGNED_PLAIN), CHAT_SCREEN_TEXT_SIGNED_PLAIN);
+    EXPECT_EQ(chat_screen_normalize_text_type(99), CHAT_SCREEN_TEXT_PLAIN);
+    EXPECT_TRUE(chat_screen_message_is_command(CHAT_SCREEN_TEXT_CLI_DATA));
+    EXPECT_FALSE(chat_screen_message_is_command(CHAT_SCREEN_TEXT_PLAIN));
 }
 
 } // anonymous namespace

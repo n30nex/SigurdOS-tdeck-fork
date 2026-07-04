@@ -43,8 +43,13 @@ static constexpr uint32_t CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS = 40;
 static constexpr int CHAT_SCREEN_CHANNEL_NAME_CAP = 37;
 static constexpr size_t CHAT_SCREEN_PERSIST_SENDER_BYTES = 32;
 static constexpr size_t CHAT_SCREEN_PERSIST_TEXT_BYTES = 160;
-static constexpr size_t CHAT_SCREEN_PERSIST_RECORD_BYTES =
+static constexpr size_t CHAT_SCREEN_PERSIST_RECORD_BYTES_V2 =
     CHAT_SCREEN_PERSIST_SENDER_BYTES + CHAT_SCREEN_PERSIST_TEXT_BYTES + 4 + 1;
+static constexpr size_t CHAT_SCREEN_PERSIST_RECORD_BYTES =
+    CHAT_SCREEN_PERSIST_RECORD_BYTES_V2 + 1;
+static constexpr uint8_t CHAT_SCREEN_TEXT_PLAIN = 0;
+static constexpr uint8_t CHAT_SCREEN_TEXT_CLI_DATA = 1;
+static constexpr uint8_t CHAT_SCREEN_TEXT_SIGNED_PLAIN = 2;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
 {
@@ -124,6 +129,16 @@ inline uint16_t chat_screen_render_limit_for_channel(const char* channel)
         : CHAT_SCREEN_RENDER_MAX;
 }
 
+inline uint8_t chat_screen_normalize_text_type(uint8_t txt_type)
+{
+    return txt_type <= CHAT_SCREEN_TEXT_SIGNED_PLAIN ? txt_type : CHAT_SCREEN_TEXT_PLAIN;
+}
+
+inline bool chat_screen_message_is_command(uint8_t txt_type)
+{
+    return chat_screen_normalize_text_type(txt_type) == CHAT_SCREEN_TEXT_CLI_DATA;
+}
+
 inline bool chat_screen_public_message_actions_available(const char* channel,
                                                          const char* sender,
                                                          bool is_self)
@@ -167,7 +182,8 @@ void chat_screen_open_room(const char* room_name);
 void chat_screen_set_filter(int mode);
 
 // Add a message to the chat display
-void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self);
+void chat_screen_add_msg(const char* channel, const char* sender, const char* text,
+                         bool is_self, uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN);
 
 // Handle trackball events for the chat screen. Returns true if consumed.
 bool chat_screen_handle_trackball(SigurdOSTrackballEvent event);
