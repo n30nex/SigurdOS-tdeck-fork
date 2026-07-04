@@ -482,7 +482,7 @@ public:
     bool setBlePin(uint32_t pin) override {
         if (pin != 0 && (pin < 100000 || pin > 999999)) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-        p.device_pin = pin;
+        p.ble_pin = pin;
         sigurdos::prefs_set(p);
         return true;
     }
@@ -727,9 +727,14 @@ public:
     }
     void setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
         if (!g_mesh) return;
-        if (unscoped) g_mesh->clearActiveScope();
+        if (unscoped) g_mesh->setSendUnscopedOnce(true);
         else if (key) g_mesh->setActiveScope(key);
-        else g_mesh->clearActiveScope();
+        else {
+            char name[31];
+            uint8_t default_key[16];
+            if (getDefaultFloodScope(name, default_key)) g_mesh->setActiveScope(default_key);
+            else g_mesh->clearActiveScope();
+        }
     }
 
     // ── Async requests ───────────────────────────────────────
@@ -798,7 +803,7 @@ public:
     }
     int getCustomVars(char* out, size_t out_cap) const override {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        int n = snprintf(out, out_cap, "gps=%d,gps_interval=%d",
+        int n = snprintf(out, out_cap, "gps:%d,gps_interval:%d",
                          p.gps_enabled ? 1 : 0, (int)p.gps_interval);
         return (n > 0 && (size_t)n < out_cap) ? n : 0;
     }

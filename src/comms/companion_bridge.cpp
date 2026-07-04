@@ -1070,10 +1070,15 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
-    if (cmd == CMD_SET_CUSTOM_VAR && len >= 3) {
-        const char* varname = (const char*)&_cmd_frame[1];
-        const char* value = varname + strlen(varname) + 1;
-        if ((size_t)(value - (const char*)_cmd_frame) >= len) {
+    if (cmd == CMD_SET_CUSTOM_VAR && len >= 4) {
+        char* varname = (char*)&_cmd_frame[1];
+        char* value = std::strchr(varname, ':');
+        if (!value) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        *value++ = '\0';
+        if (!varname[0] || !value[0]) {
             writeErrFrame(ERR_CODE_ILLEGAL_ARG);
             return true;
         }
@@ -1097,13 +1102,13 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         }
         int i = 0;
         _out_frame[i++] = RESP_CODE_ADVERT_PATH;
+        std::memcpy(&_out_frame[i], &timestamp, 4);
+        i += 4;
         _out_frame[i++] = plen;
         if (plen > 0) {
             std::memcpy(&_out_frame[i], path_buf, plen);
             i += plen;
         }
-        std::memcpy(&_out_frame[i], &timestamp, 4);
-        i += 4;
         _serial->writeFrame(_out_frame, i);
         return true;
     }

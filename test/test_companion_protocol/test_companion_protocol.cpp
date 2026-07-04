@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "comms/companion_bridge.h"
@@ -58,7 +59,8 @@ public:
 
     uint8_t path_hash_mode = 0;
 
-    uint32_t blePin() const override { return 123456; }
+    uint32_t ble_pin = 123456;
+    uint32_t blePin() const override { return ble_pin; }
     uint8_t clientRepeat() const override { return 0; }
     uint8_t pathHashMode() const override { return path_hash_mode; }
     void selfInfo(sigurdos::comms::CompanionSelfInfo& out) const override {
@@ -197,7 +199,11 @@ public:
         last_airtime = tx_delay_factor_x1000;
         return rx_delay_base_x1000 <= 20000 && tx_delay_factor_x1000 <= 2000;
     }
-    bool setBlePin(uint32_t) override { return true; }
+    bool setBlePin(uint32_t pin) override {
+        if (pin != 0 && (pin < 100000 || pin > 999999)) return false;
+        ble_pin = pin;
+        return true;
+    }
     bool exportPrivateKey(uint8_t* out64) const override {
         std::memset(out64, 0x42, 64);
         return true;
@@ -222,6 +228,7 @@ public:
     bool     scope_is_set = false;
     char     last_scope_name[32]{};
     bool     scope_unscoped = false, scope_cleared = false;
+    bool     scope_override_set = false, scope_reset_to_default = false;
     bool     last_send_ok = true;
     uint32_t last_trace_tag = 0; uint8_t last_trace_path_len = 0;
     int      sign_len_seen = -1;
@@ -284,7 +291,9 @@ public:
         else std::strncpy(last_scope_name, name, sizeof(last_scope_name) - 1);
     }
     void setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
-        scope_unscoped = unscoped; scope_cleared = (!unscoped && !key);
+        scope_unscoped = unscoped;
+        scope_reset_to_default = (!unscoped && !key);
+        scope_override_set = (!unscoped && key);
     }
     sigurdos::comms::CompanionSendResult sendLogin(const uint8_t*, const char*) override {
         return {last_send_ok, true, 0x11223344u, 5000};
@@ -301,8 +310,22 @@ public:
         return {last_send_ok, false, tag, 4000};
     }
     void selfTelemetry(uint8_t*, size_t* out_len) const override { if (out_len) *out_len = 0; }
-    int getCustomVars(char*, size_t) const override { return 0; }  // empty by default
-    bool setCustomVar(const char*, const char*) override { return false; }  // fail by default
+    const char* custom_vars = "";
+    char last_custom_name[32]{};
+    char last_custom_value[32]{};
+    int getCustomVars(char* out, size_t out_cap) const override {
+        if (!out || out_cap == 0 || !custom_vars || !custom_vars[0]) return 0;
+        int n = std::snprintf(out, out_cap, "%s", custom_vars);
+        return (n > 0 && (size_t)n < out_cap) ? n : 0;
+    }
+    bool setCustomVar(const char* name, const char* value) override {
+        if (!name || !value || !name[0] || !value[0]) return false;
+        std::strncpy(last_custom_name, name, sizeof(last_custom_name) - 1);
+        last_custom_name[sizeof(last_custom_name) - 1] = '\0';
+        std::strncpy(last_custom_value, value, sizeof(last_custom_value) - 1);
+        last_custom_value[sizeof(last_custom_value) - 1] = '\0';
+        return std::strcmp(name, "gps") == 0 || std::strcmp(name, "gps_interval") == 0;
+    }
     int signData(const uint8_t*, size_t len, uint8_t* sig_out) override {
         sign_len_seen = (int)len;
         std::memset(sig_out, 0xAB, 64);
@@ -311,8 +334,21 @@ public:
     sigurdos::comms::CompanionSendResult sendPathDiscovery(const uint8_t*) override {
         return {false, false, 0, 0};  // not found by default
     }
-    uint8_t getAdvertPath(const uint8_t*, uint8_t*, uint8_t,
-                          uint32_t*) const override { return 0; }
+    bool advert_path_found = false;
+    uint8_t advert_path[8]{};
+    uint8_t advert_path_len = 0;
+    uint32_t advert_path_timestamp = 0;
+    uint8_t getAdvertPath(const uint8_t*, uint8_t* path_out, uint8_t max_path,
+                          uint32_t* timestamp_out) const override {
+        if (!advert_path_found) return 0;
+        uint8_t plen = advert_path_len;
+        if (path_out && max_path > 0) {
+            uint8_t copy_len = plen < max_path ? plen : max_path;
+            std::memcpy(path_out, advert_path, copy_len);
+        }
+        if (timestamp_out) *timestamp_out = advert_path_timestamp;
+        return plen;
+    }
 };
 
 class CompanionProtocolTest : public ::testing::Test {
@@ -442,6 +478,37 @@ TEST_F(CompanionProtocolTest, DeviceQueryReportsConfiguredPathHashMode) {
     const auto& out = serial.writes[0];
     ASSERT_EQ(out.size(), 82u);
     EXPECT_EQ(out[81], 2);
+}
+
+TEST_F(CompanionProtocolTest, SetDevicePinUpdatesBlePinReportedByDeviceQuery) {
+    uint32_t new_pin = 654321;
+    uint8_t set[5] = {sigurdos::comms::CMD_SET_DEVICE_PIN};
+    std::memcpy(&set[1], &new_pin, 4);
+    ASSERT_TRUE(bridge.handleFrame(set, sizeof(set)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+
+    serial.writes.clear();
+    uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    uint32_t reported_pin = 0;
+    std::memcpy(&reported_pin, &out[4], 4);
+    EXPECT_EQ(reported_pin, new_pin);
+}
+
+TEST_F(CompanionProtocolTest, SetDevicePinRejectsInvalidPinAndKeepsOldValue) {
+    uint32_t old_pin = host.blePin();
+    uint32_t bad_pin = 1000000;
+    uint8_t set[5] = {sigurdos::comms::CMD_SET_DEVICE_PIN};
+    std::memcpy(&set[1], &bad_pin, 4);
+    ASSERT_TRUE(bridge.handleFrame(set, sizeof(set)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    ASSERT_GE(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+    EXPECT_EQ(host.blePin(), old_pin);
 }
 
 TEST_F(CompanionProtocolTest, SetPathHashModeAcceptsValidModes) {
@@ -922,6 +989,16 @@ TEST_F(CompanionProtocolTest, FloodScopeKeyOverride) {
     uint8_t setkey[2 + 16] = { cc::CMD_SET_FLOOD_SCOPE_KEY, 0 };
     ASSERT_TRUE(bridge.handleFrame(setkey, sizeof(setkey)));
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_TRUE(host.scope_override_set);
+    EXPECT_FALSE(host.scope_unscoped);
+
+    serial.writes.clear();
+    host.scope_override_set = true;
+    uint8_t reset_to_default[2] = { cc::CMD_SET_FLOOD_SCOPE_KEY, 0 };
+    ASSERT_TRUE(bridge.handleFrame(reset_to_default, sizeof(reset_to_default)));
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_TRUE(host.scope_reset_to_default);
+    EXPECT_FALSE(host.scope_unscoped);
 }
 
 TEST_F(CompanionProtocolTest, SignFlow) {
@@ -997,6 +1074,64 @@ TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     uint8_t rf[1] = { cc::CMD_GET_ALLOWED_REPEAT_FREQ };
     ASSERT_TRUE(bridge.handleFrame(rf, sizeof(rf)));
     EXPECT_EQ(serial.writes[0][0], cc::RESP_ALLOWED_REPEAT_FREQ);
+}
+
+TEST_F(CompanionProtocolTest, CustomVarsUseMeshCoreColonWireFormat) {
+    host.custom_vars = "gps:1,gps_interval:30";
+    uint8_t get[1] = { cc::CMD_GET_CUSTOM_VARS };
+    ASSERT_TRUE(bridge.handleFrame(get, sizeof(get)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out[0], cc::RESP_CODE_CUSTOM_VARS);
+    std::string payload((const char*)&out[1], out.size() - 1);
+    EXPECT_EQ(payload, "gps:1,gps_interval:30");
+
+    serial.writes.clear();
+    const char set_payload[] = "gps_interval:60";
+    std::vector<uint8_t> set(1 + sizeof(set_payload) - 1);
+    set[0] = cc::CMD_SET_CUSTOM_VAR;
+    std::memcpy(&set[1], set_payload, sizeof(set_payload) - 1);
+    ASSERT_TRUE(bridge.handleFrame(set.data(), set.size()));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_STREQ(host.last_custom_name, "gps_interval");
+    EXPECT_STREQ(host.last_custom_value, "60");
+}
+
+TEST_F(CompanionProtocolTest, CustomVarSetRejectsMissingColon) {
+    const char set_payload[] = "gps_interval";
+    std::vector<uint8_t> set(1 + sizeof(set_payload) - 1);
+    set[0] = cc::CMD_SET_CUSTOM_VAR;
+    std::memcpy(&set[1], set_payload, sizeof(set_payload) - 1);
+    ASSERT_TRUE(bridge.handleFrame(set.data(), set.size()));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    ASSERT_GE(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, GetAdvertPathMatchesMeshCoreFrameLayout) {
+    host.advert_path_found = true;
+    host.advert_path_timestamp = 0x01020304;
+    host.advert_path_len = 3;
+    host.advert_path[0] = 0xAA;
+    host.advert_path[1] = 0xBB;
+    host.advert_path[2] = 0xCC;
+
+    std::vector<uint8_t> frame(2 + sigurdos::comms::SIGURDOS_COMPANION_PUB_KEY_SIZE, 0);
+    frame[0] = cc::CMD_GET_ADVERT_PATH;
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 1u + 4u + 1u + 3u);
+    EXPECT_EQ(out[0], cc::RESP_CODE_ADVERT_PATH);
+    uint32_t timestamp = 0;
+    std::memcpy(&timestamp, &out[1], 4);
+    EXPECT_EQ(timestamp, 0x01020304u);
+    EXPECT_EQ(out[5], 3);
+    EXPECT_EQ(out[6], 0xAA);
+    EXPECT_EQ(out[7], 0xBB);
+    EXPECT_EQ(out[8], 0xCC);
 }
 
 // ── Live / async pushes ───────────────────────────────────────
