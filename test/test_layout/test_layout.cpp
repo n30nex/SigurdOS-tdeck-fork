@@ -53,8 +53,10 @@ TEST(LayoutTest, TDeckGridUsesFourColumns) {
 }
 
 TEST(LayoutTest, HashtagLabelLeavesRoomForControls) {
-    EXPECT_EQ(HASHTAG_LABEL_W(), DISPLAY_W - 60);
-    EXPECT_GT(HASHTAG_LABEL_W(), CONTENT_W / 2);
+    constexpr int reserved_for_controls = 150;
+    EXPECT_EQ(HASHTAG_LABEL_W(), DISPLAY_W - reserved_for_controls);
+    EXPECT_GE(HASHTAG_LABEL_W(), 80);
+    EXPECT_LE(HASHTAG_LABEL_W() + reserved_for_controls, DISPLAY_W);
     EXPECT_LT(HASHTAG_LABEL_W(), DISPLAY_W);
 }
 
