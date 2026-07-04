@@ -55,6 +55,26 @@ TEST_F(PrefsTest, DefaultRxBoostedGainIsDisabled) {
     EXPECT_FALSE(prefs.rx_boosted_gain);
 }
 
+TEST_F(PrefsTest, TxPowerNormalizationKeepsUnconfiguredAndClampsConfiguredRange) {
+    EXPECT_EQ(0, sigurdos::prefs_normalize_tx_power_dbm(0));
+    EXPECT_EQ(2, sigurdos::prefs_normalize_tx_power_dbm(-9));
+    EXPECT_EQ(2, sigurdos::prefs_normalize_tx_power_dbm(1));
+    EXPECT_EQ(2, sigurdos::prefs_normalize_tx_power_dbm(2));
+    EXPECT_EQ(22, sigurdos::prefs_normalize_tx_power_dbm(23));
+}
+
+TEST_F(PrefsTest, TxPowerClampAppliesThroughNativePrefsMock) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.tx_power_dbm = -9;
+    ASSERT_TRUE(sigurdos::prefs_save(prefs));
+    EXPECT_EQ(2, sigurdos::prefs_get().tx_power_dbm);
+
+    prefs.tx_power_dbm = 23;
+    sigurdos::prefs_set(prefs);
+    EXPECT_EQ(22, sigurdos::prefs_get().tx_power_dbm);
+}
+
 TEST_F(PrefsTest, RxBoostedGainRoundTripsThroughPrefsSetAndGet) {
     sigurdos::NodePrefs prefs;
     prefs.set_defaults();

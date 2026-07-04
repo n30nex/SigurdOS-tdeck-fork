@@ -40,6 +40,11 @@ static constexpr int CHAT_EMOJI_PICKER_PAGE_SIZE = 16;
 static constexpr uint32_t CHAT_SCREEN_LIST_LOAD_ANIM_MS = 200;
 static constexpr uint32_t CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS = 260;
 static constexpr uint32_t CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS = 40;
+static constexpr int CHAT_SCREEN_CHANNEL_NAME_CAP = 37;
+static constexpr size_t CHAT_SCREEN_PERSIST_SENDER_BYTES = 32;
+static constexpr size_t CHAT_SCREEN_PERSIST_TEXT_BYTES = 160;
+static constexpr size_t CHAT_SCREEN_PERSIST_RECORD_BYTES =
+    CHAT_SCREEN_PERSIST_SENDER_BYTES + CHAT_SCREEN_PERSIST_TEXT_BYTES + 4 + 1;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
 {

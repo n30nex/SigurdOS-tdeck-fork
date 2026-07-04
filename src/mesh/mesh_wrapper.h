@@ -75,7 +75,11 @@ void mesh_v2_companion_path_push(const uint8_t* pub_key);
 void mesh_v2_companion_contact_deleted_push(const uint8_t* pub_key);
 void mesh_v2_companion_contacts_full_push();
 void mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,
-                                  uint8_t permission, bool is_admin);
+                                  uint8_t permission, bool is_admin,
+                                  uint32_t server_tag = 0,
+                                  uint8_t acl = 0,
+                                  uint8_t firmware_level = 0,
+                                  bool include_extended = false);
 void mesh_v2_companion_status_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
 void mesh_v2_companion_telemetry_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
 void mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,
@@ -146,6 +150,8 @@ struct LoginResponseParseResult {
     uint8_t keep_alive_units = 0;
     uint8_t permission = 0;
     uint8_t acl = 0;
+    uint32_t server_tag = 0;
+    uint8_t firmware_level = 0;
     uint8_t failure_code = 0;
 };
 
@@ -158,9 +164,11 @@ inline LoginResponseParseResult parseLoginResponse(const uint8_t* data,
 
     if (len >= 8 && data[4] == 0) {
         result.kind = LoginResponseKind::NewOk;
+        std::memcpy(&result.server_tag, data, 4);
         result.keep_alive_units = data[5];
         result.permission = data[6];
         result.acl = data[7];
+        result.firmware_level = (len > 12) ? data[12] : 0;
         return result;
     }
 

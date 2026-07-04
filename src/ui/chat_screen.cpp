@@ -136,10 +136,10 @@ static constexpr int LIST_ROW_H  = 44;
 // ── Channel state ──────────────────────────────────────────
 static constexpr int MAX_CHANNELS = 16;
 // Row width of the channel-name table: "DM: " (4) + contact name (31) + null
-// = 36 → 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
+// = 36 -> 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
 // this constant — a stride mismatch silently corrupts the channel-state snapshot
 // taken in refresh_channels() (see issue #686).
-static constexpr int CHANNEL_NAME_CAP = 37;
+static constexpr int CHANNEL_NAME_CAP = CHAT_SCREEN_CHANNEL_NAME_CAP;
 static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
@@ -154,7 +154,7 @@ static char g_pending_select_channel[CHANNEL_NAME_CAP] = "";
 static bool g_channel_transition_pending = false;
 
 // ── Channel filter mode ────────────────────────────────────
-// 0 = show all, 1 = channels only, 2 = DMs only
+// 1 = channels only, 2 = DMs only. Other values fall back to channels only.
 static int   chat_filter_mode = 1;
 
 static bool chat_conversation_visible_for_current_filter(const char* conversation)
@@ -462,8 +462,6 @@ static void refresh_channels()
         Serial.printf("[chat] filter: DMs only, after=%d\n", dyn_count);
 #endif
     }
-    // mode 0: no filter, show all
-
     // ── Fallback: if filter removed everything, add a default ─
     if (dyn_count == 0) {
         if (chat_filter_mode == 1) {
@@ -3015,11 +3013,10 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
         channel = dm_buf;
     }
 
+    const bool in_current_filter = chat_conversation_visible_for_current_filter(channel);
+
     int idx = find_channel_idx(channel);
     if (idx < 0) {
-        if (!chat_conversation_visible_for_current_filter(channel)) {
-            return;
-        }
         if (dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
             strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
@@ -3036,7 +3033,14 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
-    if (!visible) return;
+    if (!visible) {
+        if (ch_list && lv_obj_is_valid(ch_list) && current_screen() == Screen::Chat) {
+            refresh_chat_list_view(lv_scr_act());
+        }
+        return;
+    }
+
+    if (!in_current_filter) return;
 
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
@@ -3256,7 +3260,7 @@ static constexpr uint32_t MSG_MAGIC = 0x536d534c; // "SLmS"
 static constexpr uint8_t  MSG_VERSION = 2;
 static constexpr size_t   MSG_MAX_CHANNELS = 16;
 static constexpr size_t   MSG_MAX_PER_CHANNEL = CHAT_MSGS_MAX;
-static constexpr size_t   MSG_RECORD_BYTES = CHANNEL_NAME_CAP + 160 + 4 + 1;
+static constexpr size_t   MSG_RECORD_BYTES = CHAT_SCREEN_PERSIST_RECORD_BYTES;
 static constexpr size_t   MSG_MAX_FILE_SIZE =
     4 + 1 + 1 +
     MSG_MAX_CHANNELS * (CHANNEL_NAME_CAP + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES);
@@ -3299,13 +3303,15 @@ void chat_save_messages()
         for (int j = 0; j < mc; j++) {
             const ChannelMessage& msg = ch_msgs[i][j];
 
-            uint8_t sender_buf[32] = {0};
-            memcpy(sender_buf, msg.sender, strnlen(msg.sender, 31));
-            f.write(sender_buf, 32);
+            uint8_t sender_buf[CHAT_SCREEN_PERSIST_SENDER_BYTES] = {0};
+            memcpy(sender_buf, msg.sender,
+                   strnlen(msg.sender, CHAT_SCREEN_PERSIST_SENDER_BYTES - 1));
+            f.write(sender_buf, CHAT_SCREEN_PERSIST_SENDER_BYTES);
 
-            uint8_t text_buf[160] = {0};
-            memcpy(text_buf, msg.text, strnlen(msg.text, 159));
-            f.write(text_buf, 160);
+            uint8_t text_buf[CHAT_SCREEN_PERSIST_TEXT_BYTES] = {0};
+            memcpy(text_buf, msg.text,
+                   strnlen(msg.text, CHAT_SCREEN_PERSIST_TEXT_BYTES - 1));
+            f.write(text_buf, CHAT_SCREEN_PERSIST_TEXT_BYTES);
 
             f.write((const uint8_t*)&msg.timestamp, 4);
             uint8_t self = msg.is_self ? 1 : 0;
@@ -3344,20 +3350,43 @@ void chat_load_messages()
         return;
     }
     File f = SPIFFS.open("/msgs", "r");
-    if (!f) return;
+    if (!f) {
+        chat_load_companion_messages();
+        return;
+    }
+
+    auto close_and_load_companion = [&]() {
+        f.close();
+        chat_load_companion_messages();
+    };
 
     size_t file_size = f.size();
-    if (file_size < 6 || file_size > MSG_MAX_FILE_SIZE) { f.close(); return; }
+    if (file_size < 6 || file_size > MSG_MAX_FILE_SIZE) {
+        close_and_load_companion();
+        return;
+    }
 
     uint32_t magic;
-    if (f.read((uint8_t*)&magic, 4) != 4 || magic != MSG_MAGIC) { f.close(); return; }
+    if (f.read((uint8_t*)&magic, 4) != 4 || magic != MSG_MAGIC) {
+        close_and_load_companion();
+        return;
+    }
 
     uint8_t ver;
-    if (f.read(&ver, 1) != 1 || ver != MSG_VERSION) { f.close(); return; }
+    if (f.read(&ver, 1) != 1 || ver != MSG_VERSION) {
+        close_and_load_companion();
+        return;
+    }
 
     uint8_t ch_count;
-    if (f.read(&ch_count, 1) != 1) { f.close(); return; }
-    if (ch_count > MSG_MAX_CHANNELS) { f.close(); return; }
+    if (f.read(&ch_count, 1) != 1) {
+        close_and_load_companion();
+        return;
+    }
+    if (ch_count > MSG_MAX_CHANNELS) {
+        close_and_load_companion();
+        return;
+    }
 
     for (int ci = 0; ci < ch_count; ci++) {
         if (f.position() + CHANNEL_NAME_CAP + 1 > file_size) break;
@@ -3386,36 +3415,38 @@ void chat_load_messages()
         // files contain more entries than the configured runtime cap.
         for (int j = 0; j < msg_count; j++) {
             if (f.position() + MSG_RECORD_BYTES > file_size) {
-                f.close();
+                close_and_load_companion();
                 return;
             }
 
-            char sender[32] = {0};
-            if (f.read((uint8_t*)sender, 32) != 32) {
-                f.close();
+            char sender[CHAT_SCREEN_PERSIST_SENDER_BYTES] = {0};
+            if (f.read((uint8_t*)sender, CHAT_SCREEN_PERSIST_SENDER_BYTES) !=
+                CHAT_SCREEN_PERSIST_SENDER_BYTES) {
+                close_and_load_companion();
                 return;
             }
 
-            char text[160] = {0};
-            if (f.read((uint8_t*)text, 160) != 160) {
-                f.close();
+            char text[CHAT_SCREEN_PERSIST_TEXT_BYTES] = {0};
+            if (f.read((uint8_t*)text, CHAT_SCREEN_PERSIST_TEXT_BYTES) !=
+                CHAT_SCREEN_PERSIST_TEXT_BYTES) {
+                close_and_load_companion();
                 return;
             }
 
             uint32_t timestamp;
             if (f.read((uint8_t*)&timestamp, 4) != 4) {
-                f.close();
+                close_and_load_companion();
                 return;
             }
 
             uint8_t self;
             if (f.read(&self, 1) != 1) {
-                f.close();
+                close_and_load_companion();
                 return;
             }
 
-            sender[31] = '\0';
-            text[159] = '\0';
+            sender[CHAT_SCREEN_PERSIST_SENDER_BYTES - 1] = '\0';
+            text[CHAT_SCREEN_PERSIST_TEXT_BYTES - 1] = '\0';
 
             if (idx < 0 || idx >= MAX_CHANNELS) {
                 continue;

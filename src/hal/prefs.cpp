@@ -33,9 +33,7 @@ bool prefs_load(NodePrefs& p) {
     p.bw           = nvs.getFloat("bw", 0.0f);
     p.sf           = nvs.getUChar("sf", 0);
     p.cr           = nvs.getUChar("cr", 0);
-    p.tx_power_dbm  = nvs.getChar("txpwr", 0);
-    if (p.tx_power_dbm > 0 && p.tx_power_dbm < 2) p.tx_power_dbm = 2;
-    if (p.tx_power_dbm > 22) p.tx_power_dbm = 22;
+    p.tx_power_dbm = prefs_normalize_tx_power_dbm(nvs.getChar("txpwr", 0));
     size_t rf_prof_len = nvs.getString("rf_prof", p.radio_profile, sizeof(p.radio_profile));
     if (rf_prof_len == 0 || rf_prof_len > sizeof(p.radio_profile)) { p.radio_profile[0] = '\0'; }
     else { p.radio_profile[sizeof(p.radio_profile) - 1] = '\0'; }
@@ -120,7 +118,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putFloat("bw", p.bw);
     nvs.putUChar("sf", p.sf);
     nvs.putUChar("cr", p.cr);
-    nvs.putChar("txpwr", p.tx_power_dbm < -9 ? (int8_t)(-9) : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
+    nvs.putChar("txpwr", prefs_normalize_tx_power_dbm(p.tx_power_dbm));
     nvs.putString("rf_prof", p.radio_profile);
     nvs.putBool("cfg", p.configured);
     nvs.putUChar("kbd_bl", p.kbd_backlight);

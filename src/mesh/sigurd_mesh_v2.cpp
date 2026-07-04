@@ -703,7 +703,9 @@ namespace mesh {
                 _login_entries[login_idx].acl_permissions = acl;
 
                 sigurdos::mesh::mesh_v2_companion_login_push(
-                    contact.id.pub_key, true, perm, /*is_admin=*/false);
+                    contact.id.pub_key, true, perm, /*is_admin=*/false,
+                    login_response.server_tag, acl, login_response.firmware_level,
+                    /*include_extended=*/true);
 
                 // Start keep-alive connection. Upstream simple repeater/room
                 // firmware currently sends a zero legacy hint; use the local

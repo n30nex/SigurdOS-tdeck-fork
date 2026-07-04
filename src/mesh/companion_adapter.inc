@@ -910,10 +910,16 @@ void sigurdos::mesh::mesh_v2_companion_contacts_full_push()
 }
 
 void sigurdos::mesh::mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,
-                                                  uint8_t permission, bool is_admin)
+                                                  uint8_t permission, bool is_admin,
+                                                  uint32_t server_tag,
+                                                  uint8_t acl,
+                                                  uint8_t firmware_level,
+                                                  bool include_extended)
 {
     if (g_companion_bridge_ptr)
-        g_companion_bridge_ptr->pushLoginResult(pub_key, success, permission, is_admin);
+        g_companion_bridge_ptr->pushLoginResult(pub_key, success, permission, is_admin,
+                                                server_tag, acl, firmware_level,
+                                                include_extended);
 }
 
 void sigurdos::mesh::mesh_v2_companion_status_push(const uint8_t* pub_key,

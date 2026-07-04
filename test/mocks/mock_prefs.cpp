@@ -36,6 +36,7 @@ bool prefs_load(NodePrefs& p) {
 
 bool prefs_save(const NodePrefs& p) {
     g_prefs = p;
+    g_prefs.tx_power_dbm = prefs_normalize_tx_power_dbm(g_prefs.tx_power_dbm);
     return true;
 }
 
@@ -49,6 +50,7 @@ const NodePrefs& prefs_get() {
 
 void prefs_set(const NodePrefs& p) {
     g_prefs = p;
+    g_prefs.tx_power_dbm = prefs_normalize_tx_power_dbm(g_prefs.tx_power_dbm);
 }
 
 bool saveRepeaterPassword(const char* name, const char* password) {

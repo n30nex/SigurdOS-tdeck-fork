@@ -12,6 +12,13 @@
 
 namespace sigurdos {
 
+inline int8_t prefs_normalize_tx_power_dbm(int8_t tx_power_dbm) {
+    if (tx_power_dbm == 0) return 0;  // unconfigured sentinel
+    if (tx_power_dbm < 2) return 2;
+    if (tx_power_dbm > 22) return 22;
+    return tx_power_dbm;
+}
+
 struct NodePrefs {
     char    node_name[32];
     float   freq;           // MHz (e.g. 869.618)

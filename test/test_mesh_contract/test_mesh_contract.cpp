@@ -115,12 +115,19 @@ TEST(MeshContractTest, LoginKeepAliveUsesDefaultForMeshCoreZeroHint) {
 }
 
 TEST(MeshContractTest, LoginResponseParserAcceptsNewOkOnlyWithFullPayload) {
-    const uint8_t ok[] = {0x11, 0x22, 0x33, 0x44, 0x00, 0x04, 0x02, 0x7f};
+    const uint8_t ok[] = {
+        0x11, 0x22, 0x33, 0x44,
+        0x00, 0x04, 0x02, 0x7f,
+        0x00, 0x00, 0x00, 0x00,
+        0x12
+    };
     auto parsed = sigurdos::mesh::parseLoginResponse(ok, sizeof(ok), true);
     EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::NewOk);
     EXPECT_EQ(parsed.keep_alive_units, 0x04);
     EXPECT_EQ(parsed.permission, 0x02);
     EXPECT_EQ(parsed.acl, 0x7f);
+    EXPECT_EQ(parsed.server_tag, 0x44332211u);
+    EXPECT_EQ(parsed.firmware_level, 0x12);
 
     const uint8_t too_short_ok[] = {0x11, 0x22, 0x33, 0x44, 0x00};
     parsed = sigurdos::mesh::parseLoginResponse(too_short_ok, sizeof(too_short_ok), true);

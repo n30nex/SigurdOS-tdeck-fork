@@ -15,7 +15,11 @@ using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MAX;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MIN;
 using sigurdos::ui::CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS;
 using sigurdos::ui::CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS;
+using sigurdos::ui::CHAT_SCREEN_CHANNEL_NAME_CAP;
 using sigurdos::ui::CHAT_SCREEN_LIST_LOAD_ANIM_MS;
+using sigurdos::ui::CHAT_SCREEN_PERSIST_RECORD_BYTES;
+using sigurdos::ui::CHAT_SCREEN_PERSIST_SENDER_BYTES;
+using sigurdos::ui::CHAT_SCREEN_PERSIST_TEXT_BYTES;
 using sigurdos::ui::CHAT_SCREEN_PUBLIC_RENDER_MAX;
 using sigurdos::ui::CHAT_SCREEN_RENDER_MAX;
 using sigurdos::ui::CHAT_EMOJI_PICKER_PAGE_SIZE;
@@ -180,7 +184,8 @@ static void formatDmName(const char* contact_name, char* out, size_t out_sz) {
 TEST(ChatScreenDmName, FormatFitsInBuffer) {
     // Verify compile-time sizing: DM prefix + MAX_NAME_LEN + null must fit in a reasonable buffer
     constexpr size_t NEEDED = sizeof("DM: ") + MAX_NAME_LEN;  // including null from ""
-    EXPECT_LE(NEEDED, (size_t)37) << "Buffer must be at least " << NEEDED << " bytes";
+    EXPECT_LE(NEEDED, (size_t)CHAT_SCREEN_CHANNEL_NAME_CAP)
+        << "Buffer must be at least " << NEEDED << " bytes";
 }
 
 TEST(ChatScreenDmName, MaxLengthName) {
@@ -228,6 +233,13 @@ TEST(ChatScreenDmName, ChannelCopyFits) {
     EXPECT_EQ(strlen(channel_buf), (size_t)(CHANNEL_BUF_SZ - 1))
         << "DM name truncated to fit channel buffer (4+len=" << (4 + MAX_NAME_LEN)
         << " > " << (CHANNEL_BUF_SZ - 1) << ")";
+}
+
+TEST(ChatPersistenceConfig, RecordBytesMatchWriterLayout) {
+    EXPECT_EQ(CHAT_SCREEN_CHANNEL_NAME_CAP, 37);
+    EXPECT_EQ(CHAT_SCREEN_PERSIST_SENDER_BYTES, 32u);
+    EXPECT_EQ(CHAT_SCREEN_PERSIST_TEXT_BYTES, 160u);
+    EXPECT_EQ(CHAT_SCREEN_PERSIST_RECORD_BYTES, 197u);
 }
 
 } // anonymous namespace

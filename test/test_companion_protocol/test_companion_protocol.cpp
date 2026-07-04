@@ -929,6 +929,7 @@ TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     EXPECT_TRUE(bridge.pushLoginResult(prefix, true, 3, false));
     EXPECT_EQ(serial.writes[0][0], cc::PUSH_CODE_LOGIN_SUCCESS);
     EXPECT_EQ(serial.writes[0][1], 3);
+    EXPECT_EQ(serial.writes[0].size(), 8u);
 
     serial.writes.clear();
     EXPECT_TRUE(bridge.pushLoginResult(prefix, false, 0, false));
@@ -955,6 +956,27 @@ TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     // [4..7] tag, [8..11] auth, [12..13] hashes, [14..15] snrs, [16] final snr
     ASSERT_EQ(t.size(), 17u);
     EXPECT_EQ((int8_t)t[16], -8);
+}
+
+TEST_F(CompanionProtocolTest, ExtendedLoginPushMatchesUpstreamFrameShape) {
+    uint8_t prefix[6] = { 1, 2, 3, 4, 5, 6 };
+    uint32_t server_tag = 0xAABBCCDDu;
+
+    EXPECT_TRUE(bridge.pushLoginResult(prefix, true, 2, false,
+                                       server_tag, 0x03, 0x12,
+                                       true));
+
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 14u);
+    EXPECT_EQ(out[0], cc::PUSH_CODE_LOGIN_SUCCESS);
+    EXPECT_EQ(out[1], 2);
+    EXPECT_EQ(std::memcmp(&out[2], prefix, sizeof(prefix)), 0);
+    uint32_t got_tag = 0;
+    std::memcpy(&got_tag, &out[8], 4);
+    EXPECT_EQ(got_tag, server_tag);
+    EXPECT_EQ(out[12], 0x03);
+    EXPECT_EQ(out[13], 0x12);
 }
 
 TEST_F(CompanionProtocolTest, SendChannelDataFloodDispatchesToHostAndReturnsOk) {
