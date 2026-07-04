@@ -1372,8 +1372,12 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
-                sigurdos::mesh::requestStatus(name);
-                sigurdos::ui::navigate_to(sigurdos::ui::Screen::NodeStatus);
+                if (sigurdos::mesh::requestStatus(name)) {
+                    sigurdos::ui::navigate_to(sigurdos::ui::Screen::NodeStatus);
+                } else {
+                    sigurdos::mesh::mesh_v2_queue_push(
+                        "System", "", "! Status request failed", 0, 0.0f);
+                }
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(st_btn, [](lv_event_t* e) {
@@ -1405,8 +1409,12 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
-                sigurdos::mesh::requestTelemetry(name);
-                sigurdos::ui::navigate_to(sigurdos::ui::Screen::Telemetry);
+                if (sigurdos::mesh::requestTelemetry(name)) {
+                    sigurdos::ui::navigate_to(sigurdos::ui::Screen::Telemetry);
+                } else {
+                    sigurdos::mesh::mesh_v2_queue_push(
+                        "System", "", "! Telemetry request failed", 0, 0.0f);
+                }
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(tm_btn, [](lv_event_t* e) {
@@ -1666,38 +1674,6 @@ void contact_detail_screen_show(const char* contact_name)
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-
-            // ── Fetch Msgs row (second row of buttons) ──
-            lv_obj_t* fetch_row = lv_obj_create(scr);
-            lv_obj_set_size(fetch_row, CONTENT_W, 30);
-            lv_obj_align(fetch_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 68));
-            lv_obj_set_style_bg_opa(fetch_row, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(fetch_row, 0, 0);
-            lv_obj_set_flex_flow(fetch_row, LV_FLEX_FLOW_ROW);
-            lv_obj_set_flex_align(fetch_row, LV_FLEX_ALIGN_SPACE_EVENLY,
-                                  LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-            // ── Fetch Msgs button ──
-            char* fm_name = strdup(contact_name);
-            lv_obj_t* fm_btn = lv_btn_create(fetch_row);
-            lv_obj_set_size(fm_btn, 180, 24);
-            lv_obj_set_style_bg_color(fm_btn, lv_color_hex(0x0088cc), 0);
-            lv_obj_set_style_radius(fm_btn, 0, 0);
-            lv_obj_t* fm_lbl = lv_label_create(fm_btn);
-            lv_label_set_text(fm_lbl, LV_SYMBOL_LIST " Fetch Msgs");
-            lv_obj_center(fm_lbl);
-            lv_obj_set_style_text_color(fm_lbl, lv_color_hex(0xffffff), 0);
-            lv_obj_set_user_data(fm_btn, fm_name);
-            lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(btn);
-                if (name) {
-                    show_fetch_msgs_dialog(name);
-                }
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
                 free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
             }, LV_EVENT_DELETE, nullptr);
 

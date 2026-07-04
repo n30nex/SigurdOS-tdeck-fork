@@ -943,26 +943,6 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             }
         }
 
-        // Fetch Msgs (available to all logged-in users)
-        {
-            char* n = strdup(contact_name);
-            if (n) {
-                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_LIST "  Fetch Msgs", ">");
-                lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-                lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
-                lv_obj_set_user_data(r, n);
-                lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                    if (name) show_fetch_msgs_dialog(name);
-                }, LV_EVENT_CLICKED, nullptr);
-                lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-                }, LV_EVENT_DELETE, nullptr);
-                row++;
-            }
-        }
-
         // Reboot (with confirmation dialog) — admin only
         if (is_admin) {
             char* n = strdup(contact_name);

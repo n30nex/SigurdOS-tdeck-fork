@@ -78,6 +78,11 @@ TEST(MeshContractTest, PublicChannelDefaultsStayStable) {
     EXPECT_TRUE(sigurdos::mesh::isPublicChannelName("Public"));
     EXPECT_FALSE(sigurdos::mesh::isPublicChannelName("#public"));
     EXPECT_FALSE(sigurdos::mesh::isPublicChannelName(nullptr));
+    EXPECT_TRUE(sigurdos::mesh::isReservedPublicHashtagName("Public"));
+    EXPECT_TRUE(sigurdos::mesh::isReservedPublicHashtagName("#Public"));
+    EXPECT_TRUE(sigurdos::mesh::isReservedPublicHashtagName(" #public "));
+    EXPECT_FALSE(sigurdos::mesh::isReservedPublicHashtagName("#public-room"));
+    EXPECT_FALSE(sigurdos::mesh::isReservedPublicHashtagName(nullptr));
 }
 
 TEST(MeshContractTest, ContactPermissionsFitPackedFlagBits) {
@@ -109,6 +114,13 @@ TEST(MeshContractTest, LoginKeepAliveUsesDefaultForMeshCoreZeroHint) {
     EXPECT_EQ(sigurdos::mesh::loginKeepAliveSeconds(0, ADV_TYPE_CHAT), 0u);
 }
 
+TEST(MeshContractTest, PendingRequestsExpireWithWrapSafeElapsedTime) {
+    EXPECT_EQ(sigurdos::mesh::PENDING_REQUEST_TTL_MS, 120000u);
+    EXPECT_FALSE(sigurdos::mesh::pendingRequestExpired(0u, 119999u));
+    EXPECT_TRUE(sigurdos::mesh::pendingRequestExpired(0u, 120000u));
+    EXPECT_TRUE(sigurdos::mesh::pendingRequestExpired(UINT32_MAX - 100u, 119899u));
+}
+
 TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_EQ(sigurdos::mesh::LOGIN_PASSWORD_MAX_BYTES, 15u);
     EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable(""));
@@ -132,6 +144,18 @@ TEST(MeshContractTest, RoomMessageFormattingUsesSingleChannelPrefix) {
                                                        out, sizeof(out)));
     EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("Public", "hello",
                                                        out, 4));
+}
+
+TEST(MeshContractTest, UnsupportedRoomFetchFailsClosedAtWrapper) {
+    EXPECT_FALSE(sigurdos::mesh::roomMessageFetchSupported());
+}
+
+TEST(MeshContractTest, ChannelSendWrappersRejectNullInputs) {
+    EXPECT_FALSE(sigurdos::mesh::sendChannelMessage(nullptr, "hello"));
+    EXPECT_FALSE(sigurdos::mesh::sendChannelMessage("Public", nullptr));
+    EXPECT_FALSE(sigurdos::mesh::sendChannelMessage("", "hello"));
+    EXPECT_FALSE(sigurdos::mesh::sendChannelMessage("Public", ""));
+    EXPECT_FALSE(sigurdos::mesh::sendChannelMessageWithScopeKey(nullptr, "hello", nullptr));
 }
 
 TEST(MeshContractTest, RoomMessageFormattingHonorsRoomServerPostLimit) {

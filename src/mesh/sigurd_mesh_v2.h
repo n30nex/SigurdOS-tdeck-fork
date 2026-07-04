@@ -191,8 +191,9 @@ public:
 
     // ════════════════════════════════════════════════════
     // Room message fetch request type (Phase 4.6)
-    // NOTE: 0x03 is REQ_TYPE_GET_TELEMETRY_DATA in room server firmware,
-    // so we use 0x06 to avoid conflict.
+    // NOTE: This is reserved for a SigurdOS-compatible room fetch extension.
+    // Stock MeshCore room servers do not implement it, and repeaters use 0x06
+    // for a different request, so wrapper/UI code fails closed by default.
     static constexpr uint8_t REQ_TYPE_GET_ROOM_MSGS = 0x06;
     static constexpr uint8_t REQ_TYPE_GET_TELEMETRY_DATA = 0x03;
 
@@ -200,6 +201,10 @@ public:
     // ════════════════════════════════════════════════════
 
     static constexpr int MAX_PENDING_REQUESTS = 8;
+    static constexpr uint32_t PENDING_REQUEST_TTL_MS = sigurdos::mesh::PENDING_REQUEST_TTL_MS;
+    static bool pendingRequestExpired(uint32_t sent_at_ms, uint32_t now_ms) {
+        return sigurdos::mesh::pendingRequestExpired(sent_at_ms, now_ms);
+    }
     struct PendingRequest {
         uint32_t tag;
         char     dest_name[32];
@@ -209,6 +214,7 @@ public:
         bool     in_use = false;
     };
     PendingRequest _pending_reqs[MAX_PENDING_REQUESTS];
+    int allocatePendingRequestSlot();
 
     static constexpr int MAX_RESPONSES = 8;
     static constexpr int MAX_RESPONSE_DATA = 128;
@@ -251,8 +257,8 @@ public:
     RoomMsgFetchEntry _room_fetch_buf[MAX_ROOM_MSG_FETCH];
     int _n_room_fetched = 0;
 
-    // Send a request to fetch recent messages from a room server.
-    // Sends a REQ with REQ_TYPE_GET_ROOM_MSGS, data = channel_name.
+    // Compatibility placeholder for future room servers that support fetch/read.
+    // Stock MeshCore room servers do not handle REQ_TYPE_GET_ROOM_MSGS.
     // Responses populate _room_fetch_buf and are also pushed to mesh_v2_queue.
     bool sendRoomMsgFetchRequest(const char* name, const char* channel_name);
 

@@ -280,8 +280,14 @@ namespace mesh {
         }
     }
 
-    bool SigurdMeshV2::sendRequest(const char* name, uint8_t req_type) {
-        if (!name || !name[0]) return false;
+    int SigurdMeshV2::allocatePendingRequestSlot() {
+        uint32_t now = _ms->getMillis();
+        for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
+            if (_pending_reqs[j].in_use &&
+                pendingRequestExpired(_pending_reqs[j].sent_at_ms, now)) {
+                _pending_reqs[j].in_use = false;
+            }
+        }
         int slot = -1;
         for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
             if (!_pending_reqs[j].in_use) {
@@ -289,6 +295,12 @@ namespace mesh {
                 break;
             }
         }
+        return slot;
+    }
+
+    bool SigurdMeshV2::sendRequest(const char* name, uint8_t req_type) {
+        if (!name || !name[0]) return false;
+        int slot = allocatePendingRequestSlot();
         if (slot < 0) return false;
         int n = getNumContacts();
         ::ContactInfo tmp;
@@ -314,13 +326,7 @@ namespace mesh {
 
     bool SigurdMeshV2::sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len) {
         if (!name || !name[0] || !data || data_len == 0) return false;
-        int slot = -1;
-        for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
-            if (!_pending_reqs[j].in_use) {
-                slot = j;
-                break;
-            }
-        }
+        int slot = allocatePendingRequestSlot();
         if (slot < 0) return false;
         int n = getNumContacts();
         ::ContactInfo tmp;
@@ -346,13 +352,7 @@ namespace mesh {
 
     bool SigurdMeshV2::sendRoomMsgFetchRequest(const char* name, const char* channel_name) {
         if (!name || !name[0] || !channel_name || !channel_name[0]) return false;
-        int slot = -1;
-        for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
-            if (!_pending_reqs[j].in_use) {
-                slot = j;
-                break;
-            }
-        }
+        int slot = allocatePendingRequestSlot();
         if (slot < 0) return false;
         _n_room_fetched = 0;
         int n = getNumContacts();
@@ -927,7 +927,7 @@ namespace mesh {
     bool SigurdMeshV2::sendCommandDataTo(const ::ContactInfo& contact, const char* text) {
         if (!text || !text[0]) return false;
         uint32_t est_timeout = 0;
-        uint32_t ts = getRTCClock()->getCurrentTime();
+        uint32_t ts = getRTCClock()->getCurrentTimeUnique();
         int r = BaseChatMesh::sendCommandData(contact, ts, 0, text, est_timeout);
         if (r != MSG_SEND_FAILED) {
 #if SIGURDOS_DEBUG_MESH
@@ -1041,6 +1041,7 @@ namespace mesh {
 
     bool SigurdMeshV2::addHashtagChannel(const char* name) {
         if (!name || !name[0]) return false;
+        if (isReservedPublicHashtagName(name)) return false;
 
         char normalized[32];
         size_t src = 0;

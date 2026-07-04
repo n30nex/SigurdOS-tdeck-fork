@@ -523,6 +523,9 @@ void clearResponses() {
 
 // ── Room message fetch (Phase 4.6) ───────────────────
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name) {
+    // Stock MeshCore room servers do not expose a compatible fetch/read request.
+    // Keep this fail-closed so unsupported attempts do not occupy pending slots.
+    if (!roomMessageFetchSupported()) return false;
     if (!radioTxAllowed()) return false;
     return g_mesh ? g_mesh->sendRoomMsgFetchRequest(contact_name, channel_name) : false;
 }
@@ -568,7 +571,7 @@ uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, con
     if (!formatRoomMessageText(channel_name, text, buf, sizeof(buf))) return 0;
     // Send as a peer TXT_MSG to the room server contact. Do not persist this as
     // a DM: it is transport for an already-stored channel post.
-    uint32_t ts = getCurrentTime();
+    uint32_t ts = getCurrentTimeUnique();
     if (ts == 0) ts = 1;
     bool ok = g_mesh->sendTextTo(contact_name, buf, ts);
     if (ok) pushPacketLog(own_name, 0, 0.0f, "TX_ROOM");
@@ -1144,7 +1147,7 @@ uint32_t sendMessage(const char* dest, const char* text) {
 
 bool sendChannelMessage(const char* channel_name, const char* text) {
     if (!radioTxAllowed()) return false;
-    if (!g_mesh) return false;
+    if (!g_mesh || !channel_name || !channel_name[0] || !text || !text[0]) return false;
     bool sent = false;
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
         auto* ch = g_mesh->getChannel(i);
@@ -1315,6 +1318,7 @@ bool addChannel(const char* name, const char* psk) {
 bool addHashtagChannel(const char* name) {
     // Validate channel name
     if (!channel_name_valid(name)) return false;
+    if (isReservedPublicHashtagName(name)) return false;
     bool ok = g_mesh ? g_mesh->addHashtagChannel(name) : false;
     if (ok) syncRegionsFromChannels();
     return ok;
@@ -1455,6 +1459,10 @@ bool getLastAdvertUsedGps() {
 
 uint32_t getCurrentTime() {
     return initialized ? rtc_clock.getCurrentTime() : 0;
+}
+
+uint32_t getCurrentTimeUnique() {
+    return initialized ? rtc_clock.getCurrentTimeUnique() : 0;
 }
 
 bool setSystemTime(uint32_t epoch_seconds) {

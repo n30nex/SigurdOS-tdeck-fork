@@ -217,6 +217,7 @@ void reloadContactsAfterIdentityChange();  // after private key import
 
 // RTC time for UI comparisons
 uint32_t getCurrentTime();
+uint32_t getCurrentTimeUnique();
 bool setSystemTime(uint32_t epoch_seconds);
 
 void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* minute);
@@ -288,6 +289,7 @@ bool isMessageAcked(const char* dest_name, uint32_t timestamp);
 int  getAckCounter();   // incremented each time registerAckedMessage is called
 
 // ── Room message fetch (Phase 4.6) ────────────────
+inline bool roomMessageFetchSupported() { return false; }
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name);
 int  getRoomMsgFetchCount();
 bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,
@@ -445,6 +447,12 @@ static constexpr uint32_t LOGIN_PENDING_TIMEOUT_MS = 30000UL;
 
 inline bool loginPendingTimedOut(uint32_t now_ms, uint32_t started_at_ms) {
     return (uint32_t)(now_ms - started_at_ms) >= LOGIN_PENDING_TIMEOUT_MS;
+}
+
+static constexpr uint32_t PENDING_REQUEST_TTL_MS = 120000UL;
+
+inline bool pendingRequestExpired(uint32_t sent_at_ms, uint32_t now_ms) {
+    return (uint32_t)(now_ms - sent_at_ms) >= PENDING_REQUEST_TTL_MS;
 }
 
 // ── Repeater/room login (Phase 4.5) ──────────────
