@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "hal/time_sync_policy.h"
 #include "ui/onboarding_screen.h"
 
 namespace {
@@ -71,6 +72,28 @@ TEST(OnboardingValidation, TimeRejectsInvalidValues) {
     EXPECT_FALSE(onboarding_time_valid(24, 0));
     EXPECT_FALSE(onboarding_time_valid(12, -1));
     EXPECT_FALSE(onboarding_time_valid(12, 60));
+}
+
+TEST(OnboardingValidation, ManualTimeStepNeededOnlyForUnsaneEpoch) {
+    EXPECT_TRUE(sigurdos::onboarding_manual_time_needed(0));
+    EXPECT_TRUE(sigurdos::onboarding_manual_time_needed(1699999999UL));
+    EXPECT_FALSE(sigurdos::onboarding_manual_time_needed(1700000000UL));
+    EXPECT_FALSE(sigurdos::onboarding_manual_time_needed(1800000000UL));
+}
+
+TEST(TimeSyncPolicy, NtpRetryStartsInitiallyThenWaitsForBackoff) {
+    EXPECT_TRUE(sigurdos::ntp_retry_due(false, 0, 0));
+    EXPECT_FALSE(sigurdos::ntp_retry_due(true, 59999, 0));
+    EXPECT_TRUE(sigurdos::ntp_retry_due(true, 60000, 0));
+}
+
+TEST(TimeSyncPolicy, NtpResyncUsesSixHourWindow) {
+    EXPECT_TRUE(sigurdos::ntp_resync_due(0, 0));
+    EXPECT_FALSE(sigurdos::ntp_resync_due(1000, 1000));
+    EXPECT_FALSE(sigurdos::ntp_resync_due(
+        1000 + sigurdos::SIGURDOS_NTP_RESYNC_INTERVAL_MS - 1, 1000));
+    EXPECT_TRUE(sigurdos::ntp_resync_due(
+        1000 + sigurdos::SIGURDOS_NTP_RESYNC_INTERVAL_MS, 1000));
 }
 
 } // anonymous namespace

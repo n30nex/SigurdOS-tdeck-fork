@@ -8,6 +8,7 @@
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
 #include "../hal/radio_profiles.h"
+#include "../hal/time_sync_policy.h"
 #include "../mesh/mesh_wrapper.h"
 #include <Arduino.h>
 #include <lvgl.h>
@@ -291,7 +292,9 @@ static void build_step1()
                 return;  // reject empty name
             }
         }
-        s_step = 1;
+        s_step = sigurdos::onboarding_manual_time_needed(sigurdos::mesh::getCurrentTime())
+            ? 1
+            : 2;
         // Use timer to defer rebuild (safer inside LVGL event)
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);
     }, LV_EVENT_CLICKED, nullptr);

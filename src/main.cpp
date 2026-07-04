@@ -12,6 +12,7 @@
 #include "hal/wifi_ota.h"
 #include "hal/github_ota.h"
 #include "hal/prefs.h"
+#include "hal/time_sync_policy.h"
 #include "hal/launcher_env.h"
 #include "hal/buzzer.h"
 #include "app/map_renderer.h"
@@ -63,21 +64,20 @@ static void sync_time_from_wifi_if_ready()
         last_ntp_start_ms = 0;
     }
 
-    const uint32_t current_epoch = sigurdos::mesh::getCurrentTime();
-    const bool current_time_valid = current_epoch >= 1700000000UL;
-    if (current_time_valid && last_sync_ms != 0 &&
-        (uint32_t)(now_ms - last_sync_ms) < 21600000UL) {
+    const bool current_time_valid =
+        sigurdos::time_epoch_is_sane(sigurdos::mesh::getCurrentTime());
+    if (current_time_valid && !sigurdos::ntp_resync_due(now_ms, last_sync_ms)) {
         return;
     }
 
-    if (!ntp_started || (uint32_t)(now_ms - last_ntp_start_ms) >= 60000UL) {
+    if (sigurdos::ntp_retry_due(ntp_started, now_ms, last_ntp_start_ms)) {
         configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
         ntp_started = true;
         last_ntp_start_ms = now_ms;
     }
 
     time_t ntp_epoch = time(nullptr);
-    if (ntp_epoch >= 1700000000) {
+    if (sigurdos::time_epoch_is_sane((uint32_t)ntp_epoch)) {
         if (sigurdos::mesh::setSystemTime((uint32_t)ntp_epoch)) {
             last_sync_ms = now_ms;
         }
