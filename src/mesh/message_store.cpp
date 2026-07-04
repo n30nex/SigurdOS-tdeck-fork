@@ -305,13 +305,32 @@ static int loadAllInternal(StoredMessage* out, int max)
     return n;
 }
 
-static bool messageExists(const StoredMessage& msg)
+static bool nextStoreId(uint32_t* out_id)
+{
+    if (!out_id) return false;
+    uint32_t count = 0;
+    if (!readHeader(&count)) return false;
+
+    uint32_t max_id = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        StoredMessage msg;
+        if (!readRecordAt(i, msg)) continue;
+        if (msg.store_id > max_id) max_id = msg.store_id;
+    }
+
+    if (max_id == 0xFFFFFFFFu) return false;
+    *out_id = max_id + 1;
+    return *out_id != 0;
+}
+
+static bool findExistingMessage(const StoredMessage& msg, StoredMessage* out)
 {
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
     StoredMessage existing;
     for (uint32_t i = 0; i < count; i++) {
         if (readRecordAt(i, existing) && detail::storedMessageSameIdentity(existing, msg)) {
+            if (out) *out = existing;
             return true;
         }
     }
@@ -386,6 +405,44 @@ static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count)
 #endif
 }
 
+static bool repairStoreIdsIfNeeded()
+{
+    uint32_t count = 0;
+    if (!readHeader(&count)) return false;
+    if (count == 0) return true;
+    if (count > 256) return false;
+
+    StoredMessage* msgs = (StoredMessage*)std::malloc(sizeof(StoredMessage) * count);
+    if (!msgs) return false;
+    int n = loadAllInternal(msgs, (int)count);
+    if (n <= 0) {
+        std::free(msgs);
+        return false;
+    }
+
+    bool needs_repair = false;
+    uint32_t prev_id = 0;
+    for (int i = 0; i < n; i++) {
+        if (msgs[i].store_id == 0 || msgs[i].store_id <= prev_id) {
+            needs_repair = true;
+            break;
+        }
+        prev_id = msgs[i].store_id;
+    }
+
+    if (!needs_repair) {
+        std::free(msgs);
+        return true;
+    }
+
+    for (int i = 0; i < n; i++) {
+        msgs[i].store_id = (uint32_t)i + 1u;
+    }
+    bool ok = atomicReplaceStore(msgs, (uint32_t)n);
+    std::free(msgs);
+    return ok;
+}
+
 static bool trimStoreToRecent(uint32_t max_records)
 {
     if (max_records == 0) return messageStoreClear();
@@ -428,9 +485,9 @@ bool messageStoreBegin()
     if (!writeHeaderIfNeeded()) return false;
     uint32_t count = 0;
     if (readHeader(&count) && count > MESSAGE_STORE_MAX_RECORDS) {
-        return trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS);
+        if (!trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS)) return false;
     }
-    return true;
+    return repairStoreIdsIfNeeded();
 }
 
 bool messageStoreClear()
@@ -439,21 +496,22 @@ bool messageStoreClear()
     return writeHeaderCount(0);
 }
 
-bool messageStoreAppend(const StoredMessage& msg)
+static bool appendStoredMessage(StoredMessage& msg)
 {
     if (!writeHeaderIfNeeded()) return false;
 
     StoredMessage norm = msg;
     detail::storedMessageNormalize(norm);
 
-    if (messageExists(norm)) return true;
-
-    // Assign a monotonic store_id from the current record count.
-    {
-        uint32_t count = 0;
-        readHeader(&count);
-        norm.store_id = count;
+    StoredMessage existing{};
+    if (findExistingMessage(norm, &existing)) {
+        msg.store_id = existing.store_id;
+        return true;
     }
+
+    uint32_t store_id = 0;
+    if (!nextStoreId(&store_id)) return false;
+    norm.store_id = store_id;
 
     uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
     writeRecordRaw(norm, rec, sizeof(rec));
@@ -476,9 +534,21 @@ bool messageStoreAppend(const StoredMessage& msg)
     uint32_t new_count = count + 1;
     if (!writeHeaderCount(new_count)) return false;
     if (new_count > MESSAGE_STORE_MAX_RECORDS) {
-        return trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS);
+        if (!trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS)) return false;
     }
+    msg.store_id = norm.store_id;
     return true;
+}
+
+bool messageStoreAppend(StoredMessage& msg)
+{
+    return appendStoredMessage(msg);
+}
+
+bool messageStoreAppend(const StoredMessage& msg)
+{
+    StoredMessage copy = msg;
+    return appendStoredMessage(copy);
 }
 
 int messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max)

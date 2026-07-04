@@ -425,6 +425,11 @@ TEST_F(CompanionProtocolTest, AppStartSeedsPersistedMessagesForSync) {
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
     ASSERT_EQ(serial.writes.size(), 3u);
     EXPECT_EQ(serial.writes[2][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+
+    sigurdos::mesh::StoredMessage verify[2]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(verify, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_TRUE(verify[0].companion_sent);
 }
 
 TEST_F(CompanionProtocolTest, AppStartDoesNotEchoSelfSentMessages) {
@@ -1313,11 +1318,11 @@ TEST_F(CompanionProtocolTest, SyncDrainMarksPerRecordNotAll) {
     sigurdos::mesh::StoredMessage stored[4]{};
     int n = sigurdos::mesh::messageStoreLoadAll(stored, 4);
     ASSERT_EQ(n, 2);
-    ASSERT_EQ(stored[0].store_id, 0u);
-    ASSERT_EQ(stored[1].store_id, 1u);
+    ASSERT_EQ(stored[0].store_id, 1u);
+    ASSERT_EQ(stored[1].store_id, 2u);
 
     // Mark only the first via the store API — verify it works standalone
-    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(0));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(1));
 
     sigurdos::mesh::StoredMessage verify[4]{};
     n = sigurdos::mesh::messageStoreLoadAll(verify, 4);

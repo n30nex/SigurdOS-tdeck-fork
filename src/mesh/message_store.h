@@ -15,9 +15,8 @@ static constexpr size_t SIGURDOS_MSG_TEXT_LEN = 160;
 static constexpr size_t SIGURDOS_MSG_PREFIX_LEN = 6;
 
 struct StoredMessage {
-    // Monotonic store ID assigned at append time — used for per-record
-    // companion delivery tracking (a CMD_SYNC_NEXT_MESSAGE that successfully
-    // writes the frame marks only this specific record as sent).
+    // Monotonic non-zero store ID assigned at append time. Zero is reserved as
+    // the companion delivery sentinel, so persisted records must start at 1.
     uint32_t store_id;
     char conversation[SIGURDOS_MSG_CONVERSATION_LEN];
     char sender[SIGURDOS_MSG_SENDER_LEN];
@@ -74,6 +73,7 @@ void storedMessageNormalize(StoredMessage& msg);
 
 bool messageStoreBegin();
 bool messageStoreClear();
+bool messageStoreAppend(StoredMessage& msg);
 bool messageStoreAppend(const StoredMessage& msg);
 int  messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max);
 int  messageStoreLoadAll(StoredMessage* out, int max);
