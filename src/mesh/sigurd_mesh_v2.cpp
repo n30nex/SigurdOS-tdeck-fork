@@ -91,8 +91,10 @@ namespace mesh {
 
     int SigurdMeshV2::sendLoginCompanion(const ::ContactInfo& contact, const char* password, uint32_t& est_timeout) {
         est_timeout = 0;
+        int login_idx = addLoginEntry(contact.name);
+        if (login_idx < 0) return MSG_SEND_FAILED;
         int r = BaseChatMesh::sendLogin(contact, password ? password : "", est_timeout);
-        if (r != MSG_SEND_FAILED) addLoginEntry(contact.name);
+        if (r == MSG_SEND_FAILED) _login_entries[login_idx].status = LOGIN_FAILED;
         return r;
     }
 
@@ -279,6 +281,14 @@ namespace mesh {
 
     bool SigurdMeshV2::sendRequest(const char* name, uint8_t req_type) {
         if (!name || !name[0]) return false;
+        int slot = -1;
+        for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
+            if (!_pending_reqs[j].in_use) {
+                slot = j;
+                break;
+            }
+        }
+        if (slot < 0) return false;
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
@@ -286,18 +296,14 @@ namespace mesh {
                 uint32_t tag = 0, est_timeout = 0;
                 int r = BaseChatMesh::sendRequest(tmp, req_type, tag, est_timeout);
                 if (r != MSG_SEND_FAILED) {
-                    for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
-                        if (!_pending_reqs[j].in_use) {
-                            _pending_reqs[j].tag = tag;
-                            _pending_reqs[j].req_type = req_type;
-                            strncpy(_pending_reqs[j].dest_name, name,
-                                    sizeof(_pending_reqs[j].dest_name) - 1);
-                            _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
-                            _pending_reqs[j].sent_at_ms = _ms->getMillis();
-                            _pending_reqs[j].in_use = true;
-                            break;
-                        }
-                    }
+                    _pending_reqs[slot].tag = tag;
+                    _pending_reqs[slot].req_type = req_type;
+                    _pending_reqs[slot].channel_name[0] = '\0';
+                    strncpy(_pending_reqs[slot].dest_name, name,
+                            sizeof(_pending_reqs[slot].dest_name) - 1);
+                    _pending_reqs[slot].dest_name[sizeof(_pending_reqs[slot].dest_name) - 1] = '\0';
+                    _pending_reqs[slot].sent_at_ms = _ms->getMillis();
+                    _pending_reqs[slot].in_use = true;
                 }
                 return r != MSG_SEND_FAILED;
             }
@@ -307,6 +313,14 @@ namespace mesh {
 
     bool SigurdMeshV2::sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len) {
         if (!name || !name[0] || !data || data_len == 0) return false;
+        int slot = -1;
+        for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
+            if (!_pending_reqs[j].in_use) {
+                slot = j;
+                break;
+            }
+        }
+        if (slot < 0) return false;
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
@@ -314,18 +328,14 @@ namespace mesh {
                 uint32_t tag = 0, est_timeout = 0;
                 int r = BaseChatMesh::sendRequest(tmp, data, data_len, tag, est_timeout);
                 if (r != MSG_SEND_FAILED) {
-                    for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
-                        if (!_pending_reqs[j].in_use) {
-                            _pending_reqs[j].tag = tag;
-                            _pending_reqs[j].req_type = 0; // custom data
-                            strncpy(_pending_reqs[j].dest_name, name,
-                                    sizeof(_pending_reqs[j].dest_name) - 1);
-                            _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
-                            _pending_reqs[j].sent_at_ms = _ms->getMillis();
-                            _pending_reqs[j].in_use = true;
-                            break;
-                        }
-                    }
+                    _pending_reqs[slot].tag = tag;
+                    _pending_reqs[slot].req_type = 0; // custom data
+                    _pending_reqs[slot].channel_name[0] = '\0';
+                    strncpy(_pending_reqs[slot].dest_name, name,
+                            sizeof(_pending_reqs[slot].dest_name) - 1);
+                    _pending_reqs[slot].dest_name[sizeof(_pending_reqs[slot].dest_name) - 1] = '\0';
+                    _pending_reqs[slot].sent_at_ms = _ms->getMillis();
+                    _pending_reqs[slot].in_use = true;
                 }
                 return r != MSG_SEND_FAILED;
             }
@@ -335,6 +345,14 @@ namespace mesh {
 
     bool SigurdMeshV2::sendRoomMsgFetchRequest(const char* name, const char* channel_name) {
         if (!name || !name[0] || !channel_name || !channel_name[0]) return false;
+        int slot = -1;
+        for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
+            if (!_pending_reqs[j].in_use) {
+                slot = j;
+                break;
+            }
+        }
+        if (slot < 0) return false;
         _n_room_fetched = 0;
         int n = getNumContacts();
         ::ContactInfo tmp;
@@ -350,21 +368,16 @@ namespace mesh {
                 int r = BaseChatMesh::sendRequest(tmp, req_data, 1 + cn_len + 1,
                                                   tag, est_timeout);
                 if (r != MSG_SEND_FAILED) {
-                    for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
-                        if (!_pending_reqs[j].in_use) {
-                            _pending_reqs[j].tag = tag;
-                            _pending_reqs[j].req_type = REQ_TYPE_GET_ROOM_MSGS;
-                            strncpy(_pending_reqs[j].dest_name, name,
-                                    sizeof(_pending_reqs[j].dest_name) - 1);
-                            _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
-                            strncpy(_pending_reqs[j].channel_name, channel_name,
-                                    sizeof(_pending_reqs[j].channel_name) - 1);
-                            _pending_reqs[j].channel_name[sizeof(_pending_reqs[j].channel_name) - 1] = '\0';
-                            _pending_reqs[j].sent_at_ms = _ms->getMillis();
-                            _pending_reqs[j].in_use = true;
-                            break;
-                        }
-                    }
+                    _pending_reqs[slot].tag = tag;
+                    _pending_reqs[slot].req_type = REQ_TYPE_GET_ROOM_MSGS;
+                    strncpy(_pending_reqs[slot].dest_name, name,
+                            sizeof(_pending_reqs[slot].dest_name) - 1);
+                    _pending_reqs[slot].dest_name[sizeof(_pending_reqs[slot].dest_name) - 1] = '\0';
+                    strncpy(_pending_reqs[slot].channel_name, channel_name,
+                            sizeof(_pending_reqs[slot].channel_name) - 1);
+                    _pending_reqs[slot].channel_name[sizeof(_pending_reqs[slot].channel_name) - 1] = '\0';
+                    _pending_reqs[slot].sent_at_ms = _ms->getMillis();
+                    _pending_reqs[slot].in_use = true;
                 }
                 return r != MSG_SEND_FAILED;
             }
@@ -822,13 +835,21 @@ namespace mesh {
 
     int SigurdMeshV2::addLoginEntry(const char* name) {
         int idx = findLoginEntry(name);
-        if (idx >= 0) return idx;
+        if (idx >= 0) {
+            _login_entries[idx].status = LOGIN_PENDING;
+            _login_entries[idx].permission = 0;
+            _login_entries[idx].acl_permissions = 0;
+            _login_entries[idx].started_at_ms = millis();
+            return idx;
+        }
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
             if (!_login_entries[i].in_use) {
                 strncpy(_login_entries[i].contact_name, name,
                         sizeof(_login_entries[i].contact_name) - 1);
                 _login_entries[i].contact_name[sizeof(_login_entries[i].contact_name) - 1] = '\0';
                 _login_entries[i].status = LOGIN_PENDING;
+                _login_entries[i].permission = 0;
+                _login_entries[i].acl_permissions = 0;
                 _login_entries[i].started_at_ms = millis();
                 _login_entries[i].in_use = true;
                 return i;
@@ -839,16 +860,18 @@ namespace mesh {
 
     bool SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {
         if (!password) return false;
+        int login_idx = addLoginEntry(contact.name);
+        if (login_idx < 0) return false;
         uint32_t est_timeout = 0;
         int r = BaseChatMesh::sendLogin(contact, password, est_timeout);
         if (r != MSG_SEND_FAILED) {
-            addLoginEntry(contact.name);
 #if SIGURDOS_DEBUG_MESH
             Serial.printf("[mesh] Login sent to %s (result=%d, timeout=%u)\n",
                           contact.name, r, est_timeout);
 #endif
             return true;
         }
+        _login_entries[login_idx].status = LOGIN_FAILED;
         return false;
     }
 

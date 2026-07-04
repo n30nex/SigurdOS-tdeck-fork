@@ -391,8 +391,22 @@ static void repeater_input_dialog(const char* contact_name,
     }, LV_EVENT_CLICKED, nullptr);
 
     // Send button
-    struct RiData { char* name; const char* prefix; lv_obj_t* ta; };
-    RiData* rd = new RiData{strdup(contact_name), strdup(cmd_prefix), ta};
+    struct RiData { char* name; char* prefix; lv_obj_t* ta; bool submitted; };
+    RiData* rd = new(std::nothrow) RiData{
+        strdup(contact_name),
+        strdup(cmd_prefix ? cmd_prefix : ""),
+        ta,
+        false
+    };
+    if (!rd || !rd->name || !rd->prefix) {
+        if (rd) {
+            free(rd->name);
+            free(rd->prefix);
+            delete rd;
+        }
+        lv_obj_del_async(dlg);
+        return;
+    }
 
     lv_obj_t* send_btn = lv_btn_create(dlg);
     lv_obj_set_size(send_btn, 80, 24);
@@ -407,7 +421,8 @@ static void repeater_input_dialog(const char* contact_name,
 
     lv_obj_add_event_cb(send_btn, [](lv_event_t* le) {
         RiData* d = (RiData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        if (d && d->name && d->prefix && d->ta) {
+        if (d && d->name && d->prefix && d->ta && !d->submitted) {
+            d->submitted = true;
             const char* val = lv_textarea_get_text(d->ta);
             if (val && val[0]) {
                 char cmd[64];
@@ -448,7 +463,7 @@ static void repeater_input_dialog(const char* contact_name,
         RiData* d = (RiData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
         if (d) {
             free(d->name);
-            free((void*)d->prefix);
+            free(d->prefix);
             delete d;
         }
     }, LV_EVENT_DELETE, nullptr);
@@ -685,26 +700,28 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Login button (prominent)
         if (login_st != LOGIN_STATUS_PENDING) {
             char* li_name = strdup(contact_name);
-            lv_obj_t* login_btn = lv_btn_create(list);
-            lv_obj_set_size(login_btn, LV_PCT(100), 32);
-            lv_obj_set_style_bg_color(login_btn, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_bg_opa(login_btn, LV_OPA_COVER, 0);
-            lv_obj_set_style_radius(login_btn, 0, 0);
-            lv_obj_set_style_border_width(login_btn, 0, 0);
-            lv_obj_t* login_lbl = lv_label_create(login_btn);
-            lv_label_set_text(login_lbl, LV_SYMBOL_DIRECTORY "  Login");
-            lv_obj_set_style_text_color(login_lbl, lv_color_hex(BG_PRIMARY), 0);
-            lv_obj_center(login_lbl);
-            lv_obj_set_user_data(login_btn, li_name);
-            lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(btn);
-                if (name) show_login_password_dialog(name);
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+            if (li_name) {
+                lv_obj_t* login_btn = lv_btn_create(list);
+                lv_obj_set_size(login_btn, LV_PCT(100), 32);
+                lv_obj_set_style_bg_color(login_btn, lv_color_hex(ACCENT), 0);
+                lv_obj_set_style_bg_opa(login_btn, LV_OPA_COVER, 0);
+                lv_obj_set_style_radius(login_btn, 0, 0);
+                lv_obj_set_style_border_width(login_btn, 0, 0);
+                lv_obj_t* login_lbl = lv_label_create(login_btn);
+                lv_label_set_text(login_lbl, LV_SYMBOL_DIRECTORY "  Login");
+                lv_obj_set_style_text_color(login_lbl, lv_color_hex(BG_PRIMARY), 0);
+                lv_obj_center(login_lbl);
+                lv_obj_set_user_data(login_btn, li_name);
+                lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                    const char* name = (const char*)lv_obj_get_user_data(btn);
+                    if (name) show_login_password_dialog(name);
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
 
     } else {
@@ -724,8 +741,13 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Set-value button: opens an input dialog and sends <prefix> + user input
         struct SetCtx { char* name; char prefix[24]; char title[24]; char hint[32]; bool pw; };
         auto add_set = [&](const char* icon_lbl, const char* title, const char* hint, const char* prefix, bool pw) {
-            auto* ctx = new SetCtx();
+            auto* ctx = new(std::nothrow) SetCtx{};
+            if (!ctx) return;
             ctx->name = strdup(contact_name);
+            if (!ctx->name) {
+                delete ctx;
+                return;
+            }
             ctx->pw = pw;
             strncpy(ctx->prefix, prefix, sizeof(ctx->prefix)-1);
             strncpy(ctx->title, title, sizeof(ctx->title)-1);
@@ -752,8 +774,13 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Action button: sends a command immediately and pushes confirmation
         struct ActCtx { char* name; char cmd[32]; char fmt[48]; };
         auto add_act = [&](const char* icon_lbl, const char* cmd, const char* fmt) {
-            auto* ctx = new ActCtx();
+            auto* ctx = new(std::nothrow) ActCtx{};
+            if (!ctx) return;
             ctx->name = strdup(contact_name);
+            if (!ctx->name) {
+                delete ctx;
+                return;
+            }
             strncpy(ctx->cmd, cmd, sizeof(ctx->cmd)-1);
             strncpy(ctx->fmt, fmt, sizeof(ctx->fmt)-1);
             lv_obj_t* r = lv_list_add_btn(list, icon_lbl, ">");
@@ -899,126 +926,138 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Admin Cmd (admin only)
         if (is_admin) {
             char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD "  Admin Cmd", ">");
-            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) show_admin_cmd_dialog(name);
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+            if (n) {
+                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD "  Admin Cmd", ">");
+                lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
+                lv_obj_set_user_data(r, n);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (name) show_admin_cmd_dialog(name);
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
 
         // Fetch Msgs (available to all logged-in users)
         {
             char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_LIST "  Fetch Msgs", ">");
-            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) show_fetch_msgs_dialog(name);
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+            if (n) {
+                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_LIST "  Fetch Msgs", ">");
+                lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
+                lv_obj_set_user_data(r, n);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (name) show_fetch_msgs_dialog(name);
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
 
         // Reboot (with confirmation dialog) — admin only
         if (is_admin) {
             char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Reboot", "!!");
-            lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_RED), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) {
-                    // Confirmation dialog before reboot
-                    lv_obj_t* act = lv_scr_act();
-                    auto dsz = dialog_size(220, 80);
-                    lv_obj_t* dlg = lv_obj_create(act);
-                    lv_obj_set_size(dlg, dsz.w, dsz.h);
-                    lv_obj_center(dlg);
-                    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
-                    lv_obj_set_style_radius(dlg, 0, 0);
-                    lv_obj_set_style_border_width(dlg, 0, 0);
-                    lv_obj_t* tl = lv_label_create(dlg);
-                    lv_label_set_text(tl, "Reboot repeater?");
-                    lv_obj_set_style_text_color(tl, lv_color_hex(ACCENT_RED), 0);
-                    lv_obj_align(tl, LV_ALIGN_TOP_MID, 0, 10);
-                    char* cn = strdup(name);
-                    lv_obj_set_user_data(dlg, cn);
-                    lv_obj_t* yb = lv_btn_create(dlg);
-                    lv_obj_set_size(yb, 80, 24);
-                    lv_obj_align(yb, LV_ALIGN_BOTTOM_LEFT, 10, -4);
-                    lv_obj_set_style_bg_color(yb, lv_color_hex(ACCENT_RED), 0);
-                    lv_obj_set_style_radius(yb, 0, 0);
-                    lv_obj_t* yl = lv_label_create(yb);
-                    lv_label_set_text(yl, "Reboot");
-                    lv_obj_center(yl);
-                    lv_obj_set_style_text_color(yl, lv_color_hex(0xffffff), 0);
-                    lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
-                        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
-                        const char* cn = (const char*)lv_obj_get_user_data(dlg);
+            if (n) {
+                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Reboot", "!!");
+                lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_RED), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
+                lv_obj_set_user_data(r, n);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (name) {
+                        // Confirmation dialog before reboot
+                        lv_obj_t* act = lv_scr_act();
+                        auto dsz = dialog_size(220, 80);
+                        lv_obj_t* dlg = lv_obj_create(act);
+                        lv_obj_set_size(dlg, dsz.w, dsz.h);
+                        lv_obj_center(dlg);
+                        lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+                        lv_obj_set_style_radius(dlg, 0, 0);
+                        lv_obj_set_style_border_width(dlg, 0, 0);
+                        lv_obj_t* tl = lv_label_create(dlg);
+                        lv_label_set_text(tl, "Reboot repeater?");
+                        lv_obj_set_style_text_color(tl, lv_color_hex(ACCENT_RED), 0);
+                        lv_obj_align(tl, LV_ALIGN_TOP_MID, 0, 10);
+                        char* cn = strdup(name);
+                        if (!cn) {
+                            lv_obj_del_async(dlg);
+                            return;
+                        }
+                        lv_obj_set_user_data(dlg, cn);
+                        lv_obj_t* yb = lv_btn_create(dlg);
+                        lv_obj_set_size(yb, 80, 24);
+                        lv_obj_align(yb, LV_ALIGN_BOTTOM_LEFT, 10, -4);
+                        lv_obj_set_style_bg_color(yb, lv_color_hex(ACCENT_RED), 0);
+                        lv_obj_set_style_radius(yb, 0, 0);
+                        lv_obj_t* yl = lv_label_create(yb);
+                        lv_label_set_text(yl, "Reboot");
+                        lv_obj_center(yl);
+                        lv_obj_set_style_text_color(yl, lv_color_hex(0xffffff), 0);
+                        lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
+                            lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
+                            const char* cn = (const char*)lv_obj_get_user_data(dlg);
 
-                        if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
+                            if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
 
-                        lv_obj_del_async(dlg);
-                    }, LV_EVENT_CLICKED, nullptr);
-                    lv_obj_t* nb = lv_btn_create(dlg);
-                    lv_obj_set_size(nb, 80, 24);
-                    lv_obj_align(nb, LV_ALIGN_BOTTOM_RIGHT, -10, -4);
-                    lv_obj_set_style_bg_color(nb, lv_color_hex(BG_INPUT), 0);
-                    lv_obj_set_style_radius(nb, 0, 0);
-                    lv_obj_t* nl = lv_label_create(nb);
-                    lv_label_set_text(nl, "Cancel");
-                    lv_obj_center(nl);
-                    lv_obj_add_event_cb(nb, [](lv_event_t* ce) {
-                        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
-                    }, LV_EVENT_CLICKED, nullptr);
-                    lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-                        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
-                    }, LV_EVENT_DELETE, nullptr);
-                }
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+                            lv_obj_del_async(dlg);
+                        }, LV_EVENT_CLICKED, nullptr);
+                        lv_obj_t* nb = lv_btn_create(dlg);
+                        lv_obj_set_size(nb, 80, 24);
+                        lv_obj_align(nb, LV_ALIGN_BOTTOM_RIGHT, -10, -4);
+                        lv_obj_set_style_bg_color(nb, lv_color_hex(BG_INPUT), 0);
+                        lv_obj_set_style_radius(nb, 0, 0);
+                        lv_obj_t* nl = lv_label_create(nb);
+                        lv_label_set_text(nl, "Cancel");
+                        lv_obj_center(nl);
+                        lv_obj_add_event_cb(nb, [](lv_event_t* ce) {
+                            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+                        }, LV_EVENT_CLICKED, nullptr);
+                        lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
+                            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
+                        }, LV_EVENT_DELETE, nullptr);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
 
         // Logout
         {
             char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Logout", ">");
-            lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_ORANGE), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) {
-                    sigurdos::mesh::sendLogout(name);
-                    lv_timer_create([](lv_timer_t* t) {
-                        go_back();
-                        lv_timer_del(t);
-                    }, 600, nullptr);
-                }
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+            if (n) {
+                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Logout", ">");
+                lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_ORANGE), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
+                lv_obj_set_user_data(r, n);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                    if (name) {
+                        sigurdos::mesh::sendLogout(name);
+                        lv_timer_create([](lv_timer_t* t) {
+                            go_back();
+                            lv_timer_del(t);
+                        }, 600, nullptr);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
     }
 

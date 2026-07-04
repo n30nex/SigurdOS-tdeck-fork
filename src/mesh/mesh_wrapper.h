@@ -375,7 +375,7 @@ static constexpr size_t LOGIN_PASSWORD_MAX_BYTES = 15;
 
 inline bool loginPasswordInputSubmittable(const char* password) {
     // MeshCore accepts an empty password as an ACL/guest login attempt.
-    return password != nullptr;
+    return password != nullptr && std::strlen(password) <= LOGIN_PASSWORD_MAX_BYTES;
 }
 
 bool sendLogin(const char* name, const char* password);

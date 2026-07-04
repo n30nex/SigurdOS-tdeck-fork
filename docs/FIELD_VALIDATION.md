@@ -4,6 +4,26 @@ Use this checklist when testing a GitHub Actions firmware artifact on a physical
 
 Before opening the serial port, recheck that the T-Deck Plus enumerates as `COM8` and use `scripts/validation/safe_serial_monitor.py` or the workflow in [`WINDOWS_COM8_SERIAL.md`](WINDOWS_COM8_SERIAL.md). Do not use generic terminal defaults that assert DTR/RTS.
 
+## UI Crash Monitor
+
+For manual touch/trackball crash reproduction, keep a passive crash monitor open
+while the tester performs the UI actions. This does not send input, reset the
+device, or switch to remote-test firmware:
+
+```powershell
+python scripts\validation\ui_crash_monitor.py `
+  --port COM8 `
+  --duration 180 `
+  --label public-chat-and-repeater-login `
+  --output .pio\serial-captures\public-chat-and-repeater-login.raw.log `
+  --json-report .pio\serial-captures\public-chat-and-repeater-login.report.json `
+  --expect-no-reset
+```
+
+The JSON report records `ESP-ROM`, reset, panic, assert, and backtrace
+signatures with timestamps. A non-zero exit with `--expect-no-reset` means the
+manual flow produced reset/crash evidence that should be attached to the issue.
+
 ## Setup And Radio Input
 
 Evidence to capture:

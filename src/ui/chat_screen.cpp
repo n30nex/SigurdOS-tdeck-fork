@@ -2190,10 +2190,18 @@ static void open_channel_messaging(int idx)
     if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
     active_channel = idx;
 
+    const bool reuse_channel_list_screen = ch_list && lv_obj_is_valid(ch_list);
+    lv_obj_t* target_screen = reuse_channel_list_screen ? lv_scr_act() : nullptr;
+
     ch_list = ch_back_btn = ch_add_btn = nullptr;
     ch_focus = 0;
 
-    scr = lv_obj_create(nullptr);
+    if (reuse_channel_list_screen && target_screen) {
+        scr = target_screen;
+        lv_obj_clean(scr);
+    } else {
+        scr = lv_obj_create(nullptr);
+    }
     apply_dark_bg(scr);
     disable_scroll(scr);
 
@@ -2246,7 +2254,11 @@ static void open_channel_messaging(int idx)
         lv_group_focus_obj(input_field);
     }
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    if (reuse_channel_list_screen) {
+        lv_obj_invalidate(scr);
+    } else {
+        lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    }
 }
 
 static void refresh_chat_list_view(lv_obj_t* scr) {

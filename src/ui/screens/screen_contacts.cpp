@@ -309,6 +309,16 @@ void contacts_screen_show()
 
 // Forward declaration of login-polling timer (defined after dialog functions)
 static void start_login_poll_timer(const char* name);
+static void schedule_login_submit(const char* name, const char* password, bool save_password);
+
+static void schedule_chat_navigation()
+{
+    lv_timer_t* timer = lv_timer_create([](lv_timer_t* t) {
+        lv_timer_del(t);
+        sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
+    }, 30, nullptr);
+    if (timer) lv_timer_set_repeat_count(timer, 1);
+}
 
 static constexpr uint32_t LOGIN_DETAIL_REFRESH_MS = 150;
 
@@ -350,6 +360,27 @@ struct DeferredLoginSubmitCtx {
     char password[16];
     bool save_password;
 };
+
+struct PwDialogData {
+    char* name;
+    lv_obj_t* ta;
+    lv_obj_t* save_cb;
+    bool submitted;
+};
+
+static void submit_login_dialog_once(PwDialogData* d)
+{
+    if (!d || !d->name || d->submitted) return;
+    const char* pw = (d->ta && lv_obj_is_valid(d->ta))
+        ? lv_textarea_get_text(d->ta)
+        : "";
+    if (!sigurdos::mesh::loginPasswordInputSubmittable(pw)) return;
+    d->submitted = true;
+    const bool save_password =
+        d->save_cb && lv_obj_is_valid(d->save_cb) &&
+        (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED);
+    schedule_login_submit(d->name, pw, save_password);
+}
 
 static void deferred_login_submit_cb(lv_timer_t* t)
 {
@@ -500,6 +531,10 @@ void show_login_password_dialog(const char* contact_name)
 
     // Login button
     char* pw_name = strdup(contact_name);
+    if (!pw_name) {
+        lv_obj_del_async(dlg);
+        return;
+    }
     lv_obj_t* login_btn = lv_btn_create(dlg);
     lv_obj_set_size(login_btn, 80, 24);
     lv_obj_align(login_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
@@ -511,23 +546,17 @@ void show_login_password_dialog(const char* contact_name)
     lv_obj_set_style_text_color(lb, lv_color_hex(BG_PRIMARY), 0);
 
     // Store references for the click handler
-    struct PwDialogData { char* name; lv_obj_t* ta; lv_obj_t* save_cb; };
-    PwDialogData* dd = new PwDialogData{pw_name, ta, save_cb};
+    PwDialogData* dd = new(std::nothrow) PwDialogData{pw_name, ta, save_cb, false};
+    if (!dd) {
+        free(pw_name);
+        lv_obj_del_async(dlg);
+        return;
+    }
     lv_obj_set_user_data(login_btn, dd);
 
     lv_obj_add_event_cb(login_btn, [](lv_event_t* le) {
         PwDialogData* d = (PwDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        if (d && d->name) {
-            const char* pw = (d->ta && lv_obj_is_valid(d->ta))
-                ? lv_textarea_get_text(d->ta)
-                : "";
-            if (sigurdos::mesh::loginPasswordInputSubmittable(pw)) {
-                const bool save_password =
-                    d->save_cb && lv_obj_is_valid(d->save_cb) &&
-                    (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED);
-                schedule_login_submit(d->name, pw, save_password);
-            }
-        }
+        submit_login_dialog_once(d);
         // Close dialog
         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
         lv_obj_del_async(dlg);
@@ -544,7 +573,7 @@ void show_login_password_dialog(const char* contact_name)
                 PwDialogData* expected = parent
                     ? (PwDialogData*)lv_obj_get_user_data(parent)
                     : nullptr;
-                if (!parent || !expected) return;
+                if (!parent || !expected || expected->submitted) return;
                 uint32_t c = lv_obj_get_child_cnt(parent);
                 for (uint32_t i = 0; i < c; i++) {
                     lv_obj_t* child = lv_obj_get_child(parent, i);
@@ -933,9 +962,18 @@ void show_fetch_msgs_dialog(const char* contact_name)
     }, LV_EVENT_CLICKED, nullptr);
 
     // Fetch button
-    struct FetchDialogData { char* name; lv_obj_t* ta; };
+    struct FetchDialogData { char* name; lv_obj_t* ta; bool submitted; };
     char* fm_name = strdup(contact_name);
-    FetchDialogData* fd = new FetchDialogData{fm_name, ta};
+    if (!fm_name) {
+        lv_obj_del_async(dlg);
+        return;
+    }
+    FetchDialogData* fd = new(std::nothrow) FetchDialogData{fm_name, ta, false};
+    if (!fd) {
+        free(fm_name);
+        lv_obj_del_async(dlg);
+        return;
+    }
     lv_obj_t* fetch_btn = lv_btn_create(dlg);
     lv_obj_set_size(fetch_btn, 80, 24);
     lv_obj_align(fetch_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
@@ -948,25 +986,31 @@ void show_fetch_msgs_dialog(const char* contact_name)
     lv_obj_set_user_data(fetch_btn, fd);
 
     lv_obj_add_event_cb(fetch_btn, [](lv_event_t* le) {
-        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        if (d && d->name) {
-            const char* channel = lv_textarea_get_text(d->ta);
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(le);
+        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data(btn);
+        bool sent = false;
+        if (d && d->name && !d->submitted) {
+            d->submitted = true;
+            const char* channel = (d->ta && lv_obj_is_valid(d->ta))
+                ? lv_textarea_get_text(d->ta)
+                : "";
             if (channel && channel[0]) {
+                char name_copy[32];
+                char channel_copy[32];
+                snprintf(name_copy, sizeof(name_copy), "%s", d->name);
+                snprintf(channel_copy, sizeof(channel_copy), "%s", channel);
                 char confirm[64];
-                bool sent = sigurdos::mesh::sendRoomMsgFetchRequest(d->name, channel);
+                sent = sigurdos::mesh::sendRoomMsgFetchRequest(name_copy, channel_copy);
                 snprintf(confirm, sizeof(confirm),
                          sent ? "Fetching msgs from %s channel %s"
                               : "! Fetch failed for %s channel %s",
-                         d->name, channel);
+                         name_copy, channel_copy);
                 sigurdos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
-                if (sent) {
-                    // Navigate to Chat screen so user sees incoming messages.
-                    sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
-                }
             }
         }
-        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
+        lv_obj_t* dlg = lv_obj_get_parent(btn);
         lv_obj_del_async(dlg);
+        if (sent) schedule_chat_navigation();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Enter-key handler on textarea
@@ -981,7 +1025,7 @@ void show_fetch_msgs_dialog(const char* contact_name)
                     lv_obj_t* child = lv_obj_get_child(parent, i);
                     if (child && lv_obj_check_type(child, &lv_button_class)) {
                         FetchDialogData* data = (FetchDialogData*)lv_obj_get_user_data(child);
-                        if (data) {
+                        if (data && !data->submitted) {
                             lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
                             break;
                         }

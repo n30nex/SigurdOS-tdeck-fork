@@ -104,6 +104,8 @@ TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_EQ(sigurdos::mesh::LOGIN_PASSWORD_MAX_BYTES, 15u);
     EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable(""));
     EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable("secret"));
+    EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable("123456789012345"));
+    EXPECT_FALSE(sigurdos::mesh::loginPasswordInputSubmittable("1234567890123456"));
     EXPECT_FALSE(sigurdos::mesh::loginPasswordInputSubmittable(nullptr));
 }
 
