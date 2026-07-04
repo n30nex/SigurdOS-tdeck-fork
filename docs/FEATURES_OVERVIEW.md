@@ -241,10 +241,10 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 **Sources:** [`src/mesh/contact_store.cpp`](../src/mesh/contact_store.cpp), [`src/mesh/contact_store.h`](../src/mesh/contact_store.h), [`src/mesh/persistence_store.cpp`](../src/mesh/persistence_store.cpp), [`src/mesh/persistence_store.h`](../src/mesh/persistence_store.h)
 
 ### Web Flasher Support
-- **Pre-built binaries** in `webflasher/` — bootloader, partitions, boot_app0, firmware, merged full image, and the Launcher-named copy
+- **Generated binaries** in `webflasher/` after a firmware build — bootloader, partitions, boot_app0, firmware, merged full image, and the Launcher-named copy
 - **Manifest JSON** — versioned metadata (version, git SHA, SHA-256 checksums, offsets) for the `flasher.sigurdos.dev` custom firmware installer
 - **4-partition flash layout** — bootloader (0x0000), partitions (0x8000), boot_app0 (0xe000), firmware (0x10000)
-**Sources:** [`webflasher/manifest.json`](../webflasher/manifest.json), [`firmware/README.md`](../firmware/README.md), [`webflasher/`](../webflasher/)
+**Sources:** [`scripts/merge_bin.py`](../scripts/merge_bin.py), [`firmware/README.md`](../firmware/README.md), [`platformio.ini`](../platformio.ini)
 
 ### OTA Firmware Update
 - **AP upload OTA** — Settings → System → "OTA Update" starts a `SigurdOS-OTA` WiFi AP and upload page at `192.168.4.1`.
