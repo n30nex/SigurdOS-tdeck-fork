@@ -116,7 +116,8 @@ void contacts_screen_set_filter(int adv_type) {
 
 void contacts_screen_show()
 {
-    lv_obj_t* scr = make_screen_full("Contacts");
+    const bool rooms_filter = (contacts_filter_type == ADV_TYPE_ROOM);
+    lv_obj_t* scr = make_screen_full(rooms_filter ? "Rooms" : "Contacts");
 
     sigurdos::mesh::ContactInfo* all_contacts =
         new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
@@ -155,12 +156,21 @@ void contacts_screen_show()
     if (n == 0) {
         g_contacts_page = 0;
         lv_obj_t* info = lv_label_create(scr);
-        lv_label_set_text(info,
-            "No contacts yet.\n\n"
-            "Companions (chat nodes) and room servers\n"
-            "appear here once they broadcast an advert\n"
-            "or send you a message.\n\n"
-            "Tap a contact to send a direct message.");
+        if (rooms_filter) {
+            lv_label_set_text(info,
+                "No room servers yet.\n\n"
+                "Room servers appear here after their\n"
+                "adverts are received.\n\n"
+                "Use ADVERTISE to announce this node,\n"
+                "or check PACKETS for room adverts.");
+        } else {
+            lv_label_set_text(info,
+                "No contacts yet.\n\n"
+                "Companions (chat nodes) and room servers\n"
+                "appear here once they broadcast an advert\n"
+                "or send you a message.\n\n"
+                "Tap a contact to send a direct message.");
+        }
         lv_obj_set_width(info, CONTENT_W);
         lv_obj_set_style_pad_left(info, 8, 0);
         lv_obj_set_style_pad_right(info, 8, 0);
