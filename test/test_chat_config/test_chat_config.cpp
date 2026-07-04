@@ -13,6 +13,7 @@ namespace {
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_DEFAULT;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MAX;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MIN;
+using sigurdos::ui::CHAT_SCREEN_PUBLIC_RENDER_MAX;
 using sigurdos::ui::CHAT_SCREEN_RENDER_MAX;
 using sigurdos::ui::CHAT_EMOJI_PICKER_PAGE_SIZE;
 using sigurdos::ui::chat_screen_emoji_page_count;
@@ -24,6 +25,7 @@ using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_public_message_actions_available;
 using sigurdos::ui::chat_screen_public_message_dm_available;
+using sigurdos::ui::chat_screen_render_limit_for_channel;
 using sigurdos::ui::chat_screen_visible_message_start;
 
 TEST(ChatConfig, ZeroUsesDefaultMessageCap) {
@@ -107,6 +109,17 @@ TEST(ChatConfig, MessageRenderTailKeepsRecentMessagesBounded) {
 
 TEST(ChatConfig, RenderTailStaysSmallForTDeckLvglBudget) {
     EXPECT_LE(CHAT_SCREEN_RENDER_MAX, static_cast<uint16_t>(24));
+}
+
+TEST(ChatConfig, PublicRenderTailIsExtraSmallForTDeckLvglBudget) {
+    EXPECT_LT(CHAT_SCREEN_PUBLIC_RENDER_MAX, CHAT_SCREEN_RENDER_MAX);
+    EXPECT_LE(CHAT_SCREEN_PUBLIC_RENDER_MAX, static_cast<uint16_t>(8));
+    EXPECT_EQ(chat_screen_render_limit_for_channel("Public"),
+              CHAT_SCREEN_PUBLIC_RENDER_MAX);
+    EXPECT_EQ(chat_screen_render_limit_for_channel("#general"),
+              CHAT_SCREEN_RENDER_MAX);
+    EXPECT_EQ(chat_screen_render_limit_for_channel("DM: Alice"),
+              CHAT_SCREEN_RENDER_MAX);
 }
 
 TEST(ChatConfig, PublicMessageActionsOnlyApplyToIncomingPublicMessages) {

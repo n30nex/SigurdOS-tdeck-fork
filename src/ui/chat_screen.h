@@ -35,6 +35,7 @@ static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MIN     = 8;
 // Keep the visible tail small on T-Deck hardware. Each chat bubble is several
 // LVGL objects, so rendering too many at once can starve input or trip WDT.
 static constexpr uint16_t CHAT_SCREEN_RENDER_MAX          = 24;
+static constexpr uint16_t CHAT_SCREEN_PUBLIC_RENDER_MAX   = 8;
 static constexpr int CHAT_EMOJI_PICKER_PAGE_SIZE = 16;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
@@ -84,6 +85,13 @@ inline uint16_t chat_screen_visible_message_start(uint16_t count,
 {
     if (max_render == 0 || count <= max_render) return 0;
     return (uint16_t)(count - max_render);
+}
+
+inline uint16_t chat_screen_render_limit_for_channel(const char* channel)
+{
+    return sigurdos::mesh::isPublicChannelName(channel)
+        ? CHAT_SCREEN_PUBLIC_RENDER_MAX
+        : CHAT_SCREEN_RENDER_MAX;
 }
 
 inline bool chat_screen_public_message_actions_available(const char* channel,

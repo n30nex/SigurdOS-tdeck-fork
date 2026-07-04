@@ -1688,10 +1688,12 @@ static void render_active_messages()
         return;
     }
 
-    // ── Normal mode: render the recent tail. Rendering every retained message
-    // on a busy Public channel can starve input long enough to trip the WDT.
+    // ── Normal mode: render the recent tail. Public gets a tighter first-open
+    // budget because every incoming public bubble also owns action callbacks.
     const uint16_t total = ch_msg_count[active_channel];
-    const uint16_t first = chat_screen_visible_message_start(total, CHAT_RENDER_MAX);
+    const uint16_t render_limit =
+        chat_screen_render_limit_for_channel(dyn_channels[active_channel]);
+    const uint16_t first = chat_screen_visible_message_start(total, render_limit);
     if (first > 0) {
         lv_obj_t* note = lv_label_create(msg_list);
         char note_buf[48];

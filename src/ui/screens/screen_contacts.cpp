@@ -310,6 +310,41 @@ void contacts_screen_show()
 // Forward declaration of login-polling timer (defined after dialog functions)
 static void start_login_poll_timer(const char* name);
 
+static constexpr uint32_t LOGIN_DETAIL_REFRESH_MS = 150;
+
+struct LoginDetailRefreshCtx {
+    char* name;
+    bool skip_login;
+};
+
+static void schedule_login_detail_refresh(const char* name, bool skip_login)
+{
+    if (!name || !name[0]) return;
+    auto* ctx = new(std::nothrow) LoginDetailRefreshCtx{strdup(name), skip_login};
+    if (!ctx || !ctx->name) {
+        if (ctx) {
+            free(ctx->name);
+            delete ctx;
+        }
+        return;
+    }
+    lv_timer_t* timer = lv_timer_create([](lv_timer_t* t) {
+        auto* c = static_cast<LoginDetailRefreshCtx*>(lv_timer_get_user_data(t));
+        if (c && c->name) {
+            repeater_detail_screen_show(c->name, c->skip_login);
+        }
+        if (c) {
+            free(c->name);
+            delete c;
+        }
+        lv_timer_del(t);
+    }, LOGIN_DETAIL_REFRESH_MS, ctx);
+    if (!timer) {
+        free(ctx->name);
+        delete ctx;
+    }
+}
+
 // ── Login password dialog ─────────────────────────
 // Shows a modal dialog for entering a password to log into a repeater/room server.
 // Includes a "Save Password" checkbox that persists the password to NVS.
@@ -343,6 +378,7 @@ void show_login_password_dialog(const char* contact_name)
     lv_textarea_set_placeholder_text(ta, "Password (press Enter to submit)");
     lv_textarea_set_password_mode(ta, true);
     lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta, 15);  // MeshCore login payload limit
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_radius(ta, 0, 0);
@@ -436,11 +472,16 @@ void show_login_password_dialog(const char* contact_name)
         if (d && d->name) {
             const char* pw = lv_textarea_get_text(d->ta);
             if (pw && pw[0]) {
-                sigurdos::mesh::sendLogin(d->name, pw);
-                // Start a login-polling timer on the main screen
-                start_login_poll_timer(d->name);
-                // Save password to NVS if checkbox is checked
-                if (d->save_cb && (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
+                bool sent = sigurdos::mesh::sendLogin(d->name, pw);
+                if (sent) {
+                    // Start a login-polling timer on the main screen
+                    start_login_poll_timer(d->name);
+                } else {
+                    sigurdos::mesh::forceLoginState(d->name, LOGIN_STATUS_FAILED, 0);
+                }
+                schedule_login_detail_refresh(d->name, false);
+                // Save password to NVS only after the request was accepted locally.
+                if (sent && d->save_cb && (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
                     sigurdos::saveRepeaterPassword(d->name, pw);
                 }
             }
@@ -458,17 +499,17 @@ void show_login_password_dialog(const char* contact_name)
             const char* pwt = lv_textarea_get_text(t);
             if (pwt && pwt[0]) {
                 lv_obj_t* parent = lv_obj_get_parent(t);
-                if (parent) {
-                    uint32_t c = lv_obj_get_child_cnt(parent);
-                    for (uint32_t i = 0; i < c; i++) {
-                        lv_obj_t* child = lv_obj_get_child(parent, i);
-                        if (child && lv_obj_check_type(child, &lv_button_class)) {
-                            PwDialogData* data = (PwDialogData*)lv_obj_get_user_data(child);
-                            if (data) {
-                                lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
-                                break;
-                            }
-                        }
+                PwDialogData* expected = parent
+                    ? (PwDialogData*)lv_obj_get_user_data(parent)
+                    : nullptr;
+                if (!parent || !expected) return;
+                uint32_t c = lv_obj_get_child_cnt(parent);
+                for (uint32_t i = 0; i < c; i++) {
+                    lv_obj_t* child = lv_obj_get_child(parent, i);
+                    if (!child || !lv_obj_check_type(child, &lv_button_class)) continue;
+                    if (lv_obj_get_user_data(child) == expected) {
+                        lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
+                        break;
                     }
                 }
             }
