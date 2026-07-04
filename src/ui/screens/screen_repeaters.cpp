@@ -42,10 +42,23 @@ using namespace responsive;
 static int g_repeaters_page = 0;
 static bool g_repeater_detail_open = false;
 static Screen g_repeater_detail_source = Screen::Repeaters;
+static char g_repeater_detail_name[32] = {0};
+
+static void clear_repeater_pending_login(const char* name)
+{
+    if (!name || !name[0]) return;
+    cancel_login_poll_for(name);
+    uint8_t st = sigurdos::mesh::getLoginStatus(name);
+    if (st == LOGIN_STATUS_PENDING || st == LOGIN_STATUS_FAILED) {
+        sigurdos::mesh::sendLogout(name);
+    }
+}
 
 static bool repeater_detail_back_override()
 {
     Screen source = g_repeater_detail_source;
+    clear_repeater_pending_login(g_repeater_detail_name);
+    g_repeater_detail_name[0] = '\0';
     clear_back_override();
     g_repeater_detail_open = false;
     if (source == Screen::Contacts) {
@@ -499,6 +512,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
     char safe_contact_name[32];
     snprintf(safe_contact_name, sizeof(safe_contact_name), "%s", contact_name);
     contact_name = safe_contact_name;
+    snprintf(g_repeater_detail_name, sizeof(g_repeater_detail_name), "%s", contact_name);
 
     // Look up the contact first (need type for screen title). Avoid copying
     // the full 350-contact table just to open one repeater detail page.
@@ -549,9 +563,16 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
     lv_obj_set_style_bg_color(back_row, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_bg_opa(back_row, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(back_row, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_add_event_cb(back_row, [](lv_event_t*) {
+    char* back_name = strdup(contact_name);
+    lv_obj_set_user_data(back_row, back_name);
+    lv_obj_add_event_cb(back_row, [](lv_event_t* e) {
+        const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+        clear_repeater_pending_login(name);
         repeaters_screen_show();
     }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(back_row, [](lv_event_t* e) {
+        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+    }, LV_EVENT_DELETE, nullptr);
     row++;
 
     // skip_login=false: ALWAYS show pre-login (don't trust cached login state)
@@ -762,6 +783,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     if (!name) return;
                     char safe_name[32];
                     snprintf(safe_name, sizeof(safe_name), "%s", name);
+                    cancel_login_poll_for(safe_name);
                     sigurdos::mesh::sendLogout(safe_name);
                     repeater_detail_screen_show(safe_name, false);
                 }, LV_EVENT_CLICKED, nullptr);
@@ -919,14 +941,16 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             add_con("Login", "Logged in", ACCENT_GREEN);
             uint8_t perm = sigurdos::mesh::getLoginPermission(contact_name);
             char perm_buf[24];
-            if (perm == 1) {
-                snprintf(perm_buf, sizeof(perm_buf), "Admin (perm=%d)", perm);
-            } else if (perm == 0) {
+            if (perm >= PERM_ACL_ADMIN) {
+                snprintf(perm_buf, sizeof(perm_buf), "Admin");
+            } else if (perm >= PERM_ACL_READ_WRITE) {
                 snprintf(perm_buf, sizeof(perm_buf), "Read-Write");
+            } else if (perm >= PERM_ACL_READ_ONLY) {
+                snprintf(perm_buf, sizeof(perm_buf), "Read-Only");
             } else {
                 snprintf(perm_buf, sizeof(perm_buf), "Guest");
             }
-            add_con("Permission", perm_buf, perm == 1 ? ACCENT : TEXT_SECONDARY);
+            add_con("Permission", perm_buf, perm >= PERM_ACL_ADMIN ? ACCENT : TEXT_SECONDARY);
         }
 
         // ── Section: Live Requests ────────────────────────
@@ -1002,19 +1026,21 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             row++;
         }
 
-        // Determine if the user has admin permission
-        // Server permission encoding: 1 = Admin, 0 = Read-Write, 2 = Guest
-        bool is_admin = (sigurdos::mesh::getLoginPermission(contact_name) == 1);
+        // Determine if the user has admin permission. MeshCore v7+ returns
+        // the ACL role byte; legacy responses fall back to an admin flag.
+        const uint8_t login_perm = sigurdos::mesh::getLoginPermission(contact_name);
+        bool is_admin = (login_perm >= PERM_ACL_ADMIN);
+        constexpr bool show_advanced_admin_rows = false;
 
         // ── Section: Radio Settings ──────────────────────
-        if (is_admin) {
+        if (is_admin && show_advanced_admin_rows) {
         sec_header("  Radio Settings");
         add_set(LV_SYMBOL_WIFI "  Radio Params", "Set Radio",     "freq,bw,sf,cr",    "set radio ", false);
         add_set(LV_SYMBOL_WIFI "  Temporary Radio", "Temp Radio",  "freq,bw,sf,cr,mins", "tempradio ", false);
         }
 
         // ── Section: Management ──────────────────────────
-        if (is_admin) {
+        if (is_admin && show_advanced_admin_rows) {
         sec_header("  Management");
         add_set(LV_SYMBOL_REFRESH "  Local Advert", "Local Advert", "Minutes 60-240 or 0", "set advert.interval ", false);
         add_set(LV_SYMBOL_REFRESH "  Flood Advert", "Flood Advert", "Hours 3-168 or 0", "set flood.advert.interval ", false);
@@ -1025,7 +1051,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         }
 
         // ── Section: Network ─────────────────────────────
-        if (is_admin) {
+        if (is_admin && show_advanced_admin_rows) {
         sec_header("  Network");
         add_act(LV_SYMBOL_LIST "  Neighbours",        "neighbors",        "Sent: neighbors");
         add_act(LV_SYMBOL_LIST "  Regions",           "region",           "Sent: region");

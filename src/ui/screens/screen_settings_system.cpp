@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../home_screen.h"
 #include "../../hal/keyboard.h"
+#include "../../hal/buzzer.h"
 #include "../../hal/prefs.h"
 #include "../../hal/sdcard.h"
 #include "../../hal/tdeck_pins.h"
@@ -665,6 +666,35 @@ void settings_system_show()
         show_input_diag_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)));
     }, LV_EVENT_CLICKED, nullptr);
     row++;
+
+    // Buzzer notification toggle and direct self-test
+    {
+        snprintf(buf, sizeof(buf), "  Buzzer Notifications: %s",
+                 p.buzzer_quiet ? "OFF" : "ON");
+        lv_obj_t* btn_buzzer_toggle = lv_list_add_btn(list, LV_SYMBOL_AUDIO, buf);
+        lv_obj_set_style_bg_color(btn_buzzer_toggle, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_buzzer_toggle, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_buzzer_toggle, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_buzzer_toggle, [](lv_event_t* e) {
+            auto np = sigurdos::prefs_get();
+            np.buzzer_quiet = !np.buzzer_quiet;
+            sigurdos::prefs_set(np);
+            char label[48];
+            snprintf(label, sizeof(label), "  Buzzer Notifications: %s",
+                     np.buzzer_quiet ? "OFF" : "ON");
+            update_row_label((lv_obj_t*)lv_event_get_target(e), label);
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+
+        lv_obj_t* btn_buzzer_test = lv_list_add_btn(list, LV_SYMBOL_AUDIO, "  Test Buzzer");
+        lv_obj_set_style_bg_color(btn_buzzer_test, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_buzzer_test, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_buzzer_test, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_buzzer_test, [](lv_event_t*) {
+            sigurdos::hal::buzzer_self_test();
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
 
     // Keyboard raw overlay
     snprintf(buf, sizeof(buf), "  Keyboard Mode: %s",

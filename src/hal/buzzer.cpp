@@ -11,6 +11,12 @@ namespace hal {
 
 namespace {
 
+#if defined(ESP32_PLATFORM) || defined(SIGURDOS_NATIVE_PREFERENCES)
+#define SIGURDOS_BUZZER_USE_TONE 1
+#else
+#define SIGURDOS_BUZZER_USE_TONE 0
+#endif
+
 // Non-blocking playback state — buzzer_loop() advances through the active
 // pattern. Starting a beep while one is playing replaces it (restart
 // semantics); no call site can trigger overlap today: the only caller is
@@ -21,12 +27,28 @@ std::size_t s_idx = 0;
 uint32_t s_step_started_ms = 0;
 bool s_active = false;
 
+void buzzer_stop_output() {
+#if SIGURDOS_BUZZER_USE_TONE
+    noTone(PIN_BUZZER);
+#endif
+    digitalWrite(PIN_BUZZER, LOW);
+}
+
 void buzzer_apply_step() {
-    digitalWrite(PIN_BUZZER, s_pattern[s_idx].level_high ? HIGH : LOW);
+    const BuzzerPatternStep& step = s_pattern[s_idx];
+    if (step.tone_on) {
+#if SIGURDOS_BUZZER_USE_TONE
+        tone(PIN_BUZZER, step.frequency_hz);
+#else
+        digitalWrite(PIN_BUZZER, HIGH);
+#endif
+    } else {
+        buzzer_stop_output();
+    }
     s_step_started_ms = millis();
-    if (s_pattern[s_idx].duration_ms == 0) {
-        // Terminal marker: apply its level, then idle LOW.
-        digitalWrite(PIN_BUZZER, LOW);
+    if (step.duration_ms == 0) {
+        // Terminal marker: apply its output state, then idle LOW/silent.
+        buzzer_stop_output();
         s_active = false;
     }
 }
@@ -42,7 +64,7 @@ void buzzer_start_pattern(BuzzerPatternKind kind) {
 
 void buzzer_init() {
     pinMode(PIN_BUZZER, OUTPUT);
-    digitalWrite(PIN_BUZZER, LOW);
+    buzzer_stop_output();
 }
 
 void buzzer_loop() {
@@ -50,7 +72,7 @@ void buzzer_loop() {
     if (millis() - s_step_started_ms < s_pattern[s_idx].duration_ms) return;
     s_idx++;
     if (s_idx >= s_count) {
-        digitalWrite(PIN_BUZZER, LOW);
+        buzzer_stop_output();
         s_active = false;
         return;
     }
@@ -65,6 +87,10 @@ void buzzer_beep_double() {
     buzzer_start_pattern(BuzzerPatternKind::Double);
 }
 
+void buzzer_self_test() {
+    buzzer_start_pattern(BuzzerPatternKind::Double);
+}
+
 } // namespace hal
 } // namespace sigurdos
 
@@ -76,6 +102,7 @@ void buzzer_init() {}
 void buzzer_loop() {}
 void buzzer_beep_short() {}
 void buzzer_beep_double() {}
+void buzzer_self_test() {}
 } // namespace hal
 } // namespace sigurdos
 

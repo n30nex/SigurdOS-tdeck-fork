@@ -27,6 +27,11 @@ namespace arduino_mock {
     int forced_read_value[64] = {0};
     int forced_read_count[64] = {0};
     int analog_values[16] = {0};
+    int tone_calls = 0;
+    int no_tone_calls = 0;
+    int last_tone_pin = -1;
+    unsigned int last_tone_frequency = 0;
+    unsigned long last_tone_duration_ms = 0;
 
     void reset() {
         current_millis = 0;
@@ -37,6 +42,11 @@ namespace arduino_mock {
             forced_read_count[i] = 0;
         }
         for (int i = 0; i < 16; i++) analog_values[i] = 0;
+        tone_calls = 0;
+        no_tone_calls = 0;
+        last_tone_pin = -1;
+        last_tone_frequency = 0;
+        last_tone_duration_ms = 0;
     }
 }
 

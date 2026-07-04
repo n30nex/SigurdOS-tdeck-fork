@@ -637,6 +637,26 @@ struct LoginPollCtx {
 static lv_timer_t* g_login_poll_timer = nullptr;
 static uint32_t g_login_poll_gen = 0;
 
+void cancel_login_poll_for(const char* contact_name)
+{
+    if (!g_login_poll_timer) {
+        g_login_poll_gen++;
+        return;
+    }
+
+    LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(g_login_poll_timer);
+    if (contact_name && ctx && ctx->name && strcmp(ctx->name, contact_name) != 0) {
+        return;
+    }
+
+    g_login_poll_gen++;
+    if (ctx) {
+        free(ctx->name);
+        delete ctx;
+    }
+    lv_timer_del(g_login_poll_timer);
+    g_login_poll_timer = nullptr;
+}
 
 static void on_login_poll_timer(lv_timer_t* t) {
     LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(t);
@@ -666,7 +686,9 @@ static void on_login_poll_timer(lv_timer_t* t) {
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
-        if (auto_open_room) {
+        if (!n) {
+            return;
+        } else if (auto_open_room) {
             chat_screen_open_room(n);
         } else {
             // Rebuild screen in post-login mode
@@ -680,10 +702,15 @@ static void on_login_poll_timer(lv_timer_t* t) {
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
-        repeater_detail_screen_show(n, false);
+        if (n) repeater_detail_screen_show(n, false);
         free(n);
+    } else if (st == LOGIN_STATUS_NONE) {
+        free(ctx->name);
+        delete ctx;
+        lv_timer_del(t);
+        if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
     }
-    // LOGIN_PENDING or LOGIN_NONE → keep polling
+    // LOGIN_PENDING -> keep polling
 }
 
 static void start_login_poll_timer(const char* name, bool auto_open_room) {

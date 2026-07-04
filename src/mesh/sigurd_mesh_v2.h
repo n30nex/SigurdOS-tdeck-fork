@@ -443,7 +443,7 @@ public:
 
     struct LoginEntry {
         char     contact_name[32];
-        uint8_t  permission;        // server permission byte (0=guest, 1=admin, etc.)
+        uint8_t  permission;        // legacy server admin flag (0=non-admin, 1=admin)
         uint8_t  acl_permissions;   // v7+ ACL byte
         uint8_t  status;            // LoginStatus
         uint32_t started_at_ms;     // when login was initiated (for timeout)
@@ -478,7 +478,10 @@ public:
 
     uint8_t getLoginPermission(const char* name) const {
         int idx = findLoginEntry(name);
-        return idx >= 0 ? _login_entries[idx].permission : 0;
+        if (idx < 0) return PERM_ACL_GUEST;
+        const uint8_t acl_role = _login_entries[idx].acl_permissions & 0x03u;
+        if (_login_entries[idx].acl_permissions != 0) return acl_role;
+        return _login_entries[idx].permission ? PERM_ACL_ADMIN : PERM_ACL_GUEST;
     }
 
     uint8_t getLoginStatus(const char* name) {

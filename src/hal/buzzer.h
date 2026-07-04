@@ -13,25 +13,27 @@ enum class BuzzerPatternKind : uint8_t {
 };
 
 struct BuzzerPatternStep {
-    bool level_high;
+    bool tone_on;
     uint16_t duration_ms;
+    uint16_t frequency_hz;
 };
 
 static constexpr uint16_t SIGURDOS_BUZZER_SHORT_ON_MS = 80;
 static constexpr uint16_t SIGURDOS_BUZZER_DOUBLE_ON_MS = 60;
 static constexpr uint16_t SIGURDOS_BUZZER_DOUBLE_GAP_MS = 60;
+static constexpr uint16_t SIGURDOS_BUZZER_TONE_HZ = 2600;
 
 inline const BuzzerPatternStep* sigurdos_buzzer_pattern(BuzzerPatternKind kind,
                                                         std::size_t* count) {
     static constexpr BuzzerPatternStep short_pattern[] = {
-        {true, SIGURDOS_BUZZER_SHORT_ON_MS},
-        {false, 0},
+        {true, SIGURDOS_BUZZER_SHORT_ON_MS, SIGURDOS_BUZZER_TONE_HZ},
+        {false, 0, 0},
     };
     static constexpr BuzzerPatternStep double_pattern[] = {
-        {true, SIGURDOS_BUZZER_DOUBLE_ON_MS},
-        {false, SIGURDOS_BUZZER_DOUBLE_GAP_MS},
-        {true, SIGURDOS_BUZZER_DOUBLE_ON_MS},
-        {false, 0},
+        {true, SIGURDOS_BUZZER_DOUBLE_ON_MS, SIGURDOS_BUZZER_TONE_HZ},
+        {false, SIGURDOS_BUZZER_DOUBLE_GAP_MS, 0},
+        {true, SIGURDOS_BUZZER_DOUBLE_ON_MS, SIGURDOS_BUZZER_TONE_HZ},
+        {false, 0, 0},
     };
 
     const BuzzerPatternStep* pattern = short_pattern;
@@ -59,6 +61,10 @@ void buzzer_beep_short();
 
 // Double beep - for channel message arrival
 void buzzer_beep_double();
+
+// Direct diagnostic self-test; intentionally plays even if notification quiet
+// mode is enabled because it is a user-requested hardware test.
+void buzzer_self_test();
 
 } // namespace hal
 } // namespace sigurdos

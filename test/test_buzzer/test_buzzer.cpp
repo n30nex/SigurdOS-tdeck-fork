@@ -30,6 +30,7 @@ using sigurdos::hal::BuzzerPatternStep;
 using sigurdos::hal::SIGURDOS_BUZZER_DOUBLE_GAP_MS;
 using sigurdos::hal::SIGURDOS_BUZZER_DOUBLE_ON_MS;
 using sigurdos::hal::SIGURDOS_BUZZER_SHORT_ON_MS;
+using sigurdos::hal::SIGURDOS_BUZZER_TONE_HZ;
 using sigurdos::hal::sigurdos_buzzer_pattern;
 
 class BuzzerPatternTest : public ::testing::Test {};
@@ -41,10 +42,12 @@ TEST_F(BuzzerPatternTest, ShortPatternMatchesNotificationContract) {
 
     ASSERT_NE(pattern, nullptr);
     ASSERT_EQ(count, 2U);
-    EXPECT_TRUE(pattern[0].level_high);
+    EXPECT_TRUE(pattern[0].tone_on);
     EXPECT_EQ(pattern[0].duration_ms, SIGURDOS_BUZZER_SHORT_ON_MS);
-    EXPECT_FALSE(pattern[1].level_high);
+    EXPECT_EQ(pattern[0].frequency_hz, SIGURDOS_BUZZER_TONE_HZ);
+    EXPECT_FALSE(pattern[1].tone_on);
     EXPECT_EQ(pattern[1].duration_ms, 0U);
+    EXPECT_EQ(pattern[1].frequency_hz, 0U);
 }
 
 TEST_F(BuzzerPatternTest, DoublePatternMatchesNotificationContract) {
@@ -54,14 +57,18 @@ TEST_F(BuzzerPatternTest, DoublePatternMatchesNotificationContract) {
 
     ASSERT_NE(pattern, nullptr);
     ASSERT_EQ(count, 4U);
-    EXPECT_TRUE(pattern[0].level_high);
+    EXPECT_TRUE(pattern[0].tone_on);
     EXPECT_EQ(pattern[0].duration_ms, SIGURDOS_BUZZER_DOUBLE_ON_MS);
-    EXPECT_FALSE(pattern[1].level_high);
+    EXPECT_EQ(pattern[0].frequency_hz, SIGURDOS_BUZZER_TONE_HZ);
+    EXPECT_FALSE(pattern[1].tone_on);
     EXPECT_EQ(pattern[1].duration_ms, SIGURDOS_BUZZER_DOUBLE_GAP_MS);
-    EXPECT_TRUE(pattern[2].level_high);
+    EXPECT_EQ(pattern[1].frequency_hz, 0U);
+    EXPECT_TRUE(pattern[2].tone_on);
     EXPECT_EQ(pattern[2].duration_ms, SIGURDOS_BUZZER_DOUBLE_ON_MS);
-    EXPECT_FALSE(pattern[3].level_high);
+    EXPECT_EQ(pattern[2].frequency_hz, SIGURDOS_BUZZER_TONE_HZ);
+    EXPECT_FALSE(pattern[3].tone_on);
     EXPECT_EQ(pattern[3].duration_ms, 0U);
+    EXPECT_EQ(pattern[3].frequency_hz, 0U);
 }
 
 TEST_F(BuzzerPatternTest, PatternLookupSupportsNullCount) {
@@ -69,8 +76,9 @@ TEST_F(BuzzerPatternTest, PatternLookupSupportsNullCount) {
         sigurdos_buzzer_pattern(BuzzerPatternKind::Short, nullptr);
 
     ASSERT_NE(pattern, nullptr);
-    EXPECT_TRUE(pattern[0].level_high);
+    EXPECT_TRUE(pattern[0].tone_on);
     EXPECT_EQ(pattern[0].duration_ms, SIGURDOS_BUZZER_SHORT_ON_MS);
+    EXPECT_EQ(pattern[0].frequency_hz, SIGURDOS_BUZZER_TONE_HZ);
 }
 
 TEST_F(BuzzerPatternTest, PatternDurationsStayWithinResponsiveBounds) {
@@ -93,6 +101,7 @@ TEST_F(BuzzerPatternTest, PatternDurationsStayWithinResponsiveBounds) {
 class BuzzerPlaybackTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        arduino_mock::reset();
         arduino_mock::current_millis = 1000;
         sigurdos::hal::buzzer_init();
         // Drain any pattern left active by a previous test: each loop call
@@ -121,12 +130,17 @@ TEST_F(BuzzerPlaybackTest, ShortBeepReturnsImmediatelyAndPlaysSequence) {
     // proves the call no longer blocks (the old code burned 80 ms here).
     EXPECT_EQ(arduino_mock::current_millis, 1000UL);
     EXPECT_EQ(pin(), HIGH);
+    EXPECT_EQ(arduino_mock::tone_calls, 1);
+    EXPECT_EQ(arduino_mock::last_tone_pin, PIN_BUZZER);
+    EXPECT_EQ(arduino_mock::last_tone_frequency, SIGURDOS_BUZZER_TONE_HZ);
+    EXPECT_EQ(arduino_mock::last_tone_duration_ms, 0UL);
 
     loop_at(1079);  // 1 ms before the ON step ends
     EXPECT_EQ(pin(), HIGH);
 
     loop_at(1080);  // ON step elapsed — advance to terminal LOW
     EXPECT_EQ(pin(), LOW);
+    EXPECT_GE(arduino_mock::no_tone_calls, 1);
 
     loop_at(1081);  // pattern finished — further loops are no-ops
     EXPECT_EQ(pin(), LOW);
@@ -134,20 +148,29 @@ TEST_F(BuzzerPlaybackTest, ShortBeepReturnsImmediatelyAndPlaysSequence) {
     EXPECT_EQ(pin(), LOW);
 }
 
+TEST_F(BuzzerPlaybackTest, InitConfiguresBuzzerPinAsOutputAndIdleLow) {
+    EXPECT_GT(arduino_mock::pin_mode_calls[PIN_BUZZER], 0);
+    EXPECT_EQ(pin(), LOW);
+    EXPECT_GT(arduino_mock::no_tone_calls, 0);
+}
+
 TEST_F(BuzzerPlaybackTest, DoubleBeepPlaysOnGapOnSequence) {
     sigurdos::hal::buzzer_beep_double();
     EXPECT_EQ(arduino_mock::current_millis, 1000UL);
     EXPECT_EQ(pin(), HIGH);
+    EXPECT_EQ(arduino_mock::tone_calls, 1);
 
     loop_at(1059);
     EXPECT_EQ(pin(), HIGH);
     loop_at(1060);  // first ON elapsed → gap
     EXPECT_EQ(pin(), LOW);
+    EXPECT_GE(arduino_mock::no_tone_calls, 1);
 
     loop_at(1119);
     EXPECT_EQ(pin(), LOW);
     loop_at(1120);  // gap elapsed → second ON
     EXPECT_EQ(pin(), HIGH);
+    EXPECT_EQ(arduino_mock::tone_calls, 2);
 
     loop_at(1180);  // second ON elapsed → terminal LOW
     EXPECT_EQ(pin(), LOW);
@@ -172,6 +195,18 @@ TEST_F(BuzzerPlaybackTest, NewBeepRestartsActivePattern) {
     // No resurrected double-pattern step later on.
     loop_at(1300);
     EXPECT_EQ(pin(), LOW);
+}
+
+TEST_F(BuzzerPlaybackTest, SelfTestUsesDoublePattern) {
+    sigurdos::hal::buzzer_self_test();
+    EXPECT_EQ(pin(), HIGH);
+    EXPECT_EQ(arduino_mock::tone_calls, 1);
+
+    loop_at(1060);
+    EXPECT_EQ(pin(), LOW);
+    loop_at(1120);
+    EXPECT_EQ(pin(), HIGH);
+    EXPECT_EQ(arduino_mock::tone_calls, 2);
 }
 
 } // namespace
