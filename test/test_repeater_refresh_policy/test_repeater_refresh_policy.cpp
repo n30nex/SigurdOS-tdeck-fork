@@ -60,4 +60,19 @@ TEST(RepeaterManagementPolicy, RequestFailureMessagesAreUserVisible)
                 "! Telemetry request failed");
 }
 
+TEST(LoginRefreshPolicy, SkipsImmediateDetailRefreshForSentRoomLogin)
+{
+    EXPECT_FALSE(sigurdos::ui::login_detail_refresh_after_submit(true, true));
+}
+
+TEST(LoginRefreshPolicy, RefreshesAfterFailedRoomLoginSubmit)
+{
+    EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(false, true));
+}
+
+TEST(LoginRefreshPolicy, RefreshesAfterSentRepeaterLogin)
+{
+    EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(true, false));
+}
+
 } // namespace

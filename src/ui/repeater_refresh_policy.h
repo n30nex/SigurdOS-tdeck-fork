@@ -39,4 +39,10 @@ inline const char* repeater_management_request_failed_message(RepeaterManagement
     return "! Request failed";
 }
 
+inline bool login_detail_refresh_after_submit(bool send_attempted,
+                                              bool contact_is_room_server)
+{
+    return !send_attempted || !contact_is_room_server;
+}
+
 } // namespace sigurdos::ui

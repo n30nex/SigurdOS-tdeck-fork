@@ -149,6 +149,8 @@ static int   active_channel = 0;
 static lv_timer_t* g_pending_channel_list_timer = nullptr;
 static lv_timer_t* g_pending_channel_open_timer = nullptr;
 static lv_timer_t* g_pending_channel_select_timer = nullptr;
+static lv_timer_t* g_chat_save_timer = nullptr;
+static bool g_chat_save_dirty = false;
 static lv_scr_load_anim_t g_pending_channel_list_anim = LV_SCR_LOAD_ANIM_NONE;
 static char g_pending_open_channel[CHANNEL_NAME_CAP] = "";
 static char g_pending_select_channel[CHANNEL_NAME_CAP] = "";
@@ -193,6 +195,28 @@ static void reset_unread_for_current_filter()
         sigurdos::mesh::resetUnreadDmMessageCount();
     } else {
         sigurdos::mesh::resetUnreadMessageCount();
+    }
+}
+
+static void chat_save_timer_cb(lv_timer_t* timer)
+{
+    if (g_chat_save_timer == timer) g_chat_save_timer = nullptr;
+    lv_timer_del(timer);
+    if (!g_chat_save_dirty) return;
+    g_chat_save_dirty = false;
+    chat_save_messages();
+}
+
+static void schedule_chat_save_messages()
+{
+    g_chat_save_dirty = true;
+    if (g_chat_save_timer) return;
+    g_chat_save_timer = lv_timer_create(chat_save_timer_cb, 1500, nullptr);
+    if (!g_chat_save_timer) {
+        g_chat_save_dirty = false;
+        chat_save_messages();
+    } else {
+        lv_timer_set_repeat_count(g_chat_save_timer, 1);
     }
 }
 
@@ -3133,7 +3157,11 @@ bool chat_screen_add_msg(const char* channel, const char* sender, const char* te
     if (idx >= MAX_CHANNELS) return false;
 
     append_channel_message(idx, sender, text, now, is_self, txt_type);
-    chat_save_messages();
+    if (is_self) {
+        chat_save_messages();
+    } else {
+        schedule_chat_save_messages();
+    }
 
     bool visible = msg_list && lv_obj_is_valid(msg_list) &&
                    idx == active_channel && current_screen() == Screen::Chat;

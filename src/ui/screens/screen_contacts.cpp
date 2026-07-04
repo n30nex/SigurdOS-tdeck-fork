@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../contact_paging.h"
 #include "../chat_screen.h"
+#include "../repeater_refresh_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
@@ -403,10 +404,10 @@ static void deferred_login_submit_cb(lv_timer_t* t)
 {
     auto* ctx = static_cast<DeferredLoginSubmitCtx*>(lv_timer_get_user_data(t));
     if (ctx && ctx->name[0]) {
+        const bool is_room_server = contact_is_room_server(ctx->name);
         bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
         if (sent) {
-            const bool auto_open_room = ctx->password[0] == '\0' &&
-                                        contact_is_room_server(ctx->name);
+            const bool auto_open_room = ctx->password[0] == '\0' && is_room_server;
             start_login_poll_timer(ctx->name, auto_open_room);
             if (ctx->save_password && ctx->password[0]) {
                 sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
@@ -414,7 +415,9 @@ static void deferred_login_submit_cb(lv_timer_t* t)
         } else {
             sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
         }
-        schedule_login_detail_refresh(ctx->name, false);
+        if (login_detail_refresh_after_submit(sent, is_room_server)) {
+            schedule_login_detail_refresh(ctx->name, false);
+        }
     }
     delete ctx;
     lv_timer_del(t);
