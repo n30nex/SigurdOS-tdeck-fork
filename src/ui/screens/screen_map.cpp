@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../map_gps_state.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -44,6 +45,8 @@ static void update_map_status(const char* text);
 
 static lv_obj_t* g_map_status_label = nullptr;
 static lv_obj_t* g_map_gps_label = nullptr;
+static lv_obj_t* g_map_gps_btn = nullptr;
+static lv_obj_t* g_map_gps_btn_label = nullptr;
 static lv_obj_t* g_map_screen = nullptr;
 static lv_timer_t* g_download_status_timer = nullptr;
 static bool g_download_was_running = false;
@@ -112,6 +115,7 @@ static void update_map_status(const char* text)
 static void update_map_gps_status()
 {
     if (!g_map_gps_label || !lv_obj_is_valid(g_map_gps_label)) return;
+    const bool gps_enabled = sigurdos::prefs_get().gps_enabled;
     const bool has_fix = sigurdos_gps_has_fix();
     const uint8_t sats_view = sigurdos_gps_satellites_in_view();
     const uint8_t sats_fix = sigurdos_gps_satellites();
@@ -120,7 +124,25 @@ static void update_map_gps_status()
     snprintf(buf, sizeof(buf), "%s %u", LV_SYMBOL_GPS, sats);
     lv_label_set_text(g_map_gps_label, buf);
     lv_obj_set_style_text_color(g_map_gps_label,
-        lv_color_hex(has_fix ? ACCENT_GREEN : ACCENT_RED), 0);
+        lv_color_hex(has_fix ? ACCENT_GREEN : (gps_enabled ? ACCENT_RED : TEXT_SECONDARY)), 0);
+}
+
+static void update_map_gps_button()
+{
+    if (!g_map_gps_btn || !lv_obj_is_valid(g_map_gps_btn) ||
+        !g_map_gps_btn_label || !lv_obj_is_valid(g_map_gps_btn_label)) {
+        return;
+    }
+
+    const auto state = map_gps_button_state(sigurdos::prefs_get().gps_enabled,
+                                            sigurdos_gps_has_fix());
+    const uint32_t color = map_gps_button_color(state);
+    lv_label_set_text(g_map_gps_btn_label, map_gps_button_text(state));
+    lv_obj_set_style_border_color(g_map_gps_btn, lv_color_hex(color), 0);
+    lv_obj_set_style_text_color(g_map_gps_btn_label,
+        lv_color_hex(state == MapGpsButtonState::Locked ? 0xffffff : color), 0);
+    lv_obj_set_style_bg_color(g_map_gps_btn,
+        lv_color_hex(state == MapGpsButtonState::Locked ? ACCENT_GREEN : BG_TERTIARY), 0);
 }
 
 static void create_map_gps_topbar_status(lv_obj_t* scr)
@@ -152,6 +174,7 @@ static bool parse_coordinate(const char* text, double min_val, double max_val,
 static void poll_tile_download_status()
 {
     update_map_gps_status();
+    update_map_gps_button();
     SigurdosMapTileDownloadStatus status;
     sigurdos_map_tile_download_get_status(&status);
     if (!status.running && !status.complete && !status.message[0]) return;
@@ -178,14 +201,29 @@ static void start_visible_tile_download()
 
 static void center_on_gps()
 {
+    if (!sigurdos::prefs_get().gps_enabled) {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.gps_enabled = true;
+        sigurdos::prefs_set(p);
+        sigurdos::prefs_save(p);
+    }
+
+    if (!sigurdos_gps_initialized()) {
+        sigurdos_gps_init();
+    }
+
+    update_map_gps_status();
+    update_map_gps_button();
+
     if (!sigurdos_gps_has_fix()) {
-        update_map_status("GPS waiting for fix");
+        update_map_status("Finding sats");
         return;
     }
 
     sigurdos_map_set_view(sigurdos_gps_latitude(), sigurdos_gps_longitude(),
                           GPS_CENTER_ZOOM);
     update_map_status("Centered on GPS");
+    update_map_gps_button();
     render_map_with_contacts();
 }
 
@@ -350,6 +388,8 @@ void map_screen_show()
     g_map_screen = scr;
     g_map_status_label = nullptr;
     g_map_gps_label = nullptr;
+    g_map_gps_btn = nullptr;
+    g_map_gps_btn_label = nullptr;
     g_download_was_running = false;
     create_map_gps_topbar_status(scr);
     lv_obj_add_event_cb(scr, [](lv_event_t* e) {
@@ -358,6 +398,8 @@ void map_screen_show()
         g_map_screen = nullptr;
         g_map_status_label = nullptr;
         g_map_gps_label = nullptr;
+        g_map_gps_btn = nullptr;
+        g_map_gps_btn_label = nullptr;
         if (g_download_status_timer) {
             lv_timer_del(g_download_status_timer);
             g_download_status_timer = nullptr;
@@ -444,25 +486,26 @@ void map_screen_show()
     lv_obj_add_event_cb(zoom_out, [](lv_event_t*) { sigurdos_map_zoom_out(); render_map_with_contacts(); },
                         LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t* gps_btn = lv_btn_create(scr);
-    lv_obj_set_size(gps_btn, 72, 28);
-    lv_obj_align(gps_btn, LV_ALIGN_BOTTOM_LEFT, 8, -(BOT_BAR_H + DIVIDER_H + 8));
-    lv_obj_set_style_bg_color(gps_btn, lv_color_hex(BG_TERTIARY), 0);
-    lv_obj_set_style_radius(gps_btn, 0, 0);
-    lv_obj_set_style_border_width(gps_btn, 1, 0);
-    lv_obj_set_style_border_color(gps_btn, lv_color_hex(ACCENT), 0);
-    lv_obj_t* gps = lv_label_create(gps_btn);
-    lv_label_set_text(gps, "Use GPS");
-    lv_obj_set_style_text_color(gps, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(gps, emoji_wrapped_montserrat_10, 0);
-    lv_obj_center(gps);
-    lv_obj_add_event_cb(gps_btn, [](lv_event_t*) {
+    g_map_gps_btn = lv_btn_create(scr);
+    lv_obj_set_size(g_map_gps_btn, 98, 28);
+    lv_obj_align(g_map_gps_btn, LV_ALIGN_BOTTOM_LEFT, 8, -(BOT_BAR_H + DIVIDER_H + 8));
+    lv_obj_set_style_bg_color(g_map_gps_btn, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_radius(g_map_gps_btn, 0, 0);
+    lv_obj_set_style_border_width(g_map_gps_btn, 1, 0);
+    lv_obj_set_style_border_color(g_map_gps_btn, lv_color_hex(ACCENT), 0);
+    g_map_gps_btn_label = lv_label_create(g_map_gps_btn);
+    lv_label_set_text(g_map_gps_btn_label, "Use GPS");
+    lv_obj_set_style_text_color(g_map_gps_btn_label, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_text_font(g_map_gps_btn_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(g_map_gps_btn_label);
+    update_map_gps_button();
+    lv_obj_add_event_cb(g_map_gps_btn, [](lv_event_t*) {
         center_on_gps();
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* dl_btn = lv_btn_create(scr);
     lv_obj_set_size(dl_btn, 36, 28);
-    lv_obj_align(dl_btn, LV_ALIGN_BOTTOM_LEFT, 84, -(BOT_BAR_H + DIVIDER_H + 8));
+    lv_obj_align(dl_btn, LV_ALIGN_BOTTOM_LEFT, 112, -(BOT_BAR_H + DIVIDER_H + 8));
     lv_obj_set_style_bg_color(dl_btn, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_radius(dl_btn, 0, 0);
     lv_obj_set_style_border_width(dl_btn, 1, 0);
@@ -483,8 +526,8 @@ void map_screen_show()
     lv_obj_set_style_text_color(g_map_status_label, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(g_map_status_label, emoji_wrapped_montserrat_10, 0);
     lv_label_set_long_mode(g_map_status_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(g_map_status_label, DISPLAY_W - 168);
-    lv_obj_align(g_map_status_label, LV_ALIGN_BOTTOM_LEFT, 128,
+    lv_obj_set_width(g_map_status_label, DISPLAY_W - 196);
+    lv_obj_align(g_map_status_label, LV_ALIGN_BOTTOM_LEFT, 156,
                  -(BOT_BAR_H + DIVIDER_H + 14));
 
     if (!sigurdos_gps_has_fix() && !sigurdos::prefs_get().map_location_valid &&

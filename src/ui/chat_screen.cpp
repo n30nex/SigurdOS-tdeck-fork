@@ -135,6 +135,10 @@ static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
+static lv_timer_t* g_pending_channel_list_timer = nullptr;
+static lv_timer_t* g_pending_channel_open_timer = nullptr;
+static lv_scr_load_anim_t g_pending_channel_list_anim = LV_SCR_LOAD_ANIM_NONE;
+static char g_pending_open_channel[CHANNEL_NAME_CAP] = "";
 
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
@@ -273,6 +277,8 @@ static void trim_channel_history(int idx, uint16_t cap)
 // ── Forward declarations ───────────────────────────────────
 static void show_channel_list(lv_scr_load_anim_t anim);
 static void open_channel_messaging(int idx);
+static void request_show_channel_list(lv_scr_load_anim_t anim);
+static void request_open_channel_messaging(int idx);
 static void rebuild_channel_ribbon();
 static void show_add_channel_options(lv_obj_t* parent);
 static void render_active_messages();
@@ -718,8 +724,7 @@ static void populate_channel_rows(lv_obj_t* list) {
 
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             int idx = (int)(intptr_t)lv_event_get_user_data(e);
-            ch_meta[idx].unread = 0;
-            open_channel_messaging(idx);
+            request_open_channel_messaging(idx);
         }, LV_EVENT_CLICKED, (void*)(intptr_t)ch_idx);
     }
 }
@@ -731,6 +736,51 @@ static int find_channel_idx(const char* channel)
         if (strcmp(dyn_channels[i], channel) == 0) return i;
     }
     return -1;
+}
+
+static void channel_list_timer_cb(lv_timer_t* timer)
+{
+    if (timer) lv_timer_del(timer);
+    g_pending_channel_list_timer = nullptr;
+    if (current_screen() != Screen::Chat) return;
+    show_channel_list(g_pending_channel_list_anim);
+}
+
+static void request_show_channel_list(lv_scr_load_anim_t anim)
+{
+    g_pending_channel_list_anim = anim;
+    if (!g_pending_channel_list_timer) {
+        g_pending_channel_list_timer = lv_timer_create(channel_list_timer_cb, 1, nullptr);
+    }
+}
+
+static void channel_open_timer_cb(lv_timer_t* timer)
+{
+    if (timer) lv_timer_del(timer);
+    g_pending_channel_open_timer = nullptr;
+    if (current_screen() != Screen::Chat) return;
+
+    char channel[CHANNEL_NAME_CAP];
+    strncpy(channel, g_pending_open_channel, sizeof(channel) - 1);
+    channel[sizeof(channel) - 1] = '\0';
+    g_pending_open_channel[0] = '\0';
+    if (!channel[0]) return;
+
+    int idx = find_channel_idx(channel);
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    ch_meta[idx].unread = 0;
+    open_channel_messaging(idx);
+}
+
+static void request_open_channel_messaging(int idx)
+{
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    strncpy(g_pending_open_channel, dyn_channels[idx], sizeof(g_pending_open_channel) - 1);
+    g_pending_open_channel[sizeof(g_pending_open_channel) - 1] = '\0';
+    ch_meta[idx].unread = 0;
+    if (!g_pending_channel_open_timer) {
+        g_pending_channel_open_timer = lv_timer_create(channel_open_timer_cb, 1, nullptr);
+    }
 }
 
 static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
@@ -934,6 +984,8 @@ static lv_obj_t* make_chat_list_screen()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+
+    add_topbar_status_indicators(top, -54);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(s);
@@ -1245,11 +1297,11 @@ static void create_top_bar()
     lv_obj_center(bl);
     disable_scroll(bl);
     lv_obj_add_event_cb(back, [](lv_event_t*) {
-        show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
-    int ribbon_w = CONTENT_W - 42 - 44 - 28; // back button + margins + time + search btn
+    int ribbon_w = CONTENT_W - 42 - 44 - 28 - 44; // back + time + search + status cluster
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
     lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 42, 0);
@@ -1285,10 +1337,12 @@ static void create_top_bar()
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
+    add_topbar_status_indicators(top_bar, -74);
+
     // Search button (left of time label)
     lv_obj_t* search_btn = lv_btn_create(top_bar);
     lv_obj_set_size(search_btn, 24, TOP_H - 4);
-    lv_obj_align(search_btn, LV_ALIGN_RIGHT_MID, -28, 0);
+    lv_obj_align(search_btn, LV_ALIGN_RIGHT_MID, -42, 0);
     lv_obj_set_style_bg_color(search_btn, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_border_width(search_btn, 0, 0);
     lv_obj_set_style_radius(search_btn, 0, 0);
@@ -2123,7 +2177,7 @@ static void open_channel_messaging(int idx)
         sigurdos::mesh::ContactInfo contact_info{};
         if (sigurdos::mesh::getContactByName(contact_name, &contact_info)) {
             lv_obj_t* sig = create_signal_dots(top_bar, contact_info.rssi);
-            lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -30, 0);
+            lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -116, 0);
         }
     }
 
@@ -2404,7 +2458,7 @@ static void channel_menu_action_cb(lv_event_t* e) {
     if (action == ChannelAction::LeaveChannel) {
         channel_menu_perform(action, channel, idx);
         clear_chat_private_scope(channel);
-        show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
         return;
     }
 }
@@ -2702,7 +2756,7 @@ void chat_screen_show()
         sigurdos::mesh::resetUnreadMessageCount();
         return;
     }
-    show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
     // Reset unread badge counter when the user opens chat
     sigurdos::mesh::resetUnreadMessageCount();
 }
@@ -2732,7 +2786,7 @@ void chat_screen_open_dm(const char* contact_name)
     }
 
     if (idx >= 0 && idx < MAX_CHANNELS) {
-        open_channel_messaging(idx);
+        request_open_channel_messaging(idx);
     }
 }
 
@@ -2828,7 +2882,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             }
             case SigurdOSTrackballEvent::Left:
                 hide_search();
-                show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+                request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
                 return true;
             default:
                 return true;
@@ -2850,7 +2904,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             return true;
         }
         case SigurdOSTrackballEvent::Left:
-            show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+            request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
             return true;
         case SigurdOSTrackballEvent::Right:
             if (input_field && lv_obj_is_valid(input_field)) {
@@ -2952,8 +3006,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             } else if (ch_focus == 2 && ch_add_btn) {
                 lv_obj_send_event(ch_add_btn, LV_EVENT_CLICKED, nullptr);
             } else if (ch_list_selected >= 0 && ch_list_selected < dyn_count) {
-                ch_meta[ch_list_selected].unread = 0;
-                open_channel_messaging(ch_list_selected);
+                request_open_channel_messaging(ch_list_selected);
             }
             return true;
         default:

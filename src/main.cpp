@@ -28,6 +28,7 @@
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
 #include "test/test_controller.h"
 #endif
+#include <time.h>
 
 static sigurdos::TDeckBoard board;
 
@@ -39,6 +40,49 @@ static void boot_log(const char* msg)
 #else
 static void boot_log(const char*) {}
 #endif
+
+static void sync_time_from_wifi_if_ready()
+{
+#if defined(ARDUINO_ARCH_ESP32)
+    static bool ntp_started = false;
+    static bool was_connected = false;
+    static uint32_t last_ntp_start_ms = 0;
+    static uint32_t last_sync_ms = 0;
+
+    const bool connected = sigurdos::wifi_sta::isConnected();
+    if (!connected) {
+        was_connected = false;
+        return;
+    }
+
+    const uint32_t now_ms = millis();
+    if (!was_connected) {
+        was_connected = true;
+        ntp_started = false;
+        last_ntp_start_ms = 0;
+    }
+
+    const uint32_t current_epoch = sigurdos::mesh::getCurrentTime();
+    const bool current_time_valid = current_epoch >= 1700000000UL;
+    if (current_time_valid && last_sync_ms != 0 &&
+        (uint32_t)(now_ms - last_sync_ms) < 21600000UL) {
+        return;
+    }
+
+    if (!ntp_started || (uint32_t)(now_ms - last_ntp_start_ms) >= 60000UL) {
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+        ntp_started = true;
+        last_ntp_start_ms = now_ms;
+    }
+
+    time_t ntp_epoch = time(nullptr);
+    if (ntp_epoch >= 1700000000) {
+        if (sigurdos::mesh::setSystemTime((uint32_t)ntp_epoch)) {
+            last_sync_ms = now_ms;
+        }
+    }
+#endif
+}
 
 static void boot_status(const char* status)
 {
@@ -203,11 +247,13 @@ void loop()
     sigurdos::ota::loop();         // WiFi OTA web server
     sigurdos::github_ota::loop();  // GitHub OTA downloader
     sigurdos::wifi_sta::loop();    // WiFi STA maintenance
+    sync_time_from_wifi_if_ready();
     {   // WiFi icon refresh — 1 Hz is plenty for an RSSI readout
         static uint32_t last_wifi_ui = 0;
         if (millis() - last_wifi_ui >= 1000) {
             last_wifi_ui = millis();
             sigurdos::ui::update_wifi_status();  // bottom bar WiFi icon
+            sigurdos::ui::update_topbar_status();
         }
     }
     {   // GPS enabled + interval gate

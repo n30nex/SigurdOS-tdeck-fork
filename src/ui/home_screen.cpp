@@ -246,6 +246,7 @@ static void create_top_bar()
         lv_obj_t* sig = create_signal_dots(top_bar, sigurdos::mesh::getLastRSSI());
         lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
     }
+    add_topbar_status_indicators(top_bar);
 
     // Divider
     lv_obj_t* div = lv_obj_create(scr);

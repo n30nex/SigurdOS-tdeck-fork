@@ -35,6 +35,11 @@ void show_screen(lv_obj_t* scr);
 // Shared by the Bluetooth and Settings screens.
 void update_row_label(lv_obj_t* row, const char* new_text);
 
+// Compact top-bar WiFi/BLE status indicators. Screens with custom top bars
+// can opt in by adding these to their top object.
+void add_topbar_status_indicators(lv_obj_t* top, int right_offset_px = -132);
+void update_topbar_status();
+
 // Device PIN gate — true while a previous unlock is within the grace window.
 bool pin_grace_active();
 // Show the PIN entry screen; loads target_screen on successful entry.

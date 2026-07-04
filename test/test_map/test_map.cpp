@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdint>
 #include "tile_cache.h"
+#include "ui/map_gps_state.h"
 
 namespace {
 
@@ -219,6 +220,27 @@ TEST_F(MapTest, ScreenCornerMapsToValidCoord) {
     EXPECT_LE(lat, 85.0511);
     EXPECT_GE(lon, -180.0);
     EXPECT_LE(lon, 180.0);
+}
+
+TEST(MapGpsButtonStateTest, ButtonStateReflectsDisabledGps) {
+    auto state = sigurdos::ui::map_gps_button_state(false, false);
+    EXPECT_EQ(state, sigurdos::ui::MapGpsButtonState::Off);
+    EXPECT_STREQ(sigurdos::ui::map_gps_button_text(state), "Use GPS");
+    EXPECT_EQ(sigurdos::ui::map_gps_button_color(state), sigurdos::theme::ACCENT);
+}
+
+TEST(MapGpsButtonStateTest, ButtonStateReflectsSatelliteAcquisition) {
+    auto state = sigurdos::ui::map_gps_button_state(true, false);
+    EXPECT_EQ(state, sigurdos::ui::MapGpsButtonState::Finding);
+    EXPECT_STREQ(sigurdos::ui::map_gps_button_text(state), "Finding Sats");
+    EXPECT_EQ(sigurdos::ui::map_gps_button_color(state), sigurdos::theme::ACCENT_YELLOW);
+}
+
+TEST(MapGpsButtonStateTest, ButtonStateReflectsGpsLock) {
+    auto state = sigurdos::ui::map_gps_button_state(true, true);
+    EXPECT_EQ(state, sigurdos::ui::MapGpsButtonState::Locked);
+    EXPECT_STREQ(sigurdos::ui::map_gps_button_text(state), "GPS Lock");
+    EXPECT_EQ(sigurdos::ui::map_gps_button_color(state), sigurdos::theme::ACCENT_GREEN);
 }
 
 // ════════════════════════════════════════════════════════
