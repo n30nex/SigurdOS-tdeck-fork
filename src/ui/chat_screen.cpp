@@ -557,6 +557,27 @@ static void clear_ch_focus_buttons()
     if (ch_add_btn) lv_obj_set_style_border_width(ch_add_btn, 0, 0);
 }
 
+static void detach_from_default_group(lv_obj_t* obj)
+{
+    lv_group_t* g = lv_group_get_default();
+    if (!g || !obj || !lv_obj_is_valid(obj)) return;
+    lv_group_remove_obj(obj);
+}
+
+static void detach_chat_focus_objects()
+{
+    detach_from_default_group(input_field);
+    detach_from_default_group(search_input);
+    detach_from_default_group(ch_back_btn);
+    detach_from_default_group(ch_add_btn);
+    if (ch_list && lv_obj_is_valid(ch_list)) {
+        uint32_t n = lv_obj_get_child_cnt(ch_list);
+        for (uint32_t i = 0; i < n; i++) {
+            detach_from_default_group(lv_obj_get_child(ch_list, i));
+        }
+    }
+}
+
 // ── Forward declarations ──────────────────────────────
 static void refresh_chat_list_view(lv_obj_t* scr);
 
@@ -1084,6 +1105,7 @@ static void show_channel_list(lv_scr_load_anim_t anim)
 {
     const bool from_messaging_view = msg_list && lv_obj_is_valid(msg_list);
 
+    detach_chat_focus_objects();
     // Null messaging-view pointers — they're invalid once we leave
     scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
     ch_list = ch_back_btn = ch_add_btn = nullptr;
@@ -2190,18 +2212,11 @@ static void open_channel_messaging(int idx)
     if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
     active_channel = idx;
 
-    const bool reuse_channel_list_screen = ch_list && lv_obj_is_valid(ch_list);
-    lv_obj_t* target_screen = reuse_channel_list_screen ? lv_scr_act() : nullptr;
-
+    detach_chat_focus_objects();
     ch_list = ch_back_btn = ch_add_btn = nullptr;
     ch_focus = 0;
 
-    if (reuse_channel_list_screen && target_screen) {
-        scr = target_screen;
-        lv_obj_clean(scr);
-    } else {
-        scr = lv_obj_create(nullptr);
-    }
+    scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
     disable_scroll(scr);
 
@@ -2254,11 +2269,7 @@ static void open_channel_messaging(int idx)
         lv_group_focus_obj(input_field);
     }
 
-    if (reuse_channel_list_screen) {
-        lv_obj_invalidate(scr);
-    } else {
-        lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
-    }
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 static void refresh_chat_list_view(lv_obj_t* scr) {

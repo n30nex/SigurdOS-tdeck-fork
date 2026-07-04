@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
+#include "public_channel.h"
 
 // Node type identifiers from MeshCore adverts — kept local so UI code can filter.
 #define ADV_TYPE_NONE      0
@@ -118,6 +119,18 @@ inline bool autoAddConfigAllowsContactType(uint8_t type, uint8_t config)
 inline bool autoAddConfigAllowsOverwriteOldest(uint8_t config)
 {
     return (config & 0x01u) != 0;
+}
+
+static constexpr uint16_t LOGIN_DEFAULT_KEEP_ALIVE_SECS = 60;
+
+inline uint16_t loginKeepAliveSeconds(uint8_t raw_units, uint8_t contact_type)
+{
+    uint16_t secs = static_cast<uint16_t>(raw_units) * 16u;
+    if (secs == 0 &&
+        (contact_type == ADV_TYPE_REPEATER || contact_type == ADV_TYPE_ROOM)) {
+        return LOGIN_DEFAULT_KEEP_ALIVE_SECS;
+    }
+    return secs;
 }
 
 bool init(bool spiffs_ok = true);
@@ -288,6 +301,48 @@ inline bool formatRoomMessageText(const char* channel_name, const char* text,
     }
     out[out_sz - 1] = '\0';
     return n < static_cast<int>(out_sz);
+}
+
+inline bool roomPostTextIsSpace(char c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+inline bool parseRoomMessageText(const char* text,
+                                 char* channel_out,
+                                 size_t channel_out_sz,
+                                 const char** body_out)
+{
+    if (!text || !channel_out || channel_out_sz == 0 || !body_out) return false;
+    channel_out[0] = '\0';
+    *body_out = nullptr;
+    if (text[0] != '#') return false;
+
+    const char* p = text + 1;
+    char token[32];
+    size_t token_len = 0;
+    while (*p && !roomPostTextIsSpace(*p)) {
+        if (*p == '#') return false;
+        if (token_len + 1 >= sizeof(token)) return false;
+        token[token_len++] = *p++;
+    }
+    token[token_len] = '\0';
+    if (token_len == 0) return false;
+
+    while (roomPostTextIsSpace(*p)) ++p;
+    if (!*p) return false;
+
+    char normalized[32];
+    if (std::strcmp(token, PUBLIC_CHANNEL_NAME) == 0) {
+        std::snprintf(normalized, sizeof(normalized), "%s", PUBLIC_CHANNEL_NAME);
+    } else {
+        std::snprintf(normalized, sizeof(normalized), "#%s", token);
+    }
+    if (std::strlen(normalized) >= channel_out_sz) return false;
+    std::strncpy(channel_out, normalized, channel_out_sz - 1);
+    channel_out[channel_out_sz - 1] = '\0';
+    *body_out = p;
+    return true;
 }
 
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text);

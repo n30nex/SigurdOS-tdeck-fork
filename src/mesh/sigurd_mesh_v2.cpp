@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include "mesh_wrapper.h"
+#include "message_store.h"
 #include "hal/prefs.h"
 #include "hal/battery.h"
 #include "hal/gps.h"
@@ -560,6 +561,37 @@ namespace mesh {
         float snr = pkt ? pkt->getSNR() : 0.0f;
         uint8_t companion_path_len =
             (pkt && pkt->isRouteFlood()) ? (uint8_t)pkt->path_len : 0xFF;
+        if (contact.type == ADV_TYPE_ROOM) {
+            char channel[32];
+            const char* body = nullptr;
+            if (sigurdos::mesh::parseRoomMessageText(text, channel, sizeof(channel), &body)) {
+                const char* sender_name = contact.name;
+                char fallback[20];
+                uint8_t companion_prefix[sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN] = {};
+                const uint8_t* prefix_for_store = contact.id.pub_key;
+
+                if (sender_prefix) {
+                    memcpy(companion_prefix, sender_prefix, 4);
+                    prefix_for_store = companion_prefix;
+                    ::ContactInfo* author = lookupContactByPubKey(sender_prefix, 4);
+                    if (author && author->name[0]) {
+                        sender_name = author->name;
+                        prefix_for_store = author->id.pub_key;
+                    } else {
+                        snprintf(fallback, sizeof(fallback), "room_%02x%02x",
+                                 sender_prefix[0], sender_prefix[1]);
+                        sender_name = fallback;
+                    }
+                }
+
+                sigurdos::mesh::mesh_v2_queue_push(sender_name, channel, body, rssi, snr,
+                                                   sender_timestamp, companion_path_len,
+                                                   prefix_for_store,
+                                                   2,              // COMPANION_TXT_SIGNED_PLAIN
+                                                   sender_prefix, sender_prefix ? 4 : 0);
+                return;
+            }
+        }
         sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
                                            sender_timestamp, companion_path_len,
                                            contact.id.pub_key,
@@ -644,7 +676,8 @@ namespace mesh {
         if (login_idx >= 0 && _login_entries[login_idx].in_use && len >= 8) {
             // New-style login response
             if (data[4] == RESP_SERVER_LOGIN_OK) {
-                uint16_t keep_alive_secs = ((uint16_t)data[5]) * 16;
+                uint16_t keep_alive_secs =
+                    sigurdos::mesh::loginKeepAliveSeconds(data[5], contact.type);
                 uint8_t  perm = data[6];
                 uint8_t  acl = (len > 7) ? data[7] : 0;
 
@@ -655,7 +688,9 @@ namespace mesh {
                 sigurdos::mesh::mesh_v2_companion_login_push(
                     contact.id.pub_key, true, perm, /*is_admin=*/false);
 
-                // Start keep-alive connection
+                // Start keep-alive connection. Upstream simple repeater/room
+                // firmware currently sends a zero legacy hint; use the local
+                // default above so login still enables sync/management traffic.
                 if (keep_alive_secs > 0) {
                     BaseChatMesh::startConnection(contact, keep_alive_secs);
                 }

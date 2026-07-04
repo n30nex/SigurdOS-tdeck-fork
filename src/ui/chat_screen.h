@@ -37,7 +37,7 @@ static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MIN     = 8;
 static constexpr uint16_t CHAT_SCREEN_RENDER_MAX          = 24;
 static constexpr uint16_t CHAT_SCREEN_PUBLIC_RENDER_MAX   = 8;
 static constexpr int CHAT_EMOJI_PICKER_PAGE_SIZE = 16;
-static constexpr uint32_t CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS = 80;
+static constexpr uint32_t CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS = 120;
 static constexpr uint32_t CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS = 40;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)

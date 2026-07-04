@@ -555,10 +555,15 @@ void show_login_password_dialog(const char* contact_name)
     lv_obj_set_user_data(login_btn, dd);
 
     lv_obj_add_event_cb(login_btn, [](lv_event_t* le) {
-        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        submit_login_dialog_once(d);
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(le);
+        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data(btn);
+        if (d && !d->submitted) {
+            lv_obj_add_state(btn, LV_STATE_DISABLED);
+            submit_login_dialog_once(d);
+        }
+        lv_obj_set_user_data(btn, nullptr);
         // Close dialog
-        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
+        lv_obj_t* dlg = lv_obj_get_parent(btn);
         lv_obj_del_async(dlg);
     }, LV_EVENT_CLICKED, nullptr);
 

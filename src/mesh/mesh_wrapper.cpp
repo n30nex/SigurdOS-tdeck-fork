@@ -1152,15 +1152,13 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
             break;
         }
     }
-    // Also forward the message to any logged-in room server contacts.
-    // This ensures room servers receive messages posted in their channels.
-    // Skip room servers with active permissions (> guest) — they already
-    // receive the channel flood. Only guest-level room servers need the DM fallback.
+    // Also forward the message to any logged-in room server contacts. MeshCore
+    // room servers store posts from peer TXT_MSG payloads; channel floods alone
+    // are not a reliable room-post mechanism.
     int n_room = getLoggedInRoomServerCount();
     for (int ri = 0; ri < n_room; ri++) {
         const char* room_name = getLoggedInRoomServerName(ri);
         if (room_name && room_name[0]) {
-            if (getLoginPermission(room_name) > 0) continue;
             uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
             if (room_ts != 0) sent = true;
         }

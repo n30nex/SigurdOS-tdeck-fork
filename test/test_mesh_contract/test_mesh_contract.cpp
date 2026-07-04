@@ -100,6 +100,14 @@ TEST(MeshContractTest, LoginPendingTimeoutUsesWrapSafeElapsedTime) {
     EXPECT_TRUE(sigurdos::mesh::loginPendingTimedOut(100u, UINT32_MAX - 29900u));
 }
 
+TEST(MeshContractTest, LoginKeepAliveUsesDefaultForMeshCoreZeroHint) {
+    EXPECT_EQ(sigurdos::mesh::LOGIN_DEFAULT_KEEP_ALIVE_SECS, 60u);
+    EXPECT_EQ(sigurdos::mesh::loginKeepAliveSeconds(0, ADV_TYPE_REPEATER), 60u);
+    EXPECT_EQ(sigurdos::mesh::loginKeepAliveSeconds(0, ADV_TYPE_ROOM), 60u);
+    EXPECT_EQ(sigurdos::mesh::loginKeepAliveSeconds(4, ADV_TYPE_ROOM), 64u);
+    EXPECT_EQ(sigurdos::mesh::loginKeepAliveSeconds(0, ADV_TYPE_CHAT), 0u);
+}
+
 TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_EQ(sigurdos::mesh::LOGIN_PASSWORD_MAX_BYTES, 15u);
     EXPECT_TRUE(sigurdos::mesh::loginPasswordInputSubmittable(""));
@@ -123,6 +131,30 @@ TEST(MeshContractTest, RoomMessageFormattingUsesSingleChannelPrefix) {
                                                        out, sizeof(out)));
     EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("Public", "hello",
                                                        out, 4));
+}
+
+TEST(MeshContractTest, RoomMessageParsingRoutesPublicAndHashtagChannels) {
+    char channel[32];
+    const char* body = nullptr;
+
+    EXPECT_TRUE(sigurdos::mesh::parseRoomMessageText("#Public hello",
+                                                     channel, sizeof(channel), &body));
+    EXPECT_STREQ(channel, "Public");
+    ASSERT_NE(body, nullptr);
+    EXPECT_STREQ(body, "hello");
+
+    EXPECT_TRUE(sigurdos::mesh::parseRoomMessageText("#general  hello",
+                                                     channel, sizeof(channel), &body));
+    EXPECT_STREQ(channel, "#general");
+    ASSERT_NE(body, nullptr);
+    EXPECT_STREQ(body, "hello");
+
+    EXPECT_FALSE(sigurdos::mesh::parseRoomMessageText("Public hello",
+                                                      channel, sizeof(channel), &body));
+    EXPECT_FALSE(sigurdos::mesh::parseRoomMessageText("#Public",
+                                                      channel, sizeof(channel), &body));
+    EXPECT_FALSE(sigurdos::mesh::parseRoomMessageText("##bad hello",
+                                                      channel, sizeof(channel), &body));
 }
 
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
