@@ -8,10 +8,10 @@ The Home screen is SigurdOS's main launcher — a 4×3 icon grid that provides a
 
 | File | Purpose |
 |------|---------|
-| `src/ui/home_screen.h` | Public API — `home_screen_create()`, `home_screen_show()`, `home_screen_handle_trackball()`, runtime update functions (battery, time, signal, channels) |
+| `src/ui/home_screen.h` | Public API — `home_screen_create()`, `home_screen_show()`, `home_screen_handle_trackball()`, runtime update functions (battery, time, channels, badges) |
 | `src/ui/home_screen.cpp` | Full implementation — top bar, bottom bar, adaptive icon grid, tile creation, selection rendering, trackball handler |
 | `src/ui/responsive.h` | Display-size-agnostic layout constants — `TOP_BAR_H`, `BOT_BAR_H`, `CONTENT_H`, `compute_grid()`, `HASHTAG_LABEL_W()` |
-| `src/ui/theme.h` | Pixel theme colours, helpers — `apply_dark_bg()`, `create_signal_dots()`, `rssi_to_bars()` |
+| `src/ui/theme.h` | Pixel theme colours and shared style helpers |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen)` dispatches to the target screen when a tile is activated |
 
 ---
@@ -22,7 +22,7 @@ The Home screen is composed of three stacked regions:
 
 ```
 ┌──────────────────────────────────┐
-│ ≡  #general  #random  #help 14:32│  ← top bar (TOP_BAR_H px, BG_SECONDARY)
+│ ≡  #general        G W B 14:32│  ← top bar (TOP_BAR_H px, BG_SECONDARY)
 ├──────────────────────────────────┤  ← divider (DIVIDER_H = 1px)
 │ ┌─────┬─────┬─────┬─────┐        │
 │ │CHATS│ DMs │ROOMS│CONTA│        │  ← icon grid
@@ -32,7 +32,7 @@ The Home screen is composed of three stacked regions:
 │ │PACKE│SETTI│SETUP│SIGNA│        │
 │ └─────┴─────┴─────┴─────┘        │
 ├──────────────────────────────────┤  ← divider (DIVIDER_H = 1px)
-│ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar (BOT_BAR_H px, BG_SECONDARY)
+│ SigurdOS T-Deck              72%  │  ← bottom bar (BOT_BAR_H px, BG_SECONDARY)
 └──────────────────────────────────┘
 ```
 
@@ -43,7 +43,8 @@ Created by `create_top_bar()` in `home_screen.cpp`. A horizontal bar at the top 
 | Element | Position | Details |
 |---------|----------|---------|
 | **≡ Hamburger icon** | Left-aligned (x=4) | `LV_SYMBOL_LIST`, styled in `TEXT_SECONDARY` (`#949BA4`) |
-| **Channel hashtag snapshot** | Left of center (x=26) | Space-separated list of all known channels, auto-truncated via `LV_LABEL_LONG_DOT`. Built by `build_channel_string()` — prefixes names with `#` if they don't already have one. Shows `"no channels"` if none exist. Rendered in `montserrat_10` with `CHANNEL_HASH` cyan (`#00BFFF`). Width computed by `HASHTAG_LABEL_W()` = `DISPLAY_W - 60` |
+| **Channel hashtag snapshot** | Left of center (x=26) | Space-separated list of all known channels, auto-truncated via `LV_LABEL_LONG_DOT`. Built by `build_channel_string()` — prefixes names with `#` if they don't already have one. Shows `"no channels"` if none exist. Rendered in `montserrat_10` with `CHANNEL_HASH` cyan (`#00BFFF`). Width computed by `HASHTAG_LABEL_W()`, which reserves room for status and time |
+| **GPS/WiFi/BLE status** | Right side, left of time | Compact `G W B` labels from `add_topbar_status_indicators()`. Green means fixed/connected, yellow means active/pending, red means failed/no fix, muted means off |
 | **24h time** | Right-aligned (x=-4) | Initially `"--:--"`, updated via `home_screen_update_time()`. Rendered in `montserrat_12`, `TEXT_PRIMARY` (`#F2F3F5`) |
 
 Styling: `BG_SECONDARY` (`#181818`) background, zero padding, zero border width.
@@ -75,7 +76,6 @@ Created by `create_bottom_bar()` in `home_screen.cpp`. Slightly shorter than the
 | Element | Position | Details |
 |---------|----------|---------|
 | **Device name** | Left-aligned (x=4) | From `mesh::getOwnName()`, `montserrat_10`, `TEXT_SECONDARY` (`#949BA4`) |
-| **Signal dots** | Center (x=-20) | iOS-style 5-dot RSSI indicator from `create_signal_dots()` in `theme.h`. Active dots are `ACCENT` cyan filled; inactive dots are `TEXT_MUTED` outlines. Updated via `home_screen_update_signal()` which calls `rssi_to_bars()` |
 | **Battery percentage** | Right-aligned (x=-4) | Initially `"--%"`, updated via `home_screen_update_battery()`. `montserrat_10`, `ACCENT` cyan normally, turns `ACCENT_RED` (`#ED4245`) below 20% |
 
 Styling: `BG_SECONDARY` (`#181818`) background, zero padding, zero border width.
@@ -253,18 +253,6 @@ Updates the battery percentage label in the bottom bar. Turns the text colour re
 
 Updates the 24h time display in the top bar. Expected format: `"HH:MM"`.
 
-### `home_screen_update_signal(int rssi)`
-
-Updates the signal bars widget in the bottom bar. Converts RSSI dBm to 1–5 active bars via `rssi_to_bars()`:
-
-| RSSI dBm | Active Bars |
-|----------|-------------|
-| > -70    | 5 (full)    |
-| > -85    | 4           |
-| > -95    | 3           |
-| > -105   | 2           |
-| ≤ -105   | 1 (weak)    |
-
 ### `home_screen_update_channels()`
 
 Rebuilds the channel hashtag string in the top bar. Called periodically to reflect channel join/leave changes from the mesh.
@@ -281,7 +269,7 @@ All visual styling follows the SigurdOS pixel theme (`src/ui/theme.h`):
 | Bar backgrounds | `BG_SECONDARY` | `#181818` | Top bar, bottom bar |
 | Tile background | `BG_TERTIARY` | `#1E1E1E` | Icon tile cards |
 | Tile default border | `BG_PRIMARY` | `#0F0F0F` | Unselected tile border |
-| Selection highlight | `ACCENT` | `#00BFFF` | Selected tile border, symbol colour, battery %, signal bars |
+| Selection highlight | `ACCENT` | `#00BFFF` | Selected tile border, symbol colour, battery %, active status labels |
 | Channel hashtag | `CHANNEL_HASH` | `#00BFFF` | Channel names in top bar |
 | Primary text | `TEXT_PRIMARY` | `#F2F3F5` | Tile labels, time display |
 | Secondary text | `TEXT_SECONDARY` | `#949BA4` | Hamburger icon, device name |

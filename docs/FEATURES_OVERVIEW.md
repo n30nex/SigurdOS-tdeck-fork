@@ -71,7 +71,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
 
 ## Home Screen — 12-Grid Tiles
 
-The home screen is a 4×3 adaptive icon grid with a top bar (channel hashtags, 24h time) and a bottom bar (device name, signal bars, battery %). Navigation uses the 5-direction trackball or capacitive touch.
+The home screen is a 4×3 adaptive icon grid with a top bar (channel snapshot, GPS/WiFi/BLE status, 24h time) and a bottom bar (device name, battery %). Navigation uses the 5-direction trackball or capacitive touch.
 
 See [`src/ui/home_screen.cpp`](../src/ui/home_screen.cpp), [`src/ui/home_screen.h`](../src/ui/home_screen.h).
 
@@ -161,14 +161,15 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Back stack** — linear stack (drops oldest when full, no wrapping), with `can_go_back()` and `go_back()`
 - **Universal back-swipe** — two-swipe commit pattern: first Left neutralises, second Left triggers back
 - **Top bar** — ← back button, channel hashtag snapshot, 24h time
-- **Bottom bar** — device name, signal bars, battery percentage
+- **Top bar status** — compact `G W B` labels for GPS, WiFi, and BLE state
+- **Bottom bar** — device name and battery percentage
 **Sources:** [`src/ui/navigation.cpp`](../src/ui/navigation.cpp), [`src/ui/navigation.h`](../src/ui/navigation.h), [`src/ui/screens.h`](../src/ui/screens.h)
 
 ### Pixel Theme System
 - **Discord-inspired dark palette** — deep black `#0F0F0F` background, cyan `#00BFFF` accents
 - **Color constants** — 7 background levels, 7 accent colors, 4 text colors, channel colors
 - **Style helpers** — `apply_dark_bg()`, `apply_pixel_card()`, `apply_pixel_btn()`, `apply_pixel_btn_outline()`, `apply_pixel_input()`, `apply_pixel_badge()`, `apply_topbar_icon_btn()`
-- **Signal dots** — `create_signal_dots()` draws an iOS-style 5-dot RSSI indicator in the top bar (cyan filled dots for active, muted outlines for inactive)
+- **Top bar status labels** — `add_topbar_status_indicators()` draws compact GPS/WiFi/BLE state labels without RSSI dot widgets
 - **Focus style** — yellow accent border for keyboard/trackball focus state
 - **Zero radius** on all elements, 2px minimum borders
 **Sources:** [`src/ui/theme.h`](../src/ui/theme.h), [`test/test_theme/`](../test/test_theme/)

@@ -36,7 +36,7 @@ The Signal screen is a read-only dashboard displaying real-time radio statistics
 │         └──────────────┘         │
 │                                  │
 ├──────────────────────────────────┤
-│ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar (from make_screen_full)
+│ SigurdOS T-Deck              72%  │  ← bottom bar (from make_screen_full)
 └──────────────────────────────────┘
 ```
 

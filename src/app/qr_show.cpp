@@ -9,6 +9,7 @@
 #include "ui/theme.h"
 #include "ui/responsive.h"
 #include "ui/navigation.h"
+#include "ui/screens_common.h"
 #include "hal/battery.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -98,12 +99,7 @@ void qr_show(const char* title, const char* data)
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
-    // Signal dots (right of top bar)
-    {
-        int rssi = sigurdos::mesh::getLastRSSI();
-        lv_obj_t* sig = create_signal_dots(top, rssi);
-        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
-    }
+    sigurdos::ui::add_topbar_status_indicators(top);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(scr);

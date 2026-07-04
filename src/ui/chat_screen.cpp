@@ -154,6 +154,25 @@ static char g_pending_open_channel[CHANNEL_NAME_CAP] = "";
 static char g_pending_select_channel[CHANNEL_NAME_CAP] = "";
 static bool g_channel_transition_pending = false;
 
+static void clear_pending_channel_timers()
+{
+    if (g_pending_channel_list_timer) {
+        lv_timer_del(g_pending_channel_list_timer);
+        g_pending_channel_list_timer = nullptr;
+    }
+    if (g_pending_channel_open_timer) {
+        lv_timer_del(g_pending_channel_open_timer);
+        g_pending_channel_open_timer = nullptr;
+    }
+    if (g_pending_channel_select_timer) {
+        lv_timer_del(g_pending_channel_select_timer);
+        g_pending_channel_select_timer = nullptr;
+    }
+    g_pending_open_channel[0] = '\0';
+    g_pending_select_channel[0] = '\0';
+    g_channel_transition_pending = false;
+}
+
 // ── Channel filter mode ────────────────────────────────────
 // 1 = channels only, 2 = DMs only. Other values fall back to channels only.
 static int   chat_filter_mode = 1;
@@ -1158,7 +1177,7 @@ static lv_obj_t* make_chat_list_screen()
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
-    add_topbar_status_indicators(top, -54);
+    add_topbar_status_indicators(top, -76);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(s);
@@ -2135,6 +2154,12 @@ static void show_emoji_picker(lv_obj_t* parent)
 // ════════════════════════════════════════════════════
 static void do_send()
 {
+    if (current_screen() != Screen::Chat) return;
+    if (!input_field || !lv_obj_is_valid(input_field)) return;
+    if (!msg_list || !lv_obj_is_valid(msg_list)) return;
+    if (active_channel < 0 || active_channel >= dyn_count || active_channel >= MAX_CHANNELS) return;
+    if (!dyn_channels[active_channel][0]) return;
+
     const char* raw = lv_textarea_get_text(input_field);
     if (!raw || !raw[0]) return;
 
@@ -2372,7 +2397,9 @@ static void open_channel_messaging(int idx)
     // so chat_screen_add_msg() doesn't dereference freed memory.
     // NOTE: ch_list is NOT nulled here — show_channel_list() may have
     // already set it to a new list before this delete callback fires.
-    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        lv_obj_t* deleted = (lv_obj_t*)lv_event_get_target(e);
+        if (deleted != scr) return;
         emoji_picker_dialog = nullptr;
         scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
         search_bar = nullptr;
@@ -2391,17 +2418,6 @@ static void open_channel_messaging(int idx)
     search_input = nullptr;
 
     create_top_bar();
-
-    // For DM channels, show the contact's per-node signal bars in the top bar
-    if (idx >= 0 && idx < dyn_count && dyn_channels[idx] &&
-        strncmp(dyn_channels[idx], "DM: ", 4) == 0) {
-        const char* contact_name = dyn_channels[idx] + 4;
-        sigurdos::mesh::ContactInfo contact_info{};
-        if (sigurdos::mesh::getContactByName(contact_name, &contact_info)) {
-            lv_obj_t* sig = create_signal_dots(top_bar, contact_info.rssi);
-            lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -116, 0);
-        }
-    }
 
     create_message_list();
     render_active_messages();
@@ -2985,7 +3001,11 @@ void chat_screen_show()
 void chat_screen_open_dm(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) return;
+    char contact_copy[MAX_NAME_LEN + 1];
+    strncpy(contact_copy, contact_name, sizeof(contact_copy) - 1);
+    contact_copy[sizeof(contact_copy) - 1] = '\0';
 
+    clear_pending_channel_timers();
     chat_screen_set_filter(2);
     sigurdos::mesh::clearActiveRoomServer();
     const bool opened_from_chat = (current_screen() == Screen::Chat);
@@ -3001,7 +3021,7 @@ void chat_screen_open_dm(const char* contact_name)
 
     // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
     char dm_name[CHANNEL_NAME_CAP];
-    snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
+    snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_copy);
 
     int idx = find_channel_idx(dm_name);
     if (idx < 0 && dyn_count < MAX_CHANNELS) {
@@ -3019,11 +3039,15 @@ void chat_screen_open_dm(const char* contact_name)
 void chat_screen_open_channel(const char* channel_name)
 {
     if (!channel_name || !channel_name[0]) return;
+    char channel_copy[CHANNEL_NAME_CAP];
+    strncpy(channel_copy, channel_name, sizeof(channel_copy) - 1);
+    channel_copy[sizeof(channel_copy) - 1] = '\0';
 
+    clear_pending_channel_timers();
     chat_screen_set_filter(1);
     sigurdos::mesh::clearActiveRoomServer();
     const bool opened_from_chat = (current_screen() == Screen::Chat);
-    if (sigurdos::mesh::isPublicChannelName(channel_name)) {
+    if (sigurdos::mesh::isPublicChannelName(channel_copy)) {
         sigurdos::mesh::joinPublicChannel();
     }
 
@@ -3032,11 +3056,11 @@ void chat_screen_open_channel(const char* channel_name)
     navigate_to(Screen::Chat);
     refresh_channels();
 
-    int idx = find_channel_idx(channel_name);
+    int idx = find_channel_idx(channel_copy);
     if (idx < 0 && dyn_count < MAX_CHANNELS &&
-        chat_conversation_visible_for_current_filter(channel_name)) {
+        chat_conversation_visible_for_current_filter(channel_copy)) {
         idx = dyn_count;
-        strncpy(dyn_channels[idx], channel_name, sizeof(dyn_channels[idx]) - 1);
+        strncpy(dyn_channels[idx], channel_copy, sizeof(dyn_channels[idx]) - 1);
         dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
     }
@@ -3049,7 +3073,11 @@ void chat_screen_open_channel(const char* channel_name)
 void chat_screen_open_room(const char* room_name)
 {
     if (!room_name || !room_name[0]) return;
+    char room_copy[MAX_NAME_LEN + 1];
+    strncpy(room_copy, room_name, sizeof(room_copy) - 1);
+    room_copy[sizeof(room_copy) - 1] = '\0';
 
+    clear_pending_channel_timers();
     chat_screen_set_filter(1);
     sigurdos::mesh::clearActiveRoomServer();
     const bool opened_from_chat = (current_screen() == Screen::Chat);
@@ -3060,7 +3088,7 @@ void chat_screen_open_room(const char* room_name)
     refresh_channels();
 
     char room_channel[CHANNEL_NAME_CAP];
-    chat_screen_format_room_name(room_name, room_channel, sizeof(room_channel));
+    chat_screen_format_room_name(room_copy, room_channel, sizeof(room_channel));
     if (!room_channel[0]) return;
 
     int idx = find_channel_idx(room_channel);
@@ -3107,7 +3135,8 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     append_channel_message(idx, sender, text, now, is_self, txt_type);
     chat_save_messages();
 
-    bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
+    bool visible = msg_list && lv_obj_is_valid(msg_list) &&
+                   idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
     if (!visible) {
         if (ch_list && lv_obj_is_valid(ch_list) && current_screen() == Screen::Chat) {

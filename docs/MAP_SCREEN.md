@@ -43,7 +43,7 @@ The Map screen is invoked from the **MAP tile** on the home screen:
 │   └──────────┴──────────┘       │
 │                                  │
 ├──────────────────────────────────┤
-│ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar: device name, signal, battery
+│ SigurdOS T-Deck              72%  │  ← bottom bar: device name, battery
 └──────────────────────────────────┘
 ```
 

@@ -18,7 +18,7 @@ inline ActivityNotificationPlan activity_notification_plan(bool got_new_activity
                                                            bool incoming_channel_msg)
 {
     return {
-        got_new_activity || incoming_message,
+        got_new_activity,
         incoming_message && !buzzer_quiet,
         incoming_channel_msg ? sigurdos::hal::BuzzerPatternKind::Double
                              : sigurdos::hal::BuzzerPatternKind::Short,

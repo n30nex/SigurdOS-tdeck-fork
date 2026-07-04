@@ -461,6 +461,28 @@ void pushPacketLog(const char* source, int rssi, float snr, const char* type) {
     if (pkt_log_count < MAX_PACKET_LOG) pkt_log_count++;
 }
 
+static bool signalSamplePresent(int rssi, float snr)
+{
+    return rssi != 0 || snr != 0.0f;
+}
+
+static bool latestPacketSignalForSource(const char* source, int* rssi, float* snr)
+{
+    if (!source || !source[0] || !rssi || !snr) return false;
+
+    for (int c = 0; c < pkt_log_count; c++) {
+        int idx = pkt_log_head - 1 - c;
+        if (idx < 0) idx += MAX_PACKET_LOG;
+        const PacketLogEntry& e = pkt_log[idx];
+        if (strcmp(e.source, source) != 0) continue;
+        if (!signalSamplePresent(e.rssi, e.snr)) continue;
+        *rssi = e.rssi;
+        *snr = e.snr;
+        return true;
+    }
+    return false;
+}
+
 // ── ACK tracking bridge ──────────────────────
 void registerAckedMessage(const char* dest, uint32_t ts) {
     if (!dest) return;
@@ -1297,6 +1319,9 @@ static void fillContactInfo(ContactInfo& dest, const ::ContactInfo& src) {
     dest.longitude = (float)src.gps_lon / 1000000.0f;
     dest.rssi = g_mesh->getContactRSSI(src.id.pub_key);
     dest.snr  = g_mesh->getContactSNR(src.id.pub_key);
+    if (!signalSamplePresent(dest.rssi, dest.snr)) {
+        latestPacketSignalForSource(dest.name, &dest.rssi, &dest.snr);
+    }
     dest.last_seen = src.last_advert_timestamp;
 }
 

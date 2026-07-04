@@ -245,11 +245,6 @@ static void create_top_bar()
     lv_obj_set_style_text_font(time_label, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(time_label, LV_ALIGN_RIGHT_MID, -4, 0);
 
-    // Signal dots (iOS-style, left of time)
-    {
-        lv_obj_t* sig = create_signal_dots(top_bar, sigurdos::mesh::getLastRSSI());
-        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
-    }
     add_topbar_status_indicators(top_bar);
 
     // Divider
