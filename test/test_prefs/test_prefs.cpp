@@ -20,6 +20,7 @@
 /**
  * Unit tests for NodePrefs defaults and native preference persistence.
  */
+#include <cstdio>
 #include <cstring>
 
 #include <gtest/gtest.h>
@@ -34,6 +35,15 @@ protected:
         sigurdos::NodePrefs defaults;
         defaults.set_defaults();
         sigurdos::prefs_set(defaults);
+
+        const char* names[] = {
+            "Repeater A", "Repeater B", "Repeater C", "Repeater D",
+            "Slot0", "Slot1", "Slot2", "Slot3",
+            "Slot4", "Slot5", "Slot6", "Slot7", "Slot8"
+        };
+        for (const char* name : names) {
+            sigurdos::removeRepeaterPassword(name);
+        }
     }
 };
 
@@ -188,6 +198,54 @@ TEST_F(PrefsTest, WifiCredentialReuseHonorsEncryptedNetworks) {
     std::strncpy(prefs.wifi_password, "secret", sizeof(prefs.wifi_password) - 1);
     EXPECT_TRUE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", true));
     EXPECT_FALSE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Guest", false));
+}
+
+TEST_F(PrefsTest, RepeaterPasswordSaveLoadAndForgetRoundTrips) {
+    char loaded[64] = {0};
+
+    EXPECT_FALSE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "admin-secret"));
+    ASSERT_TRUE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    EXPECT_STREQ("admin-secret", loaded);
+
+    sigurdos::removeRepeaterPassword("Repeater A");
+    loaded[0] = '\0';
+    EXPECT_FALSE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    EXPECT_STREQ("", loaded);
+}
+
+TEST_F(PrefsTest, RepeaterPasswordSaveUpdatesExistingContactSlot) {
+    char loaded[64] = {0};
+
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "old-secret"));
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "new-secret"));
+
+    ASSERT_TRUE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    EXPECT_STREQ("new-secret", loaded);
+}
+
+TEST_F(PrefsTest, RepeaterPasswordForgetCompactsRemainingEntries) {
+    char loaded[64] = {0};
+
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "alpha"));
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater B", "bravo"));
+    sigurdos::removeRepeaterPassword("Repeater A");
+
+    EXPECT_FALSE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    loaded[0] = '\0';
+    ASSERT_TRUE(sigurdos::loadRepeaterPassword("Repeater B", loaded, sizeof(loaded)));
+    EXPECT_STREQ("bravo", loaded);
+}
+
+TEST_F(PrefsTest, RepeaterPasswordStoreRejectsNinthSavedContact) {
+    char name[16];
+    for (int i = 0; i < 8; i++) {
+        std::snprintf(name, sizeof(name), "Slot%d", i);
+        ASSERT_TRUE(sigurdos::saveRepeaterPassword(name, "secret"));
+    }
+
+    EXPECT_FALSE(sigurdos::saveRepeaterPassword("Slot8", "secret"));
+    EXPECT_TRUE(sigurdos::saveRepeaterPassword("Slot7", "updated"));
 }
 
 } // namespace

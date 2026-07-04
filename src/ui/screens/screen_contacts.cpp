@@ -318,7 +318,7 @@ void show_login_password_dialog(const char* contact_name)
     if (!contact_name) return;
 
     lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
-    auto dlg_sz = dialog_size(240, 130);
+    auto dlg_sz = dialog_size(240, 154);
     lv_obj_t* dlg = lv_obj_create(scr);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -361,9 +361,44 @@ void show_login_password_dialog(const char* contact_name)
 
     // Pre-fill password from NVS if saved
     char saved_pw[64] = {0};
-    if (sigurdos::loadRepeaterPassword(contact_name, saved_pw, sizeof(saved_pw))) {
+    bool has_saved_pw = sigurdos::loadRepeaterPassword(contact_name, saved_pw, sizeof(saved_pw));
+    if (has_saved_pw) {
         lv_textarea_set_text(ta, saved_pw);
         lv_obj_add_state(save_cb, LV_STATE_CHECKED);
+    }
+
+    struct ForgetPwData { char* name; lv_obj_t* ta; lv_obj_t* save_cb; };
+    if (has_saved_pw) {
+        auto* fd = new ForgetPwData{strdup(contact_name), ta, save_cb};
+        lv_obj_t* forget_btn = lv_btn_create(dlg);
+        lv_obj_set_size(forget_btn, 124, 22);
+        lv_obj_align(forget_btn, LV_ALIGN_TOP_MID, 0, 86);
+        lv_obj_set_style_bg_color(forget_btn, lv_color_hex(BG_INPUT), 0);
+        lv_obj_set_style_radius(forget_btn, 0, 0);
+        lv_obj_set_style_border_color(forget_btn, lv_color_hex(ACCENT_ORANGE), 0);
+        lv_obj_set_style_border_width(forget_btn, 1, 0);
+        lv_obj_t* fl = lv_label_create(forget_btn);
+        lv_label_set_text(fl, "Forget Saved");
+        lv_obj_set_style_text_color(fl, lv_color_hex(ACCENT_ORANGE), 0);
+        lv_obj_set_style_text_font(fl, emoji_wrapped_montserrat_10, 0);
+        lv_obj_center(fl);
+        lv_obj_add_event_cb(forget_btn, [](lv_event_t* fe) {
+            auto* d = (ForgetPwData*)lv_event_get_user_data(fe);
+            if (!d || !d->name) return;
+            sigurdos::removeRepeaterPassword(d->name);
+            if (d->ta && lv_obj_is_valid(d->ta)) lv_textarea_set_text(d->ta, "");
+            if (d->save_cb && lv_obj_is_valid(d->save_cb)) {
+                lv_obj_clear_state(d->save_cb, LV_STATE_CHECKED);
+            }
+            lv_obj_add_state((lv_obj_t*)lv_event_get_target(fe), LV_STATE_DISABLED);
+        }, LV_EVENT_CLICKED, fd);
+        lv_obj_add_event_cb(forget_btn, [](lv_event_t* fe) {
+            auto* d = (ForgetPwData*)lv_event_get_user_data(fe);
+            if (d) {
+                free(d->name);
+                delete d;
+            }
+        }, LV_EVENT_DELETE, fd);
     }
 
     // Cancel button
