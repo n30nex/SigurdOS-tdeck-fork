@@ -20,8 +20,10 @@
 
 
 #include "../hal/trackball.h"
+#include "../mesh/public_channel.h"
 #include <lvgl.h>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 namespace sigurdos::ui {
@@ -30,6 +32,7 @@ namespace sigurdos::ui {
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MAX     = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_DEFAULT = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MIN     = 8;
+static constexpr uint16_t CHAT_SCREEN_RENDER_MAX          = 60;
 static constexpr int CHAT_EMOJI_PICKER_PAGE_SIZE = 16;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
@@ -72,6 +75,39 @@ inline int chat_screen_emoji_page_end(int page, int emoji_count)
     int end = chat_screen_emoji_page_start(page, emoji_count) + CHAT_EMOJI_PICKER_PAGE_SIZE;
     if (end > emoji_count) end = emoji_count;
     return end;
+}
+
+inline uint16_t chat_screen_visible_message_start(uint16_t count,
+                                                  uint16_t max_render)
+{
+    if (max_render == 0 || count <= max_render) return 0;
+    return (uint16_t)(count - max_render);
+}
+
+inline bool chat_screen_public_message_actions_available(const char* channel,
+                                                         const char* sender,
+                                                         bool is_self)
+{
+    return !is_self && sender && sender[0] &&
+           sigurdos::mesh::isPublicChannelName(channel);
+}
+
+inline bool chat_screen_public_message_dm_available(bool contact_known)
+{
+    return contact_known;
+}
+
+inline void chat_screen_format_public_reply_prefix(const char* sender,
+                                                   char* out,
+                                                   size_t out_sz)
+{
+    if (!out || out_sz == 0) return;
+    if (!sender || !sender[0]) {
+        out[0] = '\0';
+        return;
+    }
+    std::snprintf(out, out_sz, "@%s ", sender);
+    out[out_sz - 1] = '\0';
 }
 
 // Create and show the chat screen

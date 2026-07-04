@@ -113,6 +113,7 @@ static constexpr uint16_t CHAT_MSGS_DEFAULT_CAP = CHAT_SCREEN_MESSAGE_CAP_DEFAUL
 static constexpr uint16_t CHAT_MSGS_MIN_CAP     = CHAT_SCREEN_MESSAGE_CAP_MIN;
 static constexpr int MAX_MSG_BYTES = 149; // max text bytes for mesh payload (MAX_PAYLOAD - 1)
 static constexpr int MAX_NAME_LEN  = 31;  // max chars for channel/contact names (buffer - null)
+static constexpr uint16_t CHAT_RENDER_MAX = CHAT_SCREEN_RENDER_MAX;
 static constexpr int MSG_LIST_Y    = TOP_H + DIVIDER_H;
 static constexpr int MSG_LIST_H = DISPLAY_H - TOP_H - DIVIDER_H - INPUT_H - DIVIDER_H - BOT_BAR_H;
 
@@ -895,8 +896,8 @@ static lv_obj_t* make_chat_list_screen()
     lv_obj_set_style_border_width(top, 0, 0);
 
     ch_back_btn = lv_btn_create(top);
-    lv_obj_set_size(ch_back_btn, 24, LIST_BAR_H - 4);
-    lv_obj_align(ch_back_btn, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_set_size(ch_back_btn, 38, LIST_BAR_H - 2);
+    lv_obj_align(ch_back_btn, LV_ALIGN_LEFT_MID, 1, 0);
     apply_topbar_icon_btn(ch_back_btn);
     if (can_go_back()) {
         lv_obj_add_event_cb(ch_back_btn, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
@@ -1234,8 +1235,8 @@ static void create_top_bar()
 
     // ← back button → return to channel list
     lv_obj_t* back = lv_btn_create(top_bar);
-    lv_obj_set_size(back, 24, TOP_H - 4);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_set_size(back, 38, TOP_H - 2);
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 1, 0);
     apply_topbar_icon_btn(back);
     lv_obj_t* bl = lv_label_create(back);
     lv_label_set_text(bl, LV_SYMBOL_LEFT);
@@ -1248,10 +1249,10 @@ static void create_top_bar()
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
-    int ribbon_w = CONTENT_W - 28 - 44 - 28; // back button + margins + time + search btn
+    int ribbon_w = CONTENT_W - 42 - 44 - 28; // back button + margins + time + search btn
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
-    lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 42, 0);
     lv_obj_set_style_bg_color(channel_ribbon, lv_color_hex(BG_SECONDARY), 0);
     lv_obj_set_style_bg_opa(channel_ribbon, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(channel_ribbon, 0, 0);
@@ -1335,7 +1336,7 @@ static void prefill_public_reply(const MessageActionCtx* ctx)
     if (!ctx || !input_field || !lv_obj_is_valid(input_field)) return;
 
     char reply[MAX_MSG_BYTES + 1];
-    snprintf(reply, sizeof(reply), "@%s ", ctx->sender);
+    chat_screen_format_public_reply_prefix(ctx->sender, reply, sizeof(reply));
     lv_textarea_set_text(input_field, reply);
     focus_chat_input();
 }
@@ -1527,8 +1528,10 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_label_set_long_mode(msg_text, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msg_text, LV_PCT(100));
 
-    if (!is_self && active_channel >= 0 && active_channel < dyn_count &&
-        sigurdos::mesh::isPublicChannelName(dyn_channels[active_channel])) {
+    if (active_channel >= 0 && active_channel < dyn_count &&
+        chat_screen_public_message_actions_available(dyn_channels[active_channel],
+                                                     sender, is_self)) {
+        lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
         auto* ctx = new(std::nothrow) MessageActionCtx{};
         if (ctx) {
             strncpy(ctx->sender, sender ? sender : "", sizeof(ctx->sender) - 1);
@@ -1624,8 +1627,20 @@ static void render_active_messages()
         return;
     }
 
-    // ── Normal mode: render all messages ──
-    for (uint16_t i = 0; i < ch_msg_count[active_channel]; i++) {
+    // ── Normal mode: render the recent tail. Rendering every retained message
+    // on a busy Public channel can starve input long enough to trip the WDT.
+    const uint16_t total = ch_msg_count[active_channel];
+    const uint16_t first = chat_screen_visible_message_start(total, CHAT_RENDER_MAX);
+    if (first > 0) {
+        lv_obj_t* note = lv_label_create(msg_list);
+        char note_buf[48];
+        snprintf(note_buf, sizeof(note_buf), "Showing latest %u of %u",
+                 (unsigned)(total - first), (unsigned)total);
+        lv_label_set_text(note, note_buf);
+        lv_obj_set_style_text_color(note, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(note, emoji_wrapped_montserrat_10, 0);
+    }
+    for (uint16_t i = first; i < total; i++) {
         ChannelMessage& msg = ch_msgs[active_channel][i];
 
         // Check ACK status for self-sent DM messages
@@ -2064,7 +2079,11 @@ static void create_bottom_bar()
 // ════════════════════════════════════════════════════
 static void open_channel_messaging(int idx)
 {
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
     active_channel = idx;
+
+    ch_list = ch_back_btn = ch_add_btn = nullptr;
+    ch_focus = 0;
 
     scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
@@ -2786,6 +2805,9 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
     // through to the LVGL group so its buttons stay focus-navigable.
     if (channel_menu && lv_obj_is_valid(channel_menu)) return false;
 
+    if (msg_list && !lv_obj_is_valid(msg_list)) msg_list = nullptr;
+    if (ch_list && !lv_obj_is_valid(ch_list)) ch_list = nullptr;
+
     if (msg_list) {
         // ── Search mode: Up/Down cycles through matches, Left dismisses search ──
         if (search_active && search_query[0] && search_match_count > 0) {
@@ -2848,6 +2870,9 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
     }
 
     if (ch_list) {
+        if (dyn_count <= 0) return true;
+        if (ch_list_selected < 0) ch_list_selected = 0;
+        if (ch_list_selected >= dyn_count) ch_list_selected = dyn_count - 1;
         switch (event) {
         case SigurdOSTrackballEvent::Up:
         case SigurdOSTrackballEvent::Down: {

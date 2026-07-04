@@ -13,13 +13,18 @@ namespace {
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_DEFAULT;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MAX;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MIN;
+using sigurdos::ui::CHAT_SCREEN_RENDER_MAX;
 using sigurdos::ui::CHAT_EMOJI_PICKER_PAGE_SIZE;
 using sigurdos::ui::chat_screen_emoji_page_count;
 using sigurdos::ui::chat_screen_emoji_page_end;
 using sigurdos::ui::chat_screen_emoji_page_start;
 using sigurdos::ui::chat_screen_filter_accepts_channel;
+using sigurdos::ui::chat_screen_format_public_reply_prefix;
 using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
+using sigurdos::ui::chat_screen_public_message_actions_available;
+using sigurdos::ui::chat_screen_public_message_dm_available;
+using sigurdos::ui::chat_screen_visible_message_start;
 
 TEST(ChatConfig, ZeroUsesDefaultMessageCap) {
     EXPECT_EQ(chat_screen_normalize_message_cap(0), CHAT_SCREEN_MESSAGE_CAP_DEFAULT);
@@ -86,6 +91,44 @@ TEST(ChatConfig, EmojiPickerClampsPageRanges) {
     EXPECT_EQ(chat_screen_emoji_page_end(3, 52), 52);
     EXPECT_EQ(chat_screen_emoji_page_start(99, 52), 48);
     EXPECT_EQ(chat_screen_emoji_page_end(99, 52), 52);
+}
+
+TEST(ChatConfig, MessageRenderTailKeepsRecentMessagesBounded) {
+    EXPECT_EQ(chat_screen_visible_message_start(0, CHAT_SCREEN_RENDER_MAX), 0);
+    EXPECT_EQ(chat_screen_visible_message_start(12, CHAT_SCREEN_RENDER_MAX), 0);
+    EXPECT_EQ(chat_screen_visible_message_start(CHAT_SCREEN_RENDER_MAX,
+                                                CHAT_SCREEN_RENDER_MAX), 0);
+    EXPECT_EQ(chat_screen_visible_message_start(CHAT_SCREEN_RENDER_MAX + 5,
+                                                CHAT_SCREEN_RENDER_MAX), 5);
+    EXPECT_EQ(chat_screen_visible_message_start(200, CHAT_SCREEN_RENDER_MAX),
+              200 - CHAT_SCREEN_RENDER_MAX);
+    EXPECT_EQ(chat_screen_visible_message_start(200, 0), 0);
+}
+
+TEST(ChatConfig, PublicMessageActionsOnlyApplyToIncomingPublicMessages) {
+    EXPECT_TRUE(chat_screen_public_message_actions_available("Public", "Alice", false));
+    EXPECT_FALSE(chat_screen_public_message_actions_available("Public", "Alice", true));
+    EXPECT_FALSE(chat_screen_public_message_actions_available("#general", "Alice", false));
+    EXPECT_FALSE(chat_screen_public_message_actions_available("Public", "", false));
+    EXPECT_FALSE(chat_screen_public_message_actions_available("Public", nullptr, false));
+}
+
+TEST(ChatConfig, PublicMessageDmActionRequiresKnownContact) {
+    EXPECT_TRUE(chat_screen_public_message_dm_available(true));
+    EXPECT_FALSE(chat_screen_public_message_dm_available(false));
+}
+
+TEST(ChatConfig, PublicReplyPrefixMentionsSender) {
+    char out[16];
+    chat_screen_format_public_reply_prefix("Alice", out, sizeof(out));
+    EXPECT_STREQ("@Alice ", out);
+
+    chat_screen_format_public_reply_prefix(nullptr, out, sizeof(out));
+    EXPECT_STREQ("", out);
+
+    chat_screen_format_public_reply_prefix("VeryLongContactName", out, 8);
+    EXPECT_EQ(out[7], '\0');
+    EXPECT_STREQ("@VeryLo", out);
 }
 
 // ── Issue #543: DM name buffer overflow tests ──────────────────────────

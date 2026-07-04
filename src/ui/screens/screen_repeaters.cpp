@@ -283,7 +283,9 @@ void repeaters_screen_show()
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(target);
             if (name) {
-                repeater_detail_screen_show(name);
+                char safe_name[32];
+                snprintf(safe_name, sizeof(safe_name), "%s", name);
+                repeater_detail_screen_show(safe_name);
             }
         }, LV_EVENT_CLICKED, nullptr);
 
@@ -443,6 +445,9 @@ static void repeater_input_dialog(const char* contact_name,
 void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 {
     if (!contact_name || !contact_name[0]) return;
+    char safe_contact_name[32];
+    snprintf(safe_contact_name, sizeof(safe_contact_name), "%s", contact_name);
+    contact_name = safe_contact_name;
 
     // Look up the contact first (need type for screen title). Avoid copying
     // the full 350-contact table just to open one repeater detail page.
@@ -489,6 +494,15 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
     int row = 0;
 
+    lv_obj_t* back_row = lv_list_add_btn(list, LV_SYMBOL_LEFT, "Back to Repeaters");
+    lv_obj_set_style_bg_color(back_row, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_bg_opa(back_row, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(back_row, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(back_row, [](lv_event_t*) {
+        repeaters_screen_show();
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
     // skip_login=false: ALWAYS show pre-login (don't trust cached login state)
     // skip_login=true:  show post-login only if actually logged in (timer path)
     if (!skip_login || login_st != LOGIN_STATUS_OK) {
@@ -534,9 +548,9 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 if (name) {
                     bool cur = sigurdos::mesh::isContactFavourite(name);
                     sigurdos::mesh::setContactFavourite(name, !cur);
-
-                    repeater_detail_screen_show(name, true);
-
+                    char safe_name[32];
+                    snprintf(safe_name, sizeof(safe_name), "%s", name);
+                    repeater_detail_screen_show(safe_name, true);
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(fav_btn, [](lv_event_t* e) {

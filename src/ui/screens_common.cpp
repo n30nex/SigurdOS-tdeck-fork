@@ -61,8 +61,8 @@ lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_border_width(top, 0, 0);
 
     lv_obj_t* back = lv_btn_create(top);
-    lv_obj_set_size(back, 24, TOP_BAR_H - 4);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_set_size(back, 38, TOP_BAR_H - 2);
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 1, 0);
     apply_topbar_icon_btn(back);
     s_back_btn = back; // store for back-swipe highlight
     if (can_go_back()) {
