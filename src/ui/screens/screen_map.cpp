@@ -509,6 +509,15 @@ void map_screen_show()
 
     render_map_with_contacts();
 
+    lv_obj_t* attribution = lv_label_create(scr);
+    lv_label_set_text(attribution, sigurdos_map_tile_download_attribution());
+    lv_obj_set_width(attribution, 118);
+    lv_label_set_long_mode(attribution, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(attribution, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_color(attribution, lv_color_hex(TEXT_MUTED), 0);
+    lv_obj_set_style_text_font(attribution, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(attribution, LV_ALIGN_TOP_RIGHT, -4, CONTENT_Y + 3);
+
     static int drag_start_x = 0, drag_start_y = 0;
     static uint32_t map_last_render_ms = 0;
 

@@ -565,9 +565,7 @@ uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, con
     // Format: "[channel_name] text" — embeds the channel name in the message text
     // so the room server can identify which channel the message is for.
     char buf[160];
-    int n = snprintf(buf, sizeof(buf), "#%s %s", channel_name, text);
-    if (n <= 0) return 0;
-    if (n >= (int)sizeof(buf)) n = sizeof(buf) - 1;
+    if (!formatRoomMessageText(channel_name, text, buf, sizeof(buf))) return 0;
     // Send as a peer TXT_MSG to the room server contact (like a DM).
     return sendMessage(contact_name, buf);
 }

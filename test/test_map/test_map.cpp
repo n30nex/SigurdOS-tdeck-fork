@@ -25,6 +25,8 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include "app/map_tile_downloader.h"
 #include "tile_cache.h"
 #include "ui/map_gps_state.h"
 
@@ -251,6 +253,22 @@ TEST(MapGpsButtonStateTest, ControlFocusIndexWrapsAcrossMapControls) {
     EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(-1, 1), 1);
     EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(99, -1), 3);
     EXPECT_EQ(sigurdos::ui::map_screen_cycle_control_index(0, 1, 0), -1);
+}
+
+TEST(MapTileDownloadPolicyTest, CurrentViewOnlyPolicyIsExplicit) {
+    EXPECT_EQ(SIGURDOS_MAP_TILE_CURRENT_VIEW_RADIUS, 1);
+    EXPECT_EQ(SIGURDOS_MAP_TILE_MAX_CURRENT_VIEW_TILES, 9);
+    EXPECT_FALSE(sigurdos_map_tile_download_prefetch_allowed());
+}
+
+TEST(MapTileDownloadPolicyTest, ProviderHeadersAndAttributionAreDeclared) {
+    EXPECT_STREQ(sigurdos_map_tile_download_provider(),
+                 "https://tile.openstreetmap.org");
+    EXPECT_NE(std::strstr(sigurdos_map_tile_download_user_agent(), "SigurdOS"),
+              nullptr);
+    EXPECT_NE(std::strstr(sigurdos_map_tile_download_attribution(),
+                          "OpenStreetMap"),
+              nullptr);
 }
 
 // ════════════════════════════════════════════════════════

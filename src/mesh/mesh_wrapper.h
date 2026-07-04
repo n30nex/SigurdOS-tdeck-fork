@@ -7,6 +7,8 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
+#include <cstring>
 #include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
 
 // Node type identifiers from MeshCore adverts — kept local so UI code can filter.
@@ -273,6 +275,21 @@ void clearRoomMsgFetch();
 
 // Send a text message to a room server contact as a peer TXT_MSG.
 // Returns the timestamp used for ACK tracking, or 0 on failure.
+inline bool formatRoomMessageText(const char* channel_name, const char* text,
+                                  char* out, size_t out_sz) {
+    if (!channel_name || !text || !out || out_sz == 0) return false;
+    const char* ch = channel_name;
+    while (*ch == '#') ++ch;
+    if (!*ch) return false;
+    int n = std::snprintf(out, out_sz, "#%s %s", ch, text);
+    if (n <= 0) {
+        out[0] = '\0';
+        return false;
+    }
+    out[out_sz - 1] = '\0';
+    return n < static_cast<int>(out_sz);
+}
+
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text);
 
 // Count room server contacts that are currently logged in.

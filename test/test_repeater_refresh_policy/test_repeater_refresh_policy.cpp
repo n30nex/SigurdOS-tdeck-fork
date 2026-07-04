@@ -8,6 +8,7 @@
 namespace {
 
 using sigurdos::ui::repeater_refresh_allowed;
+using sigurdos::ui::RepeaterManagementRequest;
 
 TEST(RepeaterRefreshPolicy, AllowsOnlyActiveRepeaterList)
 {
@@ -37,6 +38,26 @@ TEST(RepeaterRefreshPolicy, StopsWhenDetailPageIsOpen)
 TEST(RepeaterRefreshPolicy, StopsWhenRepeaterListIsNotActiveScreen)
 {
     EXPECT_FALSE(repeater_refresh_allowed(true, true, true, false, false));
+}
+
+TEST(RepeaterManagementPolicy, RequestLabelsStayStable)
+{
+    EXPECT_STREQ(sigurdos::ui::repeater_management_request_label(
+                    RepeaterManagementRequest::Status),
+                "Status");
+    EXPECT_STREQ(sigurdos::ui::repeater_management_request_label(
+                    RepeaterManagementRequest::Telemetry),
+                "Telemetry");
+}
+
+TEST(RepeaterManagementPolicy, RequestFailureMessagesAreUserVisible)
+{
+    EXPECT_STREQ(sigurdos::ui::repeater_management_request_failed_message(
+                    RepeaterManagementRequest::Status),
+                "! Status request failed");
+    EXPECT_STREQ(sigurdos::ui::repeater_management_request_failed_message(
+                    RepeaterManagementRequest::Telemetry),
+                "! Telemetry request failed");
 }
 
 } // namespace

@@ -22,18 +22,9 @@
 #include <Arduino.h>
 #endif
 
-static constexpr const char* TILE_PROVIDER =
-    "https://tile.openstreetmap.org";
-static constexpr const char* TILE_USER_AGENT =
-    "SigurdOS-TDeck/1.0 (+https://github.com/hermes-gadget/SigurdOS-tdeck)";
 static constexpr int TILE_HTTP_TIMEOUT_MS = 15000;
 static constexpr int TILE_MAX_BYTES = 196 * 1024;
 static constexpr int TILE_READ_TIMEOUT_MS = 20000;
-
-const char* sigurdos_map_tile_download_provider()
-{
-    return TILE_PROVIDER;
-}
 
 static void set_status(SigurdosMapTileDownloadStatus* out,
                        int requested, int downloaded, int skipped, int failed,
@@ -62,8 +53,8 @@ static void set_status(SigurdosMapTileDownloadStatus* out,
 
 struct TilePlan {
     int z;
-    int x[9];
-    int y[9];
+    int x[SIGURDOS_MAP_TILE_MAX_CURRENT_VIEW_TILES];
+    int y[SIGURDOS_MAP_TILE_MAX_CURRENT_VIEW_TILES];
     int count;
 };
 
@@ -138,7 +129,8 @@ static bool download_one_tile(int z, int x, int y, SigurdosMapTileDownloadStatus
     }
 
     char url[128];
-    std::snprintf(url, sizeof(url), "%s/%d/%d/%d.png", TILE_PROVIDER, z, x, y);
+    std::snprintf(url, sizeof(url), "%s/%d/%d/%d.png",
+                  SIGURDOS_MAP_TILE_PROVIDER, z, x, y);
 
     WiFiClientSecure client;
     client.setInsecure();
@@ -146,7 +138,7 @@ static bool download_one_tile(int z, int x, int y, SigurdosMapTileDownloadStatus
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(TILE_HTTP_TIMEOUT_MS);
-    http.setUserAgent(TILE_USER_AGENT);
+    http.setUserAgent(SIGURDOS_MAP_TILE_USER_AGENT);
 
     if (!http.begin(client, url)) {
         if (out) out->failed++;
@@ -244,11 +236,13 @@ static bool prepare_current_view_plan(TilePlan* plan, SigurdosMapTileDownloadSta
     const int center_y = (int)sigurdos_map_lat_to_tile_y(sigurdos_map_get_lat(), z);
     plan->z = z;
 
-    for (int y = center_y - 1; y <= center_y + 1; ++y) {
+    for (int y = center_y - SIGURDOS_MAP_TILE_CURRENT_VIEW_RADIUS;
+         y <= center_y + SIGURDOS_MAP_TILE_CURRENT_VIEW_RADIUS; ++y) {
         if (y < 0 || y >= n) continue;
-        for (int x = center_x - 1; x <= center_x + 1; ++x) {
+        for (int x = center_x - SIGURDOS_MAP_TILE_CURRENT_VIEW_RADIUS;
+             x <= center_x + SIGURDOS_MAP_TILE_CURRENT_VIEW_RADIUS; ++x) {
             if (x < 0 || x >= n) continue;
-            if (plan->count >= 9) continue;
+            if (plan->count >= SIGURDOS_MAP_TILE_MAX_CURRENT_VIEW_TILES) continue;
             plan->x[plan->count] = x;
             plan->y[plan->count] = y;
             plan->count++;

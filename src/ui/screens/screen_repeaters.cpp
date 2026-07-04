@@ -775,6 +775,51 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             row++;
         };
 
+        struct QueryCtx { char* name; RepeaterManagementRequest request; };
+        auto add_query = [&](const char* icon_lbl, RepeaterManagementRequest request) {
+            auto* ctx = new(std::nothrow) QueryCtx{strdup(contact_name), request};
+            if (!ctx || !ctx->name) {
+                if (ctx) {
+                    free(ctx->name);
+                    delete ctx;
+                }
+                return;
+            }
+            lv_obj_t* r = lv_list_add_btn(list, icon_lbl, ">");
+            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_t* vl = lv_obj_get_child(r, 1);
+            if (vl && lv_obj_check_type(vl, &lv_label_class))
+                lv_obj_set_style_text_color(vl, lv_color_hex(ACCENT), 0);
+            lv_obj_set_user_data(r, ctx);
+            lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                auto* c = (QueryCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                if (!c || !c->name) return;
+                bool sent = false;
+                switch (c->request) {
+                case RepeaterManagementRequest::Status:
+                    sent = sigurdos::mesh::requestStatus(c->name);
+                    if (sent) navigate_to(Screen::NodeStatus);
+                    break;
+                case RepeaterManagementRequest::Telemetry:
+                    sent = sigurdos::mesh::requestTelemetry(c->name);
+                    if (sent) navigate_to(Screen::Telemetry);
+                    break;
+                }
+                if (!sent) {
+                    sigurdos::mesh::mesh_v2_queue_push(
+                        "System", "", repeater_management_request_failed_message(c->request),
+                        0, 0.0f);
+                }
+            }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                auto* c = (QueryCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                if (c) { free(c->name); delete c; }
+            }, LV_EVENT_DELETE, nullptr);
+            row++;
+        };
+
         // ── Section: Connection ───────────────────────────
         sec_header("  Connection");
         {
@@ -808,6 +853,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             }
             add_con("Permission", perm_buf, perm == 1 ? ACCENT : TEXT_SECONDARY);
         }
+
+        // ── Section: Live Requests ────────────────────────
+        sec_header("  Live Requests");
+        add_query(LV_SYMBOL_SETTINGS "  Request Status", RepeaterManagementRequest::Status);
+        add_query(LV_SYMBOL_WIFI "  Request Telemetry", RepeaterManagementRequest::Telemetry);
 
         // Determine if the user has admin permission
         // Server permission encoding: 1 = Admin, 0 = Read-Write, 2 = Guest

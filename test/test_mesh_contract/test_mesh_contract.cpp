@@ -107,6 +107,22 @@ TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_FALSE(sigurdos::mesh::loginPasswordInputSubmittable(nullptr));
 }
 
+TEST(MeshContractTest, RoomMessageFormattingUsesSingleChannelPrefix) {
+    char out[64];
+    EXPECT_TRUE(sigurdos::mesh::formatRoomMessageText("Public", "hello",
+                                                      out, sizeof(out)));
+    EXPECT_STREQ(out, "#Public hello");
+
+    EXPECT_TRUE(sigurdos::mesh::formatRoomMessageText("#Public", "hello",
+                                                      out, sizeof(out)));
+    EXPECT_STREQ(out, "#Public hello");
+
+    EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("#", "hello",
+                                                       out, sizeof(out)));
+    EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("Public", "hello",
+                                                       out, 4));
+}
+
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
     EXPECT_EQ(sizeof(MeshMessage::sender), 32u);
     EXPECT_EQ(sizeof(MeshMessage::channel), 32u);
