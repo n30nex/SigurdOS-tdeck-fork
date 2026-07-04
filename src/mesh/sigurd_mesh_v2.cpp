@@ -592,11 +592,17 @@ namespace mesh {
                 return;
             }
         }
+        uint8_t signed_prefix[sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN] = {};
+        const uint8_t* signed_prefix_for_store = contact.id.pub_key;
+        if (sender_prefix) {
+            memcpy(signed_prefix, sender_prefix, 4);
+            signed_prefix_for_store = signed_prefix;
+        }
         sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
                                            sender_timestamp, companion_path_len,
-                                           contact.id.pub_key,
+                                           signed_prefix_for_store,
                                            2,              // COMPANION_TXT_SIGNED_PLAIN
-                                           sender_prefix, 4);
+                                           sender_prefix, sender_prefix ? 4 : 0);
     }
 
     void SigurdMeshV2::onChannelMessageRecv(const ::mesh::GroupChannel& channel, ::mesh::Packet* pkt, uint32_t timestamp, const char* text) {

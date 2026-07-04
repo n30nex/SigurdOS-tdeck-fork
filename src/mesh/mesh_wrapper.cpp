@@ -566,8 +566,13 @@ uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, con
     // so the room server can identify which channel the message is for.
     char buf[160];
     if (!formatRoomMessageText(channel_name, text, buf, sizeof(buf))) return 0;
-    // Send as a peer TXT_MSG to the room server contact (like a DM).
-    return sendMessage(contact_name, buf);
+    // Send as a peer TXT_MSG to the room server contact. Do not persist this as
+    // a DM: it is transport for an already-stored channel post.
+    uint32_t ts = getCurrentTime();
+    if (ts == 0) ts = 1;
+    bool ok = g_mesh->sendTextTo(contact_name, buf, ts);
+    if (ok) pushPacketLog(own_name, 0, 0.0f, "TX_ROOM");
+    return ok ? ts : 0;
 }
 
 int getLoggedInRoomServerCount() {

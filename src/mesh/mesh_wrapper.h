@@ -122,6 +122,7 @@ inline bool autoAddConfigAllowsOverwriteOldest(uint8_t config)
 }
 
 static constexpr uint16_t LOGIN_DEFAULT_KEEP_ALIVE_SECS = 60;
+static constexpr size_t ROOM_SERVER_MAX_POST_TEXT_BYTES = 151;
 
 inline uint16_t loginKeepAliveSeconds(uint8_t raw_units, uint8_t contact_type)
 {
@@ -131,6 +132,15 @@ inline uint16_t loginKeepAliveSeconds(uint8_t raw_units, uint8_t contact_type)
         return LOGIN_DEFAULT_KEEP_ALIVE_SECS;
     }
     return secs;
+}
+
+inline size_t roomMessagePrefixBytes(const char* channel_name)
+{
+    if (!channel_name) return 0;
+    const char* ch = channel_name;
+    while (*ch == '#') ++ch;
+    if (!*ch) return 0;
+    return 2u + std::strlen(ch);  // '#' + channel + ' '
 }
 
 bool init(bool spiffs_ok = true);
@@ -294,13 +304,25 @@ inline bool formatRoomMessageText(const char* channel_name, const char* text,
     const char* ch = channel_name;
     while (*ch == '#') ++ch;
     if (!*ch) return false;
+    const size_t prefix_len = roomMessagePrefixBytes(channel_name);
+    if (prefix_len == 0 || prefix_len >= ROOM_SERVER_MAX_POST_TEXT_BYTES) return false;
+    const size_t max_body = ROOM_SERVER_MAX_POST_TEXT_BYTES - prefix_len;
+    if (std::strlen(text) > max_body) return false;
     int n = std::snprintf(out, out_sz, "#%s %s", ch, text);
     if (n <= 0) {
         out[0] = '\0';
         return false;
     }
     out[out_sz - 1] = '\0';
-    return n < static_cast<int>(out_sz);
+    return n < static_cast<int>(out_sz) &&
+           static_cast<size_t>(n) <= ROOM_SERVER_MAX_POST_TEXT_BYTES;
+}
+
+inline size_t roomMessageMaxBodyBytes(const char* channel_name)
+{
+    const size_t prefix_len = roomMessagePrefixBytes(channel_name);
+    if (prefix_len == 0 || prefix_len >= ROOM_SERVER_MAX_POST_TEXT_BYTES) return 0;
+    return ROOM_SERVER_MAX_POST_TEXT_BYTES - prefix_len;
 }
 
 inline bool roomPostTextIsSpace(char c)

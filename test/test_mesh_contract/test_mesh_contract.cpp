@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include <gtest/gtest.h>
 
@@ -131,6 +132,29 @@ TEST(MeshContractTest, RoomMessageFormattingUsesSingleChannelPrefix) {
                                                        out, sizeof(out)));
     EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("Public", "hello",
                                                        out, 4));
+}
+
+TEST(MeshContractTest, RoomMessageFormattingHonorsRoomServerPostLimit) {
+    EXPECT_EQ(sigurdos::mesh::ROOM_SERVER_MAX_POST_TEXT_BYTES, 151u);
+    EXPECT_EQ(sigurdos::mesh::roomMessagePrefixBytes("Public"), 8u);
+    EXPECT_EQ(sigurdos::mesh::roomMessageMaxBodyBytes("Public"), 143u);
+
+    char body[145];
+    std::memset(body, 'a', 143);
+    body[143] = '\0';
+
+    char out[160];
+    EXPECT_TRUE(sigurdos::mesh::formatRoomMessageText("Public", body,
+                                                      out, sizeof(out)));
+    EXPECT_EQ(std::strlen(out), sigurdos::mesh::ROOM_SERVER_MAX_POST_TEXT_BYTES);
+
+    body[143] = 'b';
+    body[144] = '\0';
+    EXPECT_FALSE(sigurdos::mesh::formatRoomMessageText("Public", body,
+                                                       out, sizeof(out)));
+
+    EXPECT_EQ(sigurdos::mesh::roomMessageMaxBodyBytes(
+                  "#abcdefghijklmnopqrstuvwxyz1234"), 119u);
 }
 
 TEST(MeshContractTest, RoomMessageParsingRoutesPublicAndHashtagChannels) {

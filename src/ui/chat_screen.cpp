@@ -118,6 +118,14 @@ static constexpr uint16_t CHAT_RENDER_MAX = CHAT_SCREEN_RENDER_MAX;
 static constexpr int MSG_LIST_Y    = TOP_H + DIVIDER_H;
 static constexpr int MSG_LIST_H = DISPLAY_H - TOP_H - DIVIDER_H - INPUT_H - DIVIDER_H - BOT_BAR_H;
 
+static int message_limit_for_channel(const char* channel)
+{
+    if (chat_screen_is_dm_name(channel)) return MAX_MSG_BYTES;
+    size_t room_limit = sigurdos::mesh::roomMessageMaxBodyBytes(channel);
+    if (room_limit == 0 || room_limit > (size_t)MAX_MSG_BYTES) return MAX_MSG_BYTES;
+    return (int)room_limit;
+}
+
 // ── Channel-list layout (matches screens.cpp constants) ────
 static constexpr int LIST_BAR_H  = 22;
 static constexpr int LIST_DIV_H  = 1;
@@ -833,6 +841,25 @@ static void channel_select_timer_cb(lv_timer_t* timer)
     if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
     active_channel = idx;
     ch_meta[idx].unread = 0;
+    if (input_field && lv_obj_is_valid(input_field)) {
+        int limit = message_limit_for_channel(dyn_channels[active_channel]);
+        lv_textarea_set_max_length(input_field, limit);
+        const char* raw = lv_textarea_get_text(input_field);
+        size_t byte_len = raw ? strlen(raw) : 0;
+        if (byte_len > (size_t)limit) {
+            size_t trunc_len = sigurdos::utf8_truncate_bytes(raw, (size_t)limit);
+            char buf[MAX_MSG_BYTES + 1];
+            memcpy(buf, raw, trunc_len);
+            buf[trunc_len] = '\0';
+            lv_textarea_set_text(input_field, buf);
+            byte_len = strlen(buf);
+        }
+        if (byte_counter) {
+            char cb[8];
+            snprintf(cb, sizeof(cb), "%d", limit - (int)byte_len);
+            lv_label_set_text(byte_counter, cb);
+        }
+    }
     rebuild_channel_ribbon();
     render_active_messages();
 }
@@ -2012,10 +2039,12 @@ static void do_send()
     const char* raw = lv_textarea_get_text(input_field);
     if (!raw || !raw[0]) return;
 
-    // Input is now enforced to ≤ 149 bytes at the UI level (see byte-counter
+    // Input is enforced to the current chat's byte limit at the UI level (see byte-counter
     // handler in create_input_bar), so no truncation is needed before sending.
     char text[150];
+    const int limit = message_limit_for_channel(dyn_channels[active_channel]);
     size_t len = strnlen(raw, sizeof(text) - 1);
+    if (len > (size_t)limit) len = sigurdos::utf8_truncate_bytes(raw, (size_t)limit);
     memcpy(text, raw, len);
     text[len] = '\0';
 
@@ -2090,7 +2119,9 @@ static void create_input_bar()
     lv_obj_set_style_pad_all(input_field, 4, 0);
     lv_textarea_set_one_line(input_field, true);
     lv_textarea_set_placeholder_text(input_field, "Message #channel");
-    lv_textarea_set_max_length(input_field, MAX_MSG_BYTES);
+    const int input_limit = message_limit_for_channel(
+        (active_channel >= 0 && active_channel < dyn_count) ? dyn_channels[active_channel] : "");
+    lv_textarea_set_max_length(input_field, input_limit);
     lv_obj_remove_flag(input_field, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_set_style_outline_width(input_field, 0, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_width(input_field, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
@@ -2099,7 +2130,11 @@ static void create_input_bar()
     // Byte counter: small overlay showing remaining bytes (mesh limit = 149)
     lv_obj_set_style_pad_right(input_field, 28, 0);
     byte_counter = lv_label_create(input_field);
-    lv_label_set_text(byte_counter, "149");
+    {
+        char cb[8];
+        snprintf(cb, sizeof(cb), "%d", input_limit);
+        lv_label_set_text(byte_counter, cb);
+    }
     lv_obj_set_style_text_font(byte_counter, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(byte_counter, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_align(byte_counter, LV_ALIGN_RIGHT_MID, -2, 0);
@@ -2147,9 +2182,10 @@ static void create_input_bar()
         } else if (code == LV_EVENT_VALUE_CHANGED) {
             const char* raw = lv_textarea_get_text(input_field);
             size_t byte_len = strlen(raw);
-            if (byte_len > MAX_MSG_BYTES) {
-                // Truncate to 149 bytes (UTF-8 safe)
-                size_t trunc_len = sigurdos::utf8_truncate_bytes(raw, MAX_MSG_BYTES);
+            const int limit = message_limit_for_channel(
+                (active_channel >= 0 && active_channel < dyn_count) ? dyn_channels[active_channel] : "");
+            if (byte_len > (size_t)limit) {
+                size_t trunc_len = sigurdos::utf8_truncate_bytes(raw, (size_t)limit);
                 char buf[MAX_MSG_BYTES + 1];
                 memcpy(buf, raw, trunc_len);
                 buf[trunc_len] = '\0';
@@ -2158,7 +2194,7 @@ static void create_input_bar()
             } else {
                 // Update remaining-bytes counter
                 if (byte_counter) {
-                    int remaining = (int)MAX_MSG_BYTES - (int)byte_len;
+                    int remaining = limit - (int)byte_len;
                     char cb[8];
                     snprintf(cb, sizeof(cb), "%d", remaining);
                     lv_label_set_text(byte_counter, cb);
