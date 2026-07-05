@@ -58,6 +58,11 @@ namespace arduino_mock {
     extern int analog_values[16];    // analog pin readings
     extern bool serial_output[1024]; // serial TX buffer
     extern int serial_output_len;
+    extern int tone_calls;
+    extern int no_tone_calls;
+    extern int last_tone_pin;
+    extern unsigned int last_tone_frequency;
+    extern unsigned long last_tone_duration_ms;
 
     void reset();  // reset all mock state between tests
 }
@@ -85,6 +90,17 @@ inline int digitalRead(uint8_t pin) {
         return arduino_mock::forced_read_value[pin];
     }
     return arduino_mock::pin_states[pin];
+}
+inline void tone(uint8_t pin, unsigned int frequency, unsigned long duration = 0) {
+    arduino_mock::tone_calls++;
+    arduino_mock::last_tone_pin = pin;
+    arduino_mock::last_tone_frequency = frequency;
+    arduino_mock::last_tone_duration_ms = duration;
+    if (pin < 64) arduino_mock::pin_states[pin] = HIGH;
+}
+inline void noTone(uint8_t pin) {
+    arduino_mock::no_tone_calls++;
+    if (pin < 64) arduino_mock::pin_states[pin] = LOW;
 }
 
 // ── Analog I/O ───────────────────────────────────────────

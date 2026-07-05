@@ -12,6 +12,13 @@
 
 namespace sigurdos {
 
+inline int8_t prefs_normalize_tx_power_dbm(int8_t tx_power_dbm) {
+    if (tx_power_dbm == 0) return 0;  // unconfigured sentinel
+    if (tx_power_dbm < 2) return 2;
+    if (tx_power_dbm > 22) return 22;
+    return tx_power_dbm;
+}
+
 struct NodePrefs {
     char    node_name[32];
     float   freq;           // MHz (e.g. 869.618)
@@ -23,6 +30,7 @@ struct NodePrefs {
     bool    configured;     // false until user explicitly saves settings
     uint8_t kbd_backlight;      // 0-255, keyboard backlight brightness
     uint8_t kbd_layout;         // KeyboardLayoutId (0=English, 1-11 alternate layouts)
+    bool    kbd_raw_overlay;    // opt-in host raw-matrix modifier overlay
     uint8_t display_brightness; // 0-255, display backlight brightness
     uint16_t auto_off_timeout;  // seconds, auto-off timeout (0=off, default 30)
     uint16_t chat_msg_cap;      // Per-channel in-memory message history cap
@@ -31,6 +39,9 @@ struct NodePrefs {
     bool     advert_location_valid; // true when companion app supplied fixed-point lat/lon
     int32_t  advert_lat;        // fixed-point degrees * 1e6, companion advert fallback
     int32_t  advert_lon;        // fixed-point degrees * 1e6, companion advert fallback
+    bool     map_location_valid; // true when user supplied a map center
+    int32_t  map_lat;            // fixed-point degrees * 1e6, local map center
+    int32_t  map_lon;            // fixed-point degrees * 1e6, local map center
     float    rx_delay_base;        // 0-20.0, RX delay base factor for collision avoidance
     float    tx_delay_factor;      // 0-2.0, TX flood retransmit delay multiplier
     float    direct_tx_delay_factor; // 0-2.0, TX direct retransmit delay multiplier
@@ -72,6 +83,7 @@ struct NodePrefs {
         configured = false;
         kbd_backlight = 127;
         kbd_layout = 0;
+        kbd_raw_overlay = false;
         display_brightness = 200;
         auto_off_timeout = 30;
         chat_msg_cap = 200;
@@ -80,6 +92,9 @@ struct NodePrefs {
         advert_location_valid = false;
         advert_lat = 0;
         advert_lon = 0;
+        map_location_valid = false;
+        map_lat = 0;
+        map_lon = 0;
         rx_delay_base = 10.0f;      // default RX delay base (matching MeshCore companion default)
         tx_delay_factor = 1.0f;     // default TX flood delay factor
         direct_tx_delay_factor = 1.0f; // default TX direct delay factor
@@ -120,9 +135,27 @@ bool prefs_exists();
 const NodePrefs& prefs_get();
 void             prefs_set(const NodePrefs& p);
 
+inline bool prefs_wifi_ssid_matches(const NodePrefs& p, const char* ssid) {
+    return ssid && ssid[0] && p.wifi_ssid[0] && strcmp(p.wifi_ssid, ssid) == 0;
+}
+
+inline bool prefs_wifi_credentials_reusable(const NodePrefs& p,
+                                            const char* ssid,
+                                            bool encrypted) {
+    if (!prefs_wifi_ssid_matches(p, ssid)) return false;
+    return !encrypted || p.wifi_password[0];
+}
+
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
 void removeRepeaterPassword(const char* name);
+
+// ── Map tile provider override (persisted separately from NodePrefs) ──
+static constexpr size_t MAP_TILE_PROVIDER_MAX_LEN = 96;
+bool mapTileProviderUrlValid(const char* provider_url);
+bool saveMapTileProvider(const char* provider_url);
+bool loadMapTileProvider(char* provider_url, size_t max_len);
+bool clearMapTileProvider();
 
 } // namespace sigurdos

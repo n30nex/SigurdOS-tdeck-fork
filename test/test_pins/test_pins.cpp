@@ -42,7 +42,8 @@ TEST_F(PinsTest, AllDefinedPinsInValidGPIORange) {
         PIN_TOUCH_SDA, PIN_TOUCH_SCL, PIN_TOUCH_INT,
         PIN_TRACKBALL, PIN_PERIPH_PWR, PIN_BAT_ADC,
         PIN_GPS_RX, PIN_GPS_TX,
-        PIN_SD_CS, PIN_BUZZER,
+        PIN_SD_CS, PIN_BUZZER, PIN_KEYBOARD_INT,
+        PIN_I2S_WS, PIN_I2S_BCK, PIN_I2S_DOUT,
         PIN_I2C_SDA, PIN_I2C_SCL,
     };
 
@@ -114,7 +115,8 @@ TEST_F(PinsTest, NoDuplicateGPIOPins) {
         PIN_TOUCH_INT,
         PIN_TRACKBALL, PIN_PERIPH_PWR, PIN_BAT_ADC,
         PIN_GPS_RX, PIN_GPS_TX,
-        PIN_SD_CS, PIN_BUZZER,
+        PIN_SD_CS, PIN_KEYBOARD_INT,
+        PIN_I2S_WS, PIN_I2S_BCK, PIN_I2S_DOUT,
     };
     // Note: I2C SDA/SCL share with touch, so they ARE duplicates by design
     // SPI CLK/MOSI share between TFT and LoRa, also by design
@@ -137,6 +139,18 @@ TEST_F(PinsTest, NoDuplicateGPIOPins) {
         }
     }
     EXPECT_EQ(duplicates, 0) << "Unexpected duplicate GPIO pin assignments found";
+}
+
+TEST_F(PinsTest, TDeckAudioUsesI2SAndDoesNotAliasKeyboardInterrupt) {
+    EXPECT_EQ(PIN_KEYBOARD_INT, 46);
+    EXPECT_EQ(PIN_I2S_WS, 5);
+    EXPECT_EQ(PIN_I2S_BCK, 7);
+    EXPECT_EQ(PIN_I2S_DOUT, 6);
+    EXPECT_EQ(PIN_BUZZER, SIGURDOS_GPIO_DISABLED);
+
+    EXPECT_NE(PIN_I2S_WS, PIN_KEYBOARD_INT);
+    EXPECT_NE(PIN_I2S_BCK, PIN_KEYBOARD_INT);
+    EXPECT_NE(PIN_I2S_DOUT, PIN_KEYBOARD_INT);
 }
 
 // ── ADC pin is valid ────────────────────────────────────

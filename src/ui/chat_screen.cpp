@@ -21,6 +21,7 @@
 #include "channel_menu.h"
 #include "navigation.h"
 #include "screens.h"
+#include "screens_common.h"
 #include "theme.h"
 #include "responsive.h"
 #include "../hal/tdeck_pins.h"
@@ -34,6 +35,7 @@
 #include <lvgl.h>
 #include <cstring>
 #include <cstdio>
+#include <new>
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include "utils/utf8_util.h"
@@ -112,8 +114,18 @@ static constexpr uint16_t CHAT_MSGS_DEFAULT_CAP = CHAT_SCREEN_MESSAGE_CAP_DEFAUL
 static constexpr uint16_t CHAT_MSGS_MIN_CAP     = CHAT_SCREEN_MESSAGE_CAP_MIN;
 static constexpr int MAX_MSG_BYTES = 149; // max text bytes for mesh payload (MAX_PAYLOAD - 1)
 static constexpr int MAX_NAME_LEN  = 31;  // max chars for channel/contact names (buffer - null)
+static constexpr uint16_t CHAT_RENDER_MAX = CHAT_SCREEN_RENDER_MAX;
 static constexpr int MSG_LIST_Y    = TOP_H + DIVIDER_H;
 static constexpr int MSG_LIST_H = DISPLAY_H - TOP_H - DIVIDER_H - INPUT_H - DIVIDER_H - BOT_BAR_H;
+
+static int message_limit_for_channel(const char* channel)
+{
+    if (chat_screen_is_dm_name(channel)) return MAX_MSG_BYTES;
+    if (!chat_screen_is_room_name(channel)) return MAX_MSG_BYTES;
+    size_t room_limit = sigurdos::mesh::roomMessageMaxBodyBytes(sigurdos::mesh::PUBLIC_CHANNEL_NAME);
+    if (room_limit == 0 || room_limit > (size_t)MAX_MSG_BYTES) return MAX_MSG_BYTES;
+    return (int)room_limit;
+}
 
 // ── Channel-list layout (matches screens.cpp constants) ────
 static constexpr int LIST_BAR_H  = 22;
@@ -125,18 +137,88 @@ static constexpr int LIST_ROW_H  = 44;
 // ── Channel state ──────────────────────────────────────────
 static constexpr int MAX_CHANNELS = 16;
 // Row width of the channel-name table: "DM: " (4) + contact name (31) + null
-// = 36 → 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
+// = 36 -> 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
 // this constant — a stride mismatch silently corrupts the channel-state snapshot
 // taken in refresh_channels() (see issue #686).
-static constexpr int CHANNEL_NAME_CAP = 37;
+static constexpr int CHANNEL_NAME_CAP = CHAT_SCREEN_CHANNEL_NAME_CAP;
 static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
+static bool  g_direct_open_returns_to_previous = false;
 static int   active_channel = 0;
+static lv_timer_t* g_pending_channel_list_timer = nullptr;
+static lv_timer_t* g_pending_channel_open_timer = nullptr;
+static lv_timer_t* g_pending_channel_select_timer = nullptr;
+static lv_timer_t* g_chat_save_timer = nullptr;
+static bool g_chat_save_dirty = false;
+static lv_scr_load_anim_t g_pending_channel_list_anim = LV_SCR_LOAD_ANIM_NONE;
+static char g_pending_open_channel[CHANNEL_NAME_CAP] = "";
+static char g_pending_select_channel[CHANNEL_NAME_CAP] = "";
+static bool g_channel_transition_pending = false;
+
+static void clear_pending_channel_timers()
+{
+    if (g_pending_channel_list_timer) {
+        lv_timer_del(g_pending_channel_list_timer);
+        g_pending_channel_list_timer = nullptr;
+    }
+    if (g_pending_channel_open_timer) {
+        lv_timer_del(g_pending_channel_open_timer);
+        g_pending_channel_open_timer = nullptr;
+    }
+    if (g_pending_channel_select_timer) {
+        lv_timer_del(g_pending_channel_select_timer);
+        g_pending_channel_select_timer = nullptr;
+    }
+    g_pending_open_channel[0] = '\0';
+    g_pending_select_channel[0] = '\0';
+    g_channel_transition_pending = false;
+}
 
 // ── Channel filter mode ────────────────────────────────────
-// 0 = show all, 1 = channels only, 2 = DMs only
-static int   chat_filter_mode = 0;
+// 1 = channels only, 2 = DMs only. Other values fall back to channels only.
+static int   chat_filter_mode = 1;
+
+static bool chat_conversation_visible_for_current_filter(const char* conversation)
+{
+    return chat_screen_filter_accepts_channel(chat_filter_mode, conversation);
+}
+
+static void chat_load_companion_messages();
+static void chat_load_companion_messages_for_conversation(const char* conversation, int idx);
+
+static void reset_unread_for_current_filter()
+{
+    if (chat_filter_mode == 1) {
+        sigurdos::mesh::resetUnreadChannelMessageCount();
+    } else if (chat_filter_mode == 2) {
+        sigurdos::mesh::resetUnreadDmMessageCount();
+    } else {
+        sigurdos::mesh::resetUnreadMessageCount();
+    }
+}
+
+static void chat_save_timer_cb(lv_timer_t* timer)
+{
+    if (g_chat_save_timer == timer) g_chat_save_timer = nullptr;
+    lv_timer_del(timer);
+    if (!g_chat_save_dirty) return;
+    g_chat_save_dirty = false;
+    chat_save_messages();
+}
+
+static void schedule_chat_save_messages()
+{
+    g_chat_save_dirty = true;
+    if (g_chat_save_timer) return;
+    g_chat_save_timer = lv_timer_create(chat_save_timer_cb, 1500, nullptr);
+    if (!g_chat_save_timer) {
+        g_chat_save_dirty = false;
+        chat_save_messages();
+    } else {
+        lv_timer_set_repeat_count(g_chat_save_timer, 1);
+    }
+}
 
 // ── Per-channel metadata ───────────────────────────────────
 struct ChannelMeta {
@@ -150,6 +232,7 @@ struct ChannelMessage {
     char     sender[32];
     char     text[160];
     uint32_t timestamp;
+    uint8_t  txt_type;
     bool     is_self;
     bool     acked;
 };
@@ -157,9 +240,14 @@ static ChannelMessage* ch_msgs[MAX_CHANNELS] = {nullptr};
 static uint16_t       ch_msg_capacity[MAX_CHANNELS] = {0};
 static uint16_t       ch_msg_count[MAX_CHANNELS];
 
+struct MessageActionCtx {
+    char sender[32];
+    char text[160];
+};
+
 
 struct ChatPrivateScopeState {
-    char conversation[32];
+    char conversation[CHANNEL_NAME_CAP];
     char name[31];
     uint8_t key[16];
     bool has_scope;
@@ -218,7 +306,8 @@ static void clear_chat_private_scope(const char* conversation)
 static void ensure_channel_buffer(int idx)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
-    if (ch_msgs[idx] || ch_msg_capacity[idx] == CHAT_MSGS_MAX) return;
+    if (ch_msgs[idx]) return;
+    ch_msg_capacity[idx] = 0;
 
     const size_t bytes = CHAT_MSGS_MAX * sizeof(ChannelMessage);
     ch_msgs[idx] = (ChannelMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -266,6 +355,9 @@ static void trim_channel_history(int idx, uint16_t cap)
 // ── Forward declarations ───────────────────────────────────
 static void show_channel_list(lv_scr_load_anim_t anim);
 static void open_channel_messaging(int idx);
+static void request_show_channel_list(lv_scr_load_anim_t anim);
+static void request_open_channel_messaging(int idx);
+static void request_select_channel(int idx);
 static void rebuild_channel_ribbon();
 static void show_add_channel_options(lv_obj_t* parent);
 static void render_active_messages();
@@ -318,10 +410,7 @@ static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
 
     lv_obj_add_event_cb(pill, [](lv_event_t* e) {
         int ch = (int)(intptr_t)lv_event_get_user_data(e);
-        active_channel = ch;
-        ch_meta[ch].unread = 0;
-        rebuild_channel_ribbon();
-        render_active_messages();
+        request_select_channel(ch);
     }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
 
     return pill;
@@ -418,8 +507,6 @@ static void refresh_channels()
         Serial.printf("[chat] filter: DMs only, after=%d\n", dyn_count);
 #endif
     }
-    // mode 0: no filter, show all
-
     // ── Fallback: if filter removed everything, add a default ─
     if (dyn_count == 0) {
         if (chat_filter_mode == 1) {
@@ -449,32 +536,32 @@ static void refresh_channels()
         }
     }
 
-    // ── Restore DM entries ───────────────────────────────
-    // DM conversations are synthetic entries (prefixed "DM:")
-    // that aren't part of the mesh channel export. Re-append
+    // ── Restore synthetic entries ─────────────────────────
+    // DM and room conversations are synthetic entries that aren't
+    // part of the mesh channel export. Re-append
     // any that existed before the refresh so they persist.
-    // Skip when filtering to channels only (mode 1).
-    if (chat_filter_mode != 1) {
-        for (int old_idx = 0; old_idx < old_count; old_idx++) {
-            if (old_names[old_idx][0] == '\0') continue;
-            if (strncmp(old_names[old_idx], "DM:", 3) != 0) continue;
-            if (dyn_count >= MAX_CHANNELS) {
-                // No room — free the orphaned buffer
-                if (old_msgs[old_idx]) {
-                    heap_caps_free(old_msgs[old_idx]);
-                    old_msgs[old_idx] = nullptr;
-                }
-                continue;
+    for (int old_idx = 0; old_idx < old_count; old_idx++) {
+        if (old_names[old_idx][0] == '\0') continue;
+        const bool is_dm = chat_screen_is_dm_name(old_names[old_idx]);
+        const bool is_room = chat_screen_is_room_name(old_names[old_idx]);
+        if (!is_dm && !is_room) continue;
+        if (!chat_conversation_visible_for_current_filter(old_names[old_idx])) continue;
+        if (dyn_count >= MAX_CHANNELS) {
+            // No room — free the orphaned buffer
+            if (old_msgs[old_idx]) {
+                heap_caps_free(old_msgs[old_idx]);
+                old_msgs[old_idx] = nullptr;
             }
-            int new_idx = dyn_count++;
-            strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
-            dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
-            ch_msgs[new_idx] = old_msgs[old_idx];
-            ch_msg_capacity[new_idx] = old_caps[old_idx];
-            ch_msg_count[new_idx] = old_counts[old_idx];
-            ch_meta[new_idx] = old_meta[old_idx];
-            old_msgs[old_idx] = nullptr; // claimed
+            continue;
         }
+        int new_idx = dyn_count++;
+        strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
+        dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
+        ch_msgs[new_idx] = old_msgs[old_idx];
+        ch_msg_capacity[new_idx] = old_caps[old_idx];
+        ch_msg_count[new_idx] = old_counts[old_idx];
+        ch_meta[new_idx] = old_meta[old_idx];
+        old_msgs[old_idx] = nullptr; // claimed
     }
 
     // ── Free orphaned buffers ────────────────────────────
@@ -487,6 +574,11 @@ static void refresh_channels()
             old_msgs[i] = nullptr;
         }
     }
+
+    // Pull immediately persisted messages into the currently visible filter.
+    // This keeps the DMs tile and channel rows in sync with live RX even when
+    // the message arrived while a different filtered chat list was open.
+    chat_load_companion_messages();
 
     // ── Update active_channel by name, not by index ──────
     active_channel = 0;
@@ -539,6 +631,27 @@ static void clear_ch_focus_buttons()
 {
     if (ch_back_btn) lv_obj_set_style_border_width(ch_back_btn, 1, 0);
     if (ch_add_btn) lv_obj_set_style_border_width(ch_add_btn, 0, 0);
+}
+
+static void detach_from_default_group(lv_obj_t* obj)
+{
+    lv_group_t* g = lv_group_get_default();
+    if (!g || !obj || !lv_obj_is_valid(obj)) return;
+    lv_group_remove_obj(obj);
+}
+
+static void detach_chat_focus_objects()
+{
+    detach_from_default_group(input_field);
+    detach_from_default_group(search_input);
+    detach_from_default_group(ch_back_btn);
+    detach_from_default_group(ch_add_btn);
+    if (ch_list && lv_obj_is_valid(ch_list)) {
+        uint32_t n = lv_obj_get_child_cnt(ch_list);
+        for (uint32_t i = 0; i < n; i++) {
+            detach_from_default_group(lv_obj_get_child(ch_list, i));
+        }
+    }
 }
 
 // ── Forward declarations ──────────────────────────────
@@ -711,8 +824,7 @@ static void populate_channel_rows(lv_obj_t* list) {
 
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             int idx = (int)(intptr_t)lv_event_get_user_data(e);
-            ch_meta[idx].unread = 0;
-            open_channel_messaging(idx);
+            request_open_channel_messaging(idx);
         }, LV_EVENT_CLICKED, (void*)(intptr_t)ch_idx);
     }
 }
@@ -726,11 +838,190 @@ static int find_channel_idx(const char* channel)
     return -1;
 }
 
-static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
+static void clear_private_scope_for_conversation(const char* conversation)
+{
+    if (!conversation || !conversation[0]) return;
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (strcmp(ch_private_scopes[i].conversation, conversation) == 0) {
+            memset(&ch_private_scopes[i], 0, sizeof(ch_private_scopes[i]));
+            return;
+        }
+    }
+}
+
+static void clear_channel_slot(int idx)
+{
+    if (idx < 0 || idx >= MAX_CHANNELS) return;
+    char old_name[CHANNEL_NAME_CAP];
+    strncpy(old_name, dyn_channels[idx], sizeof(old_name) - 1);
+    old_name[sizeof(old_name) - 1] = '\0';
+    if (ch_msgs[idx]) {
+        heap_caps_free(ch_msgs[idx]);
+        ch_msgs[idx] = nullptr;
+    }
+    ch_msg_capacity[idx] = 0;
+    ch_msg_count[idx] = 0;
+    memset(&ch_meta[idx], 0, sizeof(ch_meta[idx]));
+    dyn_channels[idx][0] = '\0';
+    clear_private_scope_for_conversation(old_name);
+}
+
+static int ensure_synthetic_channel_slot(const char* conversation)
+{
+    int idx = find_channel_idx(conversation);
+    if (idx >= 0) return idx;
+    if (!chat_conversation_visible_for_current_filter(conversation)) return -1;
+    if (dyn_count < MAX_CHANNELS) {
+        idx = dyn_count++;
+        clear_channel_slot(idx);
+        strncpy(dyn_channels[idx], conversation, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
+        return idx;
+    }
+    for (int i = 0; i < dyn_count && i < MAX_CHANNELS; i++) {
+        if (!chat_screen_synthetic_slot_reclaimable(dyn_channels[i],
+                                                    ch_meta[i].unread,
+                                                    ch_msg_count[i],
+                                                    i == active_channel)) {
+            continue;
+        }
+        clear_channel_slot(i);
+        strncpy(dyn_channels[i], conversation, sizeof(dyn_channels[i]) - 1);
+        dyn_channels[i][sizeof(dyn_channels[i]) - 1] = '\0';
+        return i;
+    }
+    return -1;
+}
+
+static void channel_list_timer_cb(lv_timer_t* timer)
+{
+    if (timer) lv_timer_del(timer);
+    g_pending_channel_list_timer = nullptr;
+    if (current_screen() != Screen::Chat) return;
+    show_channel_list(g_pending_channel_list_anim);
+}
+
+static void request_show_channel_list(lv_scr_load_anim_t anim)
+{
+    g_pending_channel_list_anim = anim;
+    if (!g_pending_channel_list_timer) {
+        g_pending_channel_list_timer = lv_timer_create(channel_list_timer_cb, 1, nullptr);
+    }
+}
+
+static void channel_open_timer_cb(lv_timer_t* timer)
+{
+    if (timer) lv_timer_del(timer);
+    g_pending_channel_open_timer = nullptr;
+    g_channel_transition_pending = false;
+    if (current_screen() != Screen::Chat) {
+        g_pending_open_channel[0] = '\0';
+        return;
+    }
+
+    char channel[CHANNEL_NAME_CAP];
+    strncpy(channel, g_pending_open_channel, sizeof(channel) - 1);
+    channel[sizeof(channel) - 1] = '\0';
+    g_pending_open_channel[0] = '\0';
+    if (!channel[0]) return;
+
+    int idx = find_channel_idx(channel);
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    ch_meta[idx].unread = 0;
+    open_channel_messaging(idx);
+}
+
+static void request_open_channel_messaging(int idx)
+{
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    strncpy(g_pending_open_channel, dyn_channels[idx], sizeof(g_pending_open_channel) - 1);
+    g_pending_open_channel[sizeof(g_pending_open_channel) - 1] = '\0';
+    ch_meta[idx].unread = 0;
+    if (g_channel_transition_pending) return;
+    g_channel_transition_pending = true;
+    if (!g_pending_channel_open_timer) {
+        g_pending_channel_open_timer = lv_timer_create(
+            channel_open_timer_cb, CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS, nullptr);
+        if (!g_pending_channel_open_timer) {
+            channel_open_timer_cb(nullptr);
+        }
+    }
+}
+
+static void return_from_message_view()
+{
+    if (g_direct_open_returns_to_previous) {
+        g_direct_open_returns_to_previous = false;
+        go_back();
+        return;
+    }
+    request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+}
+
+static void channel_select_timer_cb(lv_timer_t* timer)
+{
+    if (timer) lv_timer_del(timer);
+    g_pending_channel_select_timer = nullptr;
+    if (current_screen() != Screen::Chat) return;
+    if (!channel_ribbon || !lv_obj_is_valid(channel_ribbon)) return;
+    if (!msg_list || !lv_obj_is_valid(msg_list)) return;
+
+    char channel[CHANNEL_NAME_CAP];
+    strncpy(channel, g_pending_select_channel, sizeof(channel) - 1);
+    channel[sizeof(channel) - 1] = '\0';
+    g_pending_select_channel[0] = '\0';
+    if (!channel[0]) return;
+
+    const int idx = find_channel_idx(channel);
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    active_channel = idx;
+    ch_meta[idx].unread = 0;
+    if (input_field && lv_obj_is_valid(input_field)) {
+        int limit = message_limit_for_channel(dyn_channels[active_channel]);
+        lv_textarea_set_max_length(input_field, limit);
+        const char* raw = lv_textarea_get_text(input_field);
+        size_t byte_len = raw ? strlen(raw) : 0;
+        if (byte_len > (size_t)limit) {
+            size_t trunc_len = sigurdos::utf8_truncate_bytes(raw, (size_t)limit);
+            char buf[MAX_MSG_BYTES + 1];
+            memcpy(buf, raw, trunc_len);
+            buf[trunc_len] = '\0';
+            lv_textarea_set_text(input_field, buf);
+            byte_len = strlen(buf);
+        }
+        if (byte_counter) {
+            char cb[8];
+            snprintf(cb, sizeof(cb), "%d", limit - (int)byte_len);
+            lv_label_set_text(byte_counter, cb);
+        }
+    }
+    rebuild_channel_ribbon();
+    render_active_messages();
+}
+
+static void request_select_channel(int idx)
+{
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
+    strncpy(g_pending_select_channel, dyn_channels[idx], sizeof(g_pending_select_channel) - 1);
+    g_pending_select_channel[sizeof(g_pending_select_channel) - 1] = '\0';
+    ch_meta[idx].unread = 0;
+    if (!g_pending_channel_select_timer) {
+        g_pending_channel_select_timer = lv_timer_create(
+            channel_select_timer_cb, CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS, nullptr);
+    }
+}
+
+static void update_channel_meta(int idx, const char* text, uint32_t timestamp,
+                                uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
     // Truncate preview to fit the display: ~25 chars + "..." works in all row layouts
+    char command_preview[72];
     const char* src = text ? text : "";
+    if (chat_screen_message_is_command(txt_type)) {
+        snprintf(command_preview, sizeof(command_preview), "[CLI] %s", src);
+        src = command_preview;
+    }
     size_t slen = strlen(src);
     constexpr size_t MAX_PREVIEW_CHARS = 25;
     if (slen > MAX_PREVIEW_CHARS) {
@@ -744,7 +1035,8 @@ static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
 }
 
 static void append_channel_message(int idx, const char* sender, const char* text,
-                                   uint32_t timestamp, bool is_self)
+                                   uint32_t timestamp, bool is_self,
+                                   uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
     ensure_channel_buffer(idx);
@@ -771,14 +1063,16 @@ static void append_channel_message(int idx, const char* sender, const char* text
     strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
     msg.text[sizeof(msg.text) - 1] = '\0';
     msg.timestamp = timestamp;
+    msg.txt_type = chat_screen_normalize_text_type(txt_type);
     msg.is_self = is_self;
     msg.acked = false;
 
-    update_channel_meta(idx, msg.text, timestamp);
+    update_channel_meta(idx, msg.text, timestamp, msg.txt_type);
 }
 
 static bool loaded_message_exists(int idx, const char* sender, const char* text,
-                                  uint32_t timestamp, bool is_self)
+                                  uint32_t timestamp, bool is_self,
+                                  uint8_t txt_type)
 {
     if (idx < 0 || idx >= MAX_CHANNELS || !has_channel_buffer(idx)) return false;
     const char* safe_sender = sender ? sender : "";
@@ -789,6 +1083,7 @@ static bool loaded_message_exists(int idx, const char* sender, const char* text,
             ? msg.timestamp - timestamp
             : timestamp - msg.timestamp;
         if (msg.is_self == is_self && delta <= 2 &&
+            msg.txt_type == chat_screen_normalize_text_type(txt_type) &&
             strcmp(msg.sender, safe_sender) == 0 &&
             strcmp(msg.text, safe_text) == 0) {
             return true;
@@ -798,11 +1093,13 @@ static bool loaded_message_exists(int idx, const char* sender, const char* text,
 }
 
 static bool append_loaded_channel_message(int idx, const char* sender, const char* text,
-                                          uint32_t timestamp, bool is_self, bool acked)
+                                          uint32_t timestamp, bool is_self, bool acked,
+                                          uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return false;
     ensure_channel_buffer(idx);
-    if (loaded_message_exists(idx, sender, text, timestamp, is_self)) {
+    txt_type = chat_screen_normalize_text_type(txt_type);
+    if (loaded_message_exists(idx, sender, text, timestamp, is_self, txt_type)) {
         if (acked && has_channel_buffer(idx)) {
             for (uint16_t i = 0; i < ch_msg_count[idx]; i++) {
                 ChannelMessage& msg = ch_msgs[idx][i];
@@ -810,6 +1107,7 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
                     ? msg.timestamp - timestamp
                     : timestamp - msg.timestamp;
                 if (msg.is_self == is_self && delta <= 2 &&
+                    msg.txt_type == txt_type &&
                     strcmp(msg.sender, sender ? sender : "") == 0 &&
                     strcmp(msg.text, text ? text : "") == 0) {
                     msg.acked = true;
@@ -819,7 +1117,7 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
         return false;
     }
 
-    append_channel_message(idx, sender, text, timestamp, is_self);
+    append_channel_message(idx, sender, text, timestamp, is_self, txt_type);
     if (acked && has_channel_buffer(idx) && ch_msg_count[idx] > 0) {
         ch_msgs[idx][ch_msg_count[idx] - 1].acked = true;
     }
@@ -856,6 +1154,7 @@ static void chat_load_companion_messages()
     int n = sigurdos::mesh::messageStoreLoadRecent(nullptr, recent, kRecentCap);
     for (int i = 0; i < n; i++) {
         const sigurdos::mesh::StoredMessage& msg = recent[i];
+        if (!chat_conversation_visible_for_current_filter(msg.conversation)) continue;
         int idx = ensure_loaded_conversation(msg.conversation);
         if (idx < 0 || idx >= MAX_CHANNELS) continue;
 
@@ -869,7 +1168,38 @@ static void chat_load_companion_messages()
             }
         }
         append_loaded_channel_message(idx, msg.sender, text, msg.timestamp,
-                                      msg.is_self, msg.acked);
+                                      msg.is_self, msg.acked, msg.txt_type);
+    }
+    heap_caps_free(recent);
+}
+
+static void chat_load_companion_messages_for_conversation(const char* conversation, int idx)
+{
+    if (!conversation || !conversation[0] || idx < 0 || idx >= MAX_CHANNELS) return;
+
+    constexpr int kRecentCap = 64;
+    const size_t bytes = sizeof(sigurdos::mesh::StoredMessage) * kRecentCap;
+    sigurdos::mesh::StoredMessage* recent =
+        (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!recent) {
+        recent = (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!recent) return;
+
+    int n = sigurdos::mesh::messageStoreLoadRecent(conversation, recent, kRecentCap);
+    for (int i = 0; i < n; i++) {
+        const sigurdos::mesh::StoredMessage& msg = recent[i];
+        const char* text = msg.text;
+        char prefix[40];
+        if (msg.is_channel && !msg.is_self && msg.sender[0]) {
+            snprintf(prefix, sizeof(prefix), "%s: ", msg.sender);
+            size_t plen = strnlen(prefix, sizeof(prefix));
+            if (strncmp(msg.text, prefix, plen) == 0) {
+                text = msg.text + plen;
+            }
+        }
+        append_loaded_channel_message(idx, msg.sender, text, msg.timestamp,
+                                      msg.is_self, msg.acked, msg.txt_type);
     }
     heap_caps_free(recent);
 }
@@ -889,8 +1219,8 @@ static lv_obj_t* make_chat_list_screen()
     lv_obj_set_style_border_width(top, 0, 0);
 
     ch_back_btn = lv_btn_create(top);
-    lv_obj_set_size(ch_back_btn, 24, LIST_BAR_H - 4);
-    lv_obj_align(ch_back_btn, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_set_size(ch_back_btn, 38, LIST_BAR_H - 2);
+    lv_obj_align(ch_back_btn, LV_ALIGN_LEFT_MID, 1, 0);
     apply_topbar_icon_btn(ch_back_btn);
     if (can_go_back()) {
         lv_obj_add_event_cb(ch_back_btn, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
@@ -927,6 +1257,8 @@ static lv_obj_t* make_chat_list_screen()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+
+    add_topbar_status_indicators(top, -76);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(s);
@@ -978,10 +1310,14 @@ static lv_obj_t* make_chat_list_screen()
 // ════════════════════════════════════════════════════
 static void show_channel_list(lv_scr_load_anim_t anim)
 {
+    const bool from_messaging_view = msg_list && lv_obj_is_valid(msg_list);
+
+    detach_chat_focus_objects();
     // Null messaging-view pointers — they're invalid once we leave
     scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
     ch_list = ch_back_btn = ch_add_btn = nullptr;
     ch_focus = 0;
+    g_channel_transition_pending = false;
 
     refresh_channels();
     ch_list_selected = 0;
@@ -1027,7 +1363,11 @@ static void show_channel_list(lv_scr_load_anim_t anim)
         show_add_channel_options(scr);
     }, LV_EVENT_CLICKED, nullptr);
 
-    lv_scr_load_anim(s, anim, 200, 0, true);
+    if (from_messaging_view) {
+        lv_scr_load_anim(s, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    } else {
+        lv_scr_load_anim(s, anim, CHAT_SCREEN_LIST_LOAD_ANIM_MS, 0, true);
+    }
 }
 
 // ════════════════════════════════════════════════════
@@ -1228,8 +1568,8 @@ static void create_top_bar()
 
     // ← back button → return to channel list
     lv_obj_t* back = lv_btn_create(top_bar);
-    lv_obj_set_size(back, 24, TOP_H - 4);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_set_size(back, 38, TOP_H - 2);
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 1, 0);
     apply_topbar_icon_btn(back);
     lv_obj_t* bl = lv_label_create(back);
     lv_label_set_text(bl, LV_SYMBOL_LEFT);
@@ -1238,14 +1578,14 @@ static void create_top_bar()
     lv_obj_center(bl);
     disable_scroll(bl);
     lv_obj_add_event_cb(back, [](lv_event_t*) {
-        show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        return_from_message_view();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
-    int ribbon_w = CONTENT_W - 28 - 44 - 28; // back button + margins + time + search btn
+    int ribbon_w = CONTENT_W - 42 - 44 - 28 - 44; // back + time + search + status cluster
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
-    lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 42, 0);
     lv_obj_set_style_bg_color(channel_ribbon, lv_color_hex(BG_SECONDARY), 0);
     lv_obj_set_style_bg_opa(channel_ribbon, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(channel_ribbon, 0, 0);
@@ -1278,10 +1618,12 @@ static void create_top_bar()
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
+    add_topbar_status_indicators(top_bar, -74);
+
     // Search button (left of time label)
     lv_obj_t* search_btn = lv_btn_create(top_bar);
     lv_obj_set_size(search_btn, 24, TOP_H - 4);
-    lv_obj_align(search_btn, LV_ALIGN_RIGHT_MID, -28, 0);
+    lv_obj_align(search_btn, LV_ALIGN_RIGHT_MID, -42, 0);
     lv_obj_set_style_bg_color(search_btn, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_border_width(search_btn, 0, 0);
     lv_obj_set_style_radius(search_btn, 0, 0);
@@ -1316,10 +1658,141 @@ static void create_top_bar()
 // ════════════════════════════════════════════════════
 // Message bubble — Discord style
 // ════════════════════════════════════════════════════
+
+static void focus_chat_input()
+{
+    if (input_field && lv_obj_is_valid(input_field) && lv_group_get_default()) {
+        lv_group_focus_obj(input_field);
+    }
+}
+
+static void prefill_public_reply(const MessageActionCtx* ctx)
+{
+    if (!ctx || !input_field || !lv_obj_is_valid(input_field)) return;
+
+    char reply[MAX_MSG_BYTES + 1];
+    chat_screen_format_public_reply_prefix(ctx->sender, reply, sizeof(reply));
+    lv_textarea_set_text(input_field, reply);
+    focus_chat_input();
+}
+
+static void close_message_action_toast(lv_obj_t* obj)
+{
+    if (!obj) return;
+    lv_obj_t* dlg = lv_obj_get_parent(obj);
+    if (dlg) lv_obj_del_async(dlg);
+}
+
+static void show_message_action_toast(const MessageActionCtx* source)
+{
+    if (!source || !source->sender[0]) return;
+    if (!input_field || !lv_obj_is_valid(input_field)) return;
+
+    auto* ctx = new(std::nothrow) MessageActionCtx(*source);
+    if (!ctx) return;
+
+    lv_obj_t* parent = lv_scr_act();
+    auto dlg_sz = dialog_size(236, 116);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    if (!dlg) {
+        delete ctx;
+        return;
+    }
+
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+    disable_scroll(dlg);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (MessageActionCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, ctx);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    char title_buf[48];
+    snprintf(title_buf, sizeof(title_buf), "%s", ctx->sender);
+    lv_label_set_text(title, title_buf);
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t* preview = lv_label_create(dlg);
+    char preview_buf[54];
+    const size_t src_len = strnlen(ctx->text, sizeof(ctx->text));
+    constexpr size_t preview_max = 42;
+    if (src_len > preview_max) {
+        const size_t trunc = sigurdos::utf8_truncate_bytes(ctx->text, preview_max);
+        memcpy(preview_buf, ctx->text, trunc);
+        memcpy(preview_buf + trunc, "...", 4);
+    } else {
+        memcpy(preview_buf, ctx->text, src_len + 1);
+    }
+    lv_label_set_text(preview, preview_buf);
+    lv_label_set_long_mode(preview, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(preview, dlg_sz.w - 18);
+    lv_obj_set_style_text_color(preview, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(preview, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(preview, LV_ALIGN_TOP_MID, 0, 20);
+
+    sigurdos::mesh::ContactInfo contact_info;
+    const bool contact_known = sigurdos::mesh::getContactByName(ctx->sender, &contact_info);
+    lv_group_t* g = lv_group_get_default();
+
+    lv_obj_t* reply_btn = lv_btn_create(dlg);
+    lv_obj_set_size(reply_btn, contact_known ? 92 : 132, 28);
+    lv_obj_align(reply_btn, contact_known ? LV_ALIGN_BOTTOM_LEFT : LV_ALIGN_BOTTOM_MID,
+                 contact_known ? 8 : 0, -4);
+    lv_obj_set_style_bg_color(reply_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(reply_btn, 0, 0);
+    lv_obj_set_style_border_width(reply_btn, 0, 0);
+    lv_obj_t* reply_lbl = lv_label_create(reply_btn);
+    lv_label_set_text(reply_lbl, "Reply");
+    lv_obj_set_style_text_font(reply_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_style_text_color(reply_lbl, lv_color_hex(0xffffff), 0);
+    lv_obj_center(reply_lbl);
+    lv_obj_add_event_cb(reply_btn, [](lv_event_t* e) {
+        auto* c = (MessageActionCtx*)lv_event_get_user_data(e);
+        prefill_public_reply(c);
+        close_message_action_toast((lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, ctx);
+    if (g) lv_group_add_obj(g, reply_btn);
+
+    if (contact_known) {
+        lv_obj_t* dm_btn = lv_btn_create(dlg);
+        lv_obj_set_size(dm_btn, 92, 28);
+        lv_obj_align(dm_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -4);
+        lv_obj_set_style_bg_color(dm_btn, lv_color_hex(BG_INPUT), 0);
+        lv_obj_set_style_radius(dm_btn, 0, 0);
+        lv_obj_set_style_border_width(dm_btn, 0, 0);
+        lv_obj_t* dm_lbl = lv_label_create(dm_btn);
+        lv_label_set_text(dm_lbl, "DM");
+        lv_obj_set_style_text_font(dm_lbl, emoji_wrapped_montserrat_10, 0);
+        lv_obj_set_style_text_color(dm_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_center(dm_lbl);
+        lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+            auto* c = (MessageActionCtx*)lv_event_get_user_data(e);
+            char name[sizeof(c->sender)];
+            strncpy(name, c->sender, sizeof(name) - 1);
+            name[sizeof(name) - 1] = '\0';
+            close_message_action_toast((lv_obj_t*)lv_event_get_target(e));
+            chat_screen_open_dm(name);
+        }, LV_EVENT_CLICKED, ctx);
+        if (g) lv_group_add_obj(g, dm_btn);
+    }
+
+    if (g) lv_group_focus_obj(reply_btn);
+}
+
 static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
                                 const char* text, uint32_t timestamp,
-                                bool is_self, bool acked)
+                                bool is_self, bool acked, uint8_t txt_type)
 {
+    const bool is_command = chat_screen_message_is_command(txt_type);
     lv_obj_t* container = lv_obj_create(parent);
     lv_obj_set_width(container, LV_PCT(100));
     lv_obj_set_height(container, LV_SIZE_CONTENT);
@@ -1335,15 +1808,22 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     }
 
     lv_obj_t* bubble = lv_obj_create(container);
-    lv_obj_set_width(bubble, LV_PCT(78));
+    lv_obj_set_width(bubble, is_command ? LV_PCT(92) : LV_PCT(78));
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(bubble, 0, 0);
     lv_obj_set_style_pad_all(bubble, 6, 0);
-    lv_obj_set_style_border_width(bubble, 0, 0);
+    lv_obj_set_style_border_width(bubble, is_command ? 1 : 0, 0);
+    if (is_command) {
+        lv_obj_set_style_border_color(bubble, lv_color_hex(ACCENT_ORANGE), 0);
+        lv_obj_set_style_border_opa(bubble, LV_OPA_COVER, 0);
+    }
     lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_COLUMN);
     disable_scroll(bubble);
 
-    if (is_self) {
+    if (is_command) {
+        lv_obj_set_style_bg_color(bubble, lv_color_hex(BG_TERTIARY), 0);
+        lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
+    } else if (is_self) {
         lv_obj_set_style_bg_color(bubble, lv_color_hex(ACCENT), 0);
         lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
     } else {
@@ -1364,9 +1844,16 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t* name = lv_label_create(header);
-    lv_label_set_text(name, sender);
+    char sender_label[48];
+    if (is_command) {
+        snprintf(sender_label, sizeof(sender_label), "> CLI %s", sender ? sender : "");
+        lv_label_set_text(name, sender_label);
+    } else {
+        lv_label_set_text(name, sender);
+    }
     lv_obj_set_style_text_color(name,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT), 0);
+        is_command ? lv_color_hex(ACCENT_ORANGE) :
+        (is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT)), 0);
     lv_obj_set_style_text_font(name, emoji_wrapped_montserrat_10, 0);
 
     char time_buf[10];
@@ -1386,10 +1873,34 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_t* msg_text = lv_label_create(bubble);
     lv_label_set_text(msg_text, text);
     lv_obj_set_style_text_color(msg_text,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+        is_command ? lv_color_hex(ACCENT_YELLOW) :
+        (is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY)), 0);
     lv_obj_set_style_text_font(msg_text, emoji_wrapped_montserrat_12, 0);
     lv_label_set_long_mode(msg_text, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msg_text, LV_PCT(100));
+
+    if (active_channel >= 0 && active_channel < dyn_count &&
+        !is_command &&
+        chat_screen_public_message_actions_available(dyn_channels[active_channel],
+                                                     sender, is_self)) {
+        lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
+        auto* ctx = new(std::nothrow) MessageActionCtx{};
+        if (ctx) {
+            strncpy(ctx->sender, sender ? sender : "", sizeof(ctx->sender) - 1);
+            ctx->sender[sizeof(ctx->sender) - 1] = '\0';
+            strncpy(ctx->text, text ? text : "", sizeof(ctx->text) - 1);
+            ctx->text[sizeof(ctx->text) - 1] = '\0';
+            lv_obj_add_event_cb(container, [](lv_event_t* e) {
+                auto* c = (MessageActionCtx*)lv_event_get_user_data(e);
+                if (!c) return;
+                if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) {
+                    show_message_action_toast(c);
+                } else if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+                    delete c;
+                }
+            }, LV_EVENT_ALL, ctx);
+        }
+    }
 
     return container;
 }
@@ -1441,7 +1952,8 @@ static void render_active_messages()
                 if (idx < 0 || idx >= ch_msg_count[active_channel]) continue;
                 ChannelMessage& msg = ch_msgs[active_channel][idx];
                 lv_obj_t* bubble = create_bubble(msg_list, msg.sender, msg.text,
-                                                  msg.timestamp, msg.is_self, msg.acked);
+                                                  msg.timestamp, msg.is_self, msg.acked,
+                                                  msg.txt_type);
                 // Highlight the current search match
                 if (i == search_current_match && bubble) {
                     lv_obj_t* first_child = lv_obj_get_child(bubble, 0);
@@ -1468,8 +1980,22 @@ static void render_active_messages()
         return;
     }
 
-    // ── Normal mode: render all messages ──
-    for (uint16_t i = 0; i < ch_msg_count[active_channel]; i++) {
+    // ── Normal mode: render the recent tail. Public gets a tighter first-open
+    // budget because every incoming public bubble also owns action callbacks.
+    const uint16_t total = ch_msg_count[active_channel];
+    const uint16_t render_limit =
+        chat_screen_render_limit_for_channel(dyn_channels[active_channel]);
+    const uint16_t first = chat_screen_visible_message_start(total, render_limit);
+    if (first > 0) {
+        lv_obj_t* note = lv_label_create(msg_list);
+        char note_buf[48];
+        snprintf(note_buf, sizeof(note_buf), "Showing latest %u of %u",
+                 (unsigned)(total - first), (unsigned)total);
+        lv_label_set_text(note, note_buf);
+        lv_obj_set_style_text_color(note, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(note, emoji_wrapped_montserrat_10, 0);
+    }
+    for (uint16_t i = first; i < total; i++) {
         ChannelMessage& msg = ch_msgs[active_channel][i];
 
         // Check ACK status for self-sent DM messages
@@ -1482,7 +2008,8 @@ static void render_active_messages()
             }
         }
 
-        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self, msg.acked);
+        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self, msg.acked,
+                      msg.txt_type);
     }
 
     uint32_t count = lv_obj_get_child_cnt(msg_list);
@@ -1517,10 +2044,96 @@ static const char* emoji_picker_items[] = {
 };
 static constexpr int EMOJI_COUNT = sizeof(emoji_picker_items) / sizeof(emoji_picker_items[0]);
 
+struct EmojiPickerCtx {
+    lv_obj_t* dlg;
+    lv_obj_t* grid;
+    lv_obj_t* page_label;
+    lv_obj_t* target;
+    int page;
+};
+
+static lv_obj_t* emoji_picker_dialog = nullptr;
+
+static void close_emoji_picker(bool restore_focus)
+{
+    lv_obj_t* target = input_field;
+    if (emoji_picker_dialog && lv_obj_is_valid(emoji_picker_dialog)) {
+        lv_obj_t* closing = emoji_picker_dialog;
+        emoji_picker_dialog = nullptr;
+        lv_obj_del_async(closing);
+    } else {
+        emoji_picker_dialog = nullptr;
+    }
+
+    if (restore_focus && target && lv_obj_is_valid(target) && lv_group_get_default()) {
+        lv_group_focus_obj(target);
+    }
+}
+
+static void render_emoji_picker_page(EmojiPickerCtx* ctx)
+{
+    if (!ctx || !ctx->grid || !lv_obj_is_valid(ctx->grid)) return;
+
+    const int pages = chat_screen_emoji_page_count(EMOJI_COUNT);
+    if (pages <= 0) return;
+    if (ctx->page < 0) ctx->page = 0;
+    if (ctx->page >= pages) ctx->page = pages - 1;
+
+    if (ctx->page_label && lv_obj_is_valid(ctx->page_label)) {
+        char page_buf[20];
+        snprintf(page_buf, sizeof(page_buf), "%d/%d", ctx->page + 1, pages);
+        lv_label_set_text(ctx->page_label, page_buf);
+    }
+
+    lv_obj_clean(ctx->grid);
+
+    lv_group_t* g = lv_group_get_default();
+    const int start = chat_screen_emoji_page_start(ctx->page, EMOJI_COUNT);
+    const int end = chat_screen_emoji_page_end(ctx->page, EMOJI_COUNT);
+    for (int i = start; i < end; i++) {
+        lv_obj_t* btn = lv_btn_create(ctx->grid);
+        lv_obj_set_size(btn, 38, 34);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(BG_TERTIARY), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, emoji_picker_items[i]);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_16, 0);
+        lv_obj_center(lbl);
+
+        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            const char* em = (const char*)lv_event_get_user_data(e);
+            if (em && input_field && lv_obj_is_valid(input_field)) {
+                lv_textarea_add_text(input_field, em);
+            }
+            close_emoji_picker(true);
+        }, LV_EVENT_CLICKED, (void*)emoji_picker_items[i]);
+
+        if (g) lv_group_add_obj(g, btn);
+    }
+}
+
 static void show_emoji_picker(lv_obj_t* parent)
 {
+    if (!parent) return;
+    if (!input_field || !lv_obj_is_valid(input_field)) return;
+
+    close_emoji_picker(false);
+
     auto dlg_sz = dialog_size(296, 200);
     lv_obj_t* dlg = lv_obj_create(parent);
+    if (!dlg) return;
+
+    auto* ctx = new(std::nothrow) EmojiPickerCtx{dlg, nullptr, nullptr, input_field, 0};
+    if (!ctx) {
+        lv_obj_del_async(dlg);
+        return;
+    }
+
+    emoji_picker_dialog = dlg;
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
     lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
@@ -1528,8 +2141,15 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_radius(dlg, 0, 0);
     lv_obj_set_style_border_width(dlg, 0, 0);
     lv_obj_set_style_pad_all(dlg, 4, 0);
+    lv_obj_remove_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Close button
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        if (emoji_picker_dialog == (lv_obj_t*)lv_event_get_target(e)) {
+            emoji_picker_dialog = nullptr;
+        }
+        delete (EmojiPickerCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, (void*)ctx);
+
     lv_obj_t* close_btn = lv_btn_create(dlg);
     lv_obj_set_size(close_btn, 24, 20);
     lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -4, 4);
@@ -1542,9 +2162,8 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(close_lbl, lv_color_hex(0xffffff), 0);
     lv_obj_center(close_lbl);
-    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
-        lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
-        if (d) lv_obj_del_async(d);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t*) {
+        close_emoji_picker(true);
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* title = lv_label_create(dlg);
@@ -1553,9 +2172,44 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-    // Scrollable grid container
+    lv_obj_t* prev_btn = lv_btn_create(dlg);
+    lv_obj_set_size(prev_btn, 38, 22);
+    lv_obj_align(prev_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+    apply_pixel_btn_outline(prev_btn);
+    lv_obj_t* prev_lbl = lv_label_create(prev_btn);
+    lv_label_set_text(prev_lbl, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_font(prev_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(prev_lbl);
+    lv_obj_add_event_cb(prev_btn, [](lv_event_t* e) {
+        auto* c = (EmojiPickerCtx*)lv_event_get_user_data(e);
+        if (!c) return;
+        c->page--;
+        render_emoji_picker_page(c);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
+    ctx->page_label = lv_label_create(dlg);
+    lv_obj_set_style_text_color(ctx->page_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(ctx->page_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(ctx->page_label, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    lv_obj_t* next_btn = lv_btn_create(dlg);
+    lv_obj_set_size(next_btn, 38, 22);
+    lv_obj_align(next_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    apply_pixel_btn_outline(next_btn);
+    lv_obj_t* next_lbl = lv_label_create(next_btn);
+    lv_label_set_text(next_lbl, LV_SYMBOL_RIGHT);
+    lv_obj_set_style_text_font(next_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(next_lbl);
+    lv_obj_add_event_cb(next_btn, [](lv_event_t* e) {
+        auto* c = (EmojiPickerCtx*)lv_event_get_user_data(e);
+        if (!c) return;
+        c->page++;
+        render_emoji_picker_page(c);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
     lv_obj_t* grid = lv_obj_create(dlg);
-    lv_obj_set_size(grid, dlg_sz.w - 8, dlg_sz.h - 32);
+    ctx->grid = grid;
+    lv_obj_set_size(grid, dlg_sz.w - 8, dlg_sz.h - 60);
     lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(grid, 0, 0);
@@ -1567,31 +2221,13 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_remove_flag(grid, (lv_obj_flag_t)(
         LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN));
 
-    for (int i = 0; i < EMOJI_COUNT; i++) {
-        lv_obj_t* btn = lv_btn_create(grid);
-        lv_obj_set_size(btn, 28, 26);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(BG_TERTIARY), 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(btn, 2, 0);
-        lv_obj_set_style_border_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, emoji_picker_items[i]);
-        lv_obj_set_style_text_font(lbl, &emoji_font, 0);
-        lv_obj_center(lbl);
-
-        const char* emoji_text = emoji_picker_items[i];
-        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
-            const char* em = (const char*)lv_event_get_user_data(e);
-            if (input_field) {
-                lv_textarea_add_text(input_field, em);
-            }
-            lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
-            if (d) d = lv_obj_get_parent(d);
-            if (d) lv_obj_del_async(d);
-        }, LV_EVENT_CLICKED, (void*)emoji_text);
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, prev_btn);
+        lv_group_add_obj(g, next_btn);
+        lv_group_add_obj(g, close_btn);
     }
+    render_emoji_picker_page(ctx);
 }
 
 // ════════════════════════════════════════════════════
@@ -1599,18 +2235,27 @@ static void show_emoji_picker(lv_obj_t* parent)
 // ════════════════════════════════════════════════════
 static void do_send()
 {
+    if (current_screen() != Screen::Chat) return;
+    if (!input_field || !lv_obj_is_valid(input_field)) return;
+    if (!msg_list || !lv_obj_is_valid(msg_list)) return;
+    if (active_channel < 0 || active_channel >= dyn_count || active_channel >= MAX_CHANNELS) return;
+    if (!dyn_channels[active_channel][0]) return;
+
     const char* raw = lv_textarea_get_text(input_field);
     if (!raw || !raw[0]) return;
 
-    // Input is now enforced to ≤ 149 bytes at the UI level (see byte-counter
+    // Input is enforced to the current chat's byte limit at the UI level (see byte-counter
     // handler in create_input_bar), so no truncation is needed before sending.
     char text[150];
+    const int limit = message_limit_for_channel(dyn_channels[active_channel]);
     size_t len = strnlen(raw, sizeof(text) - 1);
+    if (len > (size_t)limit) len = sigurdos::utf8_truncate_bytes(raw, (size_t)limit);
     memcpy(text, raw, len);
     text[len] = '\0';
 
     const char* chan = dyn_channels[active_channel];
-    bool is_dm = (strncmp(chan, "DM: ", 4) == 0);
+    const bool is_dm = (strncmp(chan, "DM: ", 4) == 0);
+    const bool is_room = chat_screen_is_room_name(chan);
     const char* dest = is_dm ? (chan + 4) : chan;
 
     const ChatPrivateScopeState* scope = get_chat_private_scope(chan);
@@ -1622,6 +2267,12 @@ static void do_send()
         uint32_t send_ts = sigurdos::mesh::sendMessageWithScopeKey(dest, text, scope_key);
         sent = (send_ts != 0);
         if (sent) ts = send_ts;  // use the timestamp the mesh layer tracked the ACK with
+    } else if (is_room) {
+        const char* room_name = chat_screen_room_contact_name(chan);
+        uint32_t send_ts =
+            sigurdos::mesh::sendRoomMessage(room_name, sigurdos::mesh::PUBLIC_CHANNEL_NAME, text);
+        sent = (send_ts != 0);
+        if (sent) ts = send_ts;
     } else {
         sent = sigurdos::mesh::sendChannelMessageWithScopeKey(dest, text, scope_key);
     }
@@ -1634,7 +2285,9 @@ static void do_send()
     } else {
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
     }
-    append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts, true);
+    append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts,
+                           true, CHAT_SCREEN_TEXT_PLAIN);
+    chat_save_messages();
     mark_channel_used(sent_channel);
     render_active_messages();
     lv_textarea_set_text(input_field, "");
@@ -1680,7 +2333,9 @@ static void create_input_bar()
     lv_obj_set_style_pad_all(input_field, 4, 0);
     lv_textarea_set_one_line(input_field, true);
     lv_textarea_set_placeholder_text(input_field, "Message #channel");
-    lv_textarea_set_max_length(input_field, MAX_MSG_BYTES);
+    const int input_limit = message_limit_for_channel(
+        (active_channel >= 0 && active_channel < dyn_count) ? dyn_channels[active_channel] : "");
+    lv_textarea_set_max_length(input_field, input_limit);
     lv_obj_remove_flag(input_field, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_set_style_outline_width(input_field, 0, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_width(input_field, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
@@ -1689,7 +2344,11 @@ static void create_input_bar()
     // Byte counter: small overlay showing remaining bytes (mesh limit = 149)
     lv_obj_set_style_pad_right(input_field, 28, 0);
     byte_counter = lv_label_create(input_field);
-    lv_label_set_text(byte_counter, "149");
+    {
+        char cb[8];
+        snprintf(cb, sizeof(cb), "%d", input_limit);
+        lv_label_set_text(byte_counter, cb);
+    }
     lv_obj_set_style_text_font(byte_counter, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(byte_counter, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_align(byte_counter, LV_ALIGN_RIGHT_MID, -2, 0);
@@ -1709,8 +2368,9 @@ static void create_input_bar()
         lv_obj_center(el);
     }
     lv_obj_add_event_cb(emoji_btn, [](lv_event_t*) {
+        if (!input_bar || !lv_obj_is_valid(input_bar)) return;
         lv_obj_t* scr = lv_obj_get_screen(input_bar);
-        if (scr) show_emoji_picker(scr);
+        if (scr && input_field && lv_obj_is_valid(input_field)) show_emoji_picker(scr);
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* send_btn = lv_btn_create(input_bar);
@@ -1736,9 +2396,10 @@ static void create_input_bar()
         } else if (code == LV_EVENT_VALUE_CHANGED) {
             const char* raw = lv_textarea_get_text(input_field);
             size_t byte_len = strlen(raw);
-            if (byte_len > MAX_MSG_BYTES) {
-                // Truncate to 149 bytes (UTF-8 safe)
-                size_t trunc_len = sigurdos::utf8_truncate_bytes(raw, MAX_MSG_BYTES);
+            const int limit = message_limit_for_channel(
+                (active_channel >= 0 && active_channel < dyn_count) ? dyn_channels[active_channel] : "");
+            if (byte_len > (size_t)limit) {
+                size_t trunc_len = sigurdos::utf8_truncate_bytes(raw, (size_t)limit);
                 char buf[MAX_MSG_BYTES + 1];
                 memcpy(buf, raw, trunc_len);
                 buf[trunc_len] = '\0';
@@ -1747,7 +2408,7 @@ static void create_input_bar()
             } else {
                 // Update remaining-bytes counter
                 if (byte_counter) {
-                    int remaining = (int)MAX_MSG_BYTES - (int)byte_len;
+                    int remaining = limit - (int)byte_len;
                     char cb[8];
                     snprintf(cb, sizeof(cb), "%d", remaining);
                     lv_label_set_text(byte_counter, cb);
@@ -1798,7 +2459,13 @@ static void create_bottom_bar()
 // ════════════════════════════════════════════════════
 static void open_channel_messaging(int idx)
 {
+    if (idx < 0 || idx >= dyn_count || idx >= MAX_CHANNELS) return;
     active_channel = idx;
+    chat_load_companion_messages_for_conversation(dyn_channels[idx], idx);
+
+    detach_chat_focus_objects();
+    ch_list = ch_back_btn = ch_add_btn = nullptr;
+    ch_focus = 0;
 
     scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
@@ -1811,7 +2478,10 @@ static void open_channel_messaging(int idx)
     // so chat_screen_add_msg() doesn't dereference freed memory.
     // NOTE: ch_list is NOT nulled here — show_channel_list() may have
     // already set it to a new list before this delete callback fires.
-    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        lv_obj_t* deleted = (lv_obj_t*)lv_event_get_target(e);
+        if (deleted != scr) return;
+        emoji_picker_dialog = nullptr;
         scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
         search_bar = nullptr;
         search_input = nullptr;
@@ -1830,17 +2500,6 @@ static void open_channel_messaging(int idx)
 
     create_top_bar();
 
-    // For DM channels, show the contact's per-node signal bars in the top bar
-    if (idx >= 0 && idx < dyn_count && dyn_channels[idx] &&
-        strncmp(dyn_channels[idx], "DM: ", 4) == 0) {
-        const char* contact_name = dyn_channels[idx] + 4;
-        sigurdos::mesh::ContactInfo contact_info{};
-        if (sigurdos::mesh::getContactByName(contact_name, &contact_info)) {
-            lv_obj_t* sig = create_signal_dots(top_bar, contact_info.rssi);
-            lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -30, 0);
-        }
-    }
-
     create_message_list();
     render_active_messages();
     create_input_bar();
@@ -1852,7 +2511,7 @@ static void open_channel_messaging(int idx)
         lv_group_focus_obj(input_field);
     }
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 static void refresh_chat_list_view(lv_obj_t* scr) {
@@ -2118,7 +2777,7 @@ static void channel_menu_action_cb(lv_event_t* e) {
     if (action == ChannelAction::LeaveChannel) {
         channel_menu_perform(action, channel, idx);
         clear_chat_private_scope(channel);
-        show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
         return;
     }
 }
@@ -2398,7 +3057,7 @@ static void show_scope_picker() {
 }
 
 void chat_screen_set_filter(int mode) {
-    chat_filter_mode = mode;
+    chat_filter_mode = (mode >= 1 && mode <= 2) ? mode : 1;
 }
 
 bool chat_screen_overlay_active() {
@@ -2412,45 +3071,134 @@ void chat_screen_show()
     // open_channel_messaging() will create the messaging screen instead.
     if (g_skip_channel_list) {
         g_skip_channel_list = false;
-        // Reset unread badge counter when the user opens chat
-        sigurdos::mesh::resetUnreadMessageCount();
+        reset_unread_for_current_filter();
         return;
     }
-    show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
-    // Reset unread badge counter when the user opens chat
-    sigurdos::mesh::resetUnreadMessageCount();
+    g_direct_open_returns_to_previous = false;
+    request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    reset_unread_for_current_filter();
 }
 
 void chat_screen_open_dm(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) return;
+    char contact_copy[MAX_NAME_LEN + 1];
+    strncpy(contact_copy, contact_name, sizeof(contact_copy) - 1);
+    contact_copy[sizeof(contact_copy) - 1] = '\0';
 
-    // Signal chat_screen_show() to skip the channel-list screen
-    // so we go directly to the messaging view without a wasteful
-    // intermediate lv_scr_load_anim that causes a crash when
-    // open_channel_messaging() triggers a second screen load.
-    g_skip_channel_list = true;
-    navigate_to(Screen::Chat);
+    clear_pending_channel_timers();
+    chat_screen_set_filter(2);
+    sigurdos::mesh::clearActiveRoomServer();
+    const bool opened_from_chat = (current_screen() == Screen::Chat);
+
     refresh_channels();
 
     // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
     char dm_name[CHANNEL_NAME_CAP];
-    snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
+    snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_copy);
 
-    int idx = find_channel_idx(dm_name);
-    if (idx < 0 && dyn_count < MAX_CHANNELS) {
+    int idx = ensure_synthetic_channel_slot(dm_name);
+
+    const bool target_ready = (idx >= 0 && idx < MAX_CHANNELS);
+    // Signal chat_screen_show() to skip the channel-list screen only when
+    // navigation will actually dispatch Chat and the target conversation is
+    // ready. navigate_to(Chat) is a no-op when already on Chat; leaving this
+    // flag set there makes a later Chat entry silently skip its list.
+    g_skip_channel_list =
+        chat_screen_direct_open_should_skip_channel_list(opened_from_chat, target_ready);
+    g_direct_open_returns_to_previous = g_skip_channel_list;
+    if (!opened_from_chat) navigate_to(Screen::Chat);
+
+    if (idx >= 0 && idx < MAX_CHANNELS) {
+        request_open_channel_messaging(idx);
+    }
+}
+
+void chat_screen_open_channel(const char* channel_name)
+{
+    if (!channel_name || !channel_name[0]) return;
+    char channel_copy[CHANNEL_NAME_CAP];
+    strncpy(channel_copy, channel_name, sizeof(channel_copy) - 1);
+    channel_copy[sizeof(channel_copy) - 1] = '\0';
+
+    clear_pending_channel_timers();
+    chat_screen_set_filter(1);
+    sigurdos::mesh::clearActiveRoomServer();
+    const bool opened_from_chat = (current_screen() == Screen::Chat);
+    if (sigurdos::mesh::isPublicChannelName(channel_copy)) {
+        sigurdos::mesh::joinPublicChannel();
+    }
+
+    refresh_channels();
+
+    int idx = find_channel_idx(channel_copy);
+    if (idx < 0 && dyn_count < MAX_CHANNELS &&
+        chat_conversation_visible_for_current_filter(channel_copy)) {
         idx = dyn_count;
-        strncpy(dyn_channels[idx], dm_name, sizeof(dyn_channels[idx]) - 1);
+        strncpy(dyn_channels[idx], channel_copy, sizeof(dyn_channels[idx]) - 1);
         dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
     }
 
+    const bool target_ready = (idx >= 0 && idx < MAX_CHANNELS);
+    g_skip_channel_list =
+        chat_screen_direct_open_should_skip_channel_list(opened_from_chat, target_ready);
+    g_direct_open_returns_to_previous = g_skip_channel_list;
+    if (!opened_from_chat) navigate_to(Screen::Chat);
+
     if (idx >= 0 && idx < MAX_CHANNELS) {
-        open_channel_messaging(idx);
+        request_open_channel_messaging(idx);
     }
 }
 
-void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
+void chat_screen_open_room(const char* room_name)
+{
+    if (!room_name || !room_name[0]) return;
+    char room_copy[MAX_NAME_LEN + 1];
+    strncpy(room_copy, room_name, sizeof(room_copy) - 1);
+    room_copy[sizeof(room_copy) - 1] = '\0';
+
+    clear_pending_channel_timers();
+    chat_screen_set_filter(1);
+    sigurdos::mesh::clearActiveRoomServer();
+    const bool active_room_context_set = sigurdos::mesh::setActiveRoomServer(room_copy);
+    if (!active_room_context_set) {
+        sigurdos::mesh::mesh_v2_queue_push(
+            "System", "", "! Room context stale; opening transcript", 0, 0.0f);
+    }
+    const bool opened_from_chat = (current_screen() == Screen::Chat);
+
+    refresh_channels();
+
+    char room_channel[CHANNEL_NAME_CAP];
+    chat_screen_format_room_name(room_copy, room_channel, sizeof(room_channel));
+    if (!room_channel[0]) {
+        sigurdos::mesh::clearActiveRoomServer();
+        return;
+    }
+
+    int idx = ensure_synthetic_channel_slot(room_channel);
+
+    const bool target_ready = (idx >= 0 && idx < MAX_CHANNELS);
+    g_skip_channel_list =
+        chat_screen_direct_open_should_skip_channel_list(opened_from_chat, target_ready);
+    g_direct_open_returns_to_previous = g_skip_channel_list;
+    if (!opened_from_chat) navigate_to(Screen::Chat);
+
+    if (chat_screen_room_open_can_show_transcript(active_room_context_set, target_ready)) {
+        request_open_channel_messaging(idx);
+    } else {
+        sigurdos::mesh::clearActiveRoomServer();
+        sigurdos::mesh::mesh_v2_queue_push(
+            "System", "", "! Room open failed: chat list is full", 0, 0.0f);
+        if (opened_from_chat) {
+            request_show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        }
+    }
+}
+
+bool chat_screen_add_msg(const char* channel, const char* sender, const char* text,
+                         bool is_self, uint8_t txt_type)
 {
     uint32_t now = sigurdos::mesh::getCurrentTime();
 
@@ -2461,6 +3209,8 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
         channel = dm_buf;
     }
 
+    const bool in_current_filter = chat_conversation_visible_for_current_filter(channel);
+
     int idx = find_channel_idx(channel);
     if (idx < 0) {
         if (dyn_count < MAX_CHANNELS) {
@@ -2469,31 +3219,53 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
             dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
             dyn_count++;
         } else {
-            return;
+            return false;
         }
     }
-    if (idx >= MAX_CHANNELS) return;
+    if (idx >= MAX_CHANNELS) return false;
 
-    append_channel_message(idx, sender, text, now, is_self);
+    append_channel_message(idx, sender, text, now, is_self, txt_type);
+    if (is_self) {
+        chat_save_messages();
+    } else {
+        schedule_chat_save_messages();
+    }
 
-    bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
+    bool visible = msg_list && lv_obj_is_valid(msg_list) &&
+                   idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
-    if (!visible) return;
+    if (!visible) {
+        if (ch_list && lv_obj_is_valid(ch_list) && current_screen() == Screen::Chat) {
+            refresh_chat_list_view(lv_scr_act());
+        }
+        return false;
+    }
+
+    if (!in_current_filter) return false;
+
+    if (search_active) {
+        render_active_messages();
+        return true;
+    }
 
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
 
-    create_bubble(msg_list, sender, text, now, is_self, false);
+    create_bubble(msg_list, sender, text, now, is_self, false, txt_type);
 
-    const uint16_t cap = chat_msg_cap();
-    if (lv_obj_get_child_cnt(msg_list) > cap)
-        lv_obj_del_async(lv_obj_get_child(msg_list, 0));
+    while (!chat_screen_live_append_within_visible_budget(
+            dyn_channels[idx], lv_obj_get_child_cnt(msg_list))) {
+        lv_obj_t* first = lv_obj_get_child(msg_list, 0);
+        if (!first) break;
+        lv_obj_del(first);
+    }
 
     // Only auto-scroll if user was already at the bottom
     if (at_bottom) {
         lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
         if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
     }
+    return true;
 }
 
 // ════════════════════════════════════════════════════
@@ -2519,6 +3291,9 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
     // through to the LVGL group so its buttons stay focus-navigable.
     if (channel_menu && lv_obj_is_valid(channel_menu)) return false;
 
+    if (msg_list && !lv_obj_is_valid(msg_list)) msg_list = nullptr;
+    if (ch_list && !lv_obj_is_valid(ch_list)) ch_list = nullptr;
+
     if (msg_list) {
         // ── Search mode: Up/Down cycles through matches, Left dismisses search ──
         if (search_active && search_query[0] && search_match_count > 0) {
@@ -2539,7 +3314,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             }
             case SigurdOSTrackballEvent::Left:
                 hide_search();
-                show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+                return_from_message_view();
                 return true;
             default:
                 return true;
@@ -2561,7 +3336,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             return true;
         }
         case SigurdOSTrackballEvent::Left:
-            show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+            return_from_message_view();
             return true;
         case SigurdOSTrackballEvent::Right:
             if (input_field && lv_obj_is_valid(input_field)) {
@@ -2581,6 +3356,9 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
     }
 
     if (ch_list) {
+        if (dyn_count <= 0) return true;
+        if (ch_list_selected < 0) ch_list_selected = 0;
+        if (ch_list_selected >= dyn_count) ch_list_selected = dyn_count - 1;
         switch (event) {
         case SigurdOSTrackballEvent::Up:
         case SigurdOSTrackballEvent::Down: {
@@ -2660,8 +3438,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             } else if (ch_focus == 2 && ch_add_btn) {
                 lv_obj_send_event(ch_add_btn, LV_EVENT_CLICKED, nullptr);
             } else if (ch_list_selected >= 0 && ch_list_selected < dyn_count) {
-                ch_meta[ch_list_selected].unread = 0;
-                open_channel_messaging(ch_list_selected);
+                request_open_channel_messaging(ch_list_selected);
             }
             return true;
         default:
@@ -2690,13 +3467,14 @@ const char* chat_screen_get_active_channel_name()
 // ════════════════════════════════════════════════════
 
 static constexpr uint32_t MSG_MAGIC = 0x536d534c; // "SLmS"
-static constexpr uint8_t  MSG_VERSION = 1;
+static constexpr uint8_t  MSG_VERSION = 3;
 static constexpr size_t   MSG_MAX_CHANNELS = 16;
 static constexpr size_t   MSG_MAX_PER_CHANNEL = CHAT_MSGS_MAX;
-static constexpr size_t   MSG_RECORD_BYTES = 32 + 160 + 4 + 1;
+static constexpr size_t   MSG_RECORD_BYTES = CHAT_SCREEN_PERSIST_RECORD_BYTES;
+static constexpr size_t   MSG_RECORD_BYTES_V2 = CHAT_SCREEN_PERSIST_RECORD_BYTES_V2;
 static constexpr size_t   MSG_MAX_FILE_SIZE =
     4 + 1 + 1 +
-    MSG_MAX_CHANNELS * (32 + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES);
+    MSG_MAX_CHANNELS * (CHANNEL_NAME_CAP + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES);
 
 void chat_save_messages()
 {
@@ -2728,25 +3506,29 @@ void chat_save_messages()
         if (!has_channel_buffer(i)) continue;
         uint8_t mc = ch_msg_count[i] > cap ? (uint8_t)cap : (uint8_t)ch_msg_count[i];
 
-        uint8_t ch_buf[32] = {0};
-        memcpy(ch_buf, dyn_channels[i], strnlen(dyn_channels[i], 31));
-        f.write(ch_buf, 32);
+        uint8_t ch_buf[CHANNEL_NAME_CAP] = {0};
+        memcpy(ch_buf, dyn_channels[i], strnlen(dyn_channels[i], CHANNEL_NAME_CAP - 1));
+        f.write(ch_buf, CHANNEL_NAME_CAP);
 
         f.write(&mc, 1);
         for (int j = 0; j < mc; j++) {
             const ChannelMessage& msg = ch_msgs[i][j];
 
-            uint8_t sender_buf[32] = {0};
-            memcpy(sender_buf, msg.sender, strnlen(msg.sender, 31));
-            f.write(sender_buf, 32);
+            uint8_t sender_buf[CHAT_SCREEN_PERSIST_SENDER_BYTES] = {0};
+            memcpy(sender_buf, msg.sender,
+                   strnlen(msg.sender, CHAT_SCREEN_PERSIST_SENDER_BYTES - 1));
+            f.write(sender_buf, CHAT_SCREEN_PERSIST_SENDER_BYTES);
 
-            uint8_t text_buf[160] = {0};
-            memcpy(text_buf, msg.text, strnlen(msg.text, 159));
-            f.write(text_buf, 160);
+            uint8_t text_buf[CHAT_SCREEN_PERSIST_TEXT_BYTES] = {0};
+            memcpy(text_buf, msg.text,
+                   strnlen(msg.text, CHAT_SCREEN_PERSIST_TEXT_BYTES - 1));
+            f.write(text_buf, CHAT_SCREEN_PERSIST_TEXT_BYTES);
 
             f.write((const uint8_t*)&msg.timestamp, 4);
             uint8_t self = msg.is_self ? 1 : 0;
             f.write(&self, 1);
+            uint8_t txt_type = chat_screen_normalize_text_type(msg.txt_type);
+            f.write(&txt_type, 1);
         }
     }
     f.close();
@@ -2781,26 +3563,50 @@ void chat_load_messages()
         return;
     }
     File f = SPIFFS.open("/msgs", "r");
-    if (!f) return;
+    if (!f) {
+        chat_load_companion_messages();
+        return;
+    }
+
+    auto close_and_load_companion = [&]() {
+        f.close();
+        chat_load_companion_messages();
+    };
 
     size_t file_size = f.size();
-    if (file_size < 6 || file_size > MSG_MAX_FILE_SIZE) { f.close(); return; }
+    if (file_size < 6 || file_size > MSG_MAX_FILE_SIZE) {
+        close_and_load_companion();
+        return;
+    }
 
     uint32_t magic;
-    if (f.read((uint8_t*)&magic, 4) != 4 || magic != MSG_MAGIC) { f.close(); return; }
+    if (f.read((uint8_t*)&magic, 4) != 4 || magic != MSG_MAGIC) {
+        close_and_load_companion();
+        return;
+    }
 
     uint8_t ver;
-    if (f.read(&ver, 1) != 1 || ver != MSG_VERSION) { f.close(); return; }
+    if (f.read(&ver, 1) != 1 || (ver != MSG_VERSION && ver != 2)) {
+        close_and_load_companion();
+        return;
+    }
 
     uint8_t ch_count;
-    if (f.read(&ch_count, 1) != 1) { f.close(); return; }
-    if (ch_count > MSG_MAX_CHANNELS) { f.close(); return; }
+    if (f.read(&ch_count, 1) != 1) {
+        close_and_load_companion();
+        return;
+    }
+    if (ch_count > MSG_MAX_CHANNELS) {
+        close_and_load_companion();
+        return;
+    }
 
     for (int ci = 0; ci < ch_count; ci++) {
-        if (f.position() + 33 > file_size) break;
+        if (f.position() + CHANNEL_NAME_CAP + 1 > file_size) break;
 
-        char ch_name[33] = {0};
-        if (f.read((uint8_t*)ch_name, 32) != 32) break;
+        char ch_name[CHANNEL_NAME_CAP] = {0};
+        if (f.read((uint8_t*)ch_name, CHANNEL_NAME_CAP) != CHANNEL_NAME_CAP) break;
+        ch_name[CHANNEL_NAME_CAP - 1] = '\0';
 
         uint8_t msg_count;
         if (f.read(&msg_count, 1) != 1) break;
@@ -2808,9 +3614,11 @@ void chat_load_messages()
 
         int idx = find_channel_idx(ch_name);
 
-        // DM pseudo-channels ("DM: <name>") aren't returned by exportChannels(),
+        // Synthetic pseudo-channels aren't returned by exportChannels(),
         // so they won't be found in dyn_channels. Create them on demand.
-        if (idx < 0 && strncmp(ch_name, "DM: ", 4) == 0 && dyn_count < MAX_CHANNELS) {
+        if (idx < 0 &&
+            (chat_screen_is_dm_name(ch_name) || chat_screen_is_room_name(ch_name)) &&
+            dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
             strncpy(dyn_channels[idx], ch_name, sizeof(dyn_channels[idx]) - 1);
             dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
@@ -2820,44 +3628,53 @@ void chat_load_messages()
         // Keep loaded history bounded by the normal append-path. This preserves
         // existing cap semantics and keeps the newest messages when historical
         // files contain more entries than the configured runtime cap.
+        const size_t record_bytes = (ver >= 3) ? MSG_RECORD_BYTES : MSG_RECORD_BYTES_V2;
         for (int j = 0; j < msg_count; j++) {
-            if (f.position() + MSG_RECORD_BYTES > file_size) {
-                f.close();
+            if (f.position() + record_bytes > file_size) {
+                close_and_load_companion();
                 return;
             }
 
-            char sender[32] = {0};
-            if (f.read((uint8_t*)sender, 32) != 32) {
-                f.close();
+            char sender[CHAT_SCREEN_PERSIST_SENDER_BYTES] = {0};
+            if (f.read((uint8_t*)sender, CHAT_SCREEN_PERSIST_SENDER_BYTES) !=
+                CHAT_SCREEN_PERSIST_SENDER_BYTES) {
+                close_and_load_companion();
                 return;
             }
 
-            char text[160] = {0};
-            if (f.read((uint8_t*)text, 160) != 160) {
-                f.close();
+            char text[CHAT_SCREEN_PERSIST_TEXT_BYTES] = {0};
+            if (f.read((uint8_t*)text, CHAT_SCREEN_PERSIST_TEXT_BYTES) !=
+                CHAT_SCREEN_PERSIST_TEXT_BYTES) {
+                close_and_load_companion();
                 return;
             }
 
             uint32_t timestamp;
             if (f.read((uint8_t*)&timestamp, 4) != 4) {
-                f.close();
+                close_and_load_companion();
                 return;
             }
 
             uint8_t self;
             if (f.read(&self, 1) != 1) {
-                f.close();
+                close_and_load_companion();
                 return;
             }
 
-            sender[31] = '\0';
-            text[159] = '\0';
+            uint8_t txt_type = CHAT_SCREEN_TEXT_PLAIN;
+            if (ver >= 3 && f.read(&txt_type, 1) != 1) {
+                close_and_load_companion();
+                return;
+            }
+
+            sender[CHAT_SCREEN_PERSIST_SENDER_BYTES - 1] = '\0';
+            text[CHAT_SCREEN_PERSIST_TEXT_BYTES - 1] = '\0';
 
             if (idx < 0 || idx >= MAX_CHANNELS) {
                 continue;
             }
 
-            append_channel_message(idx, sender, text, timestamp, self != 0);
+            append_channel_message(idx, sender, text, timestamp, self != 0, txt_type);
         }
     }
     f.close();

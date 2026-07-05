@@ -428,7 +428,10 @@ bool CompanionBridge::pushContactsFull()
 }
 
 bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success,
-                                      uint8_t permission, bool is_admin)
+                                      uint8_t permission, bool is_admin,
+                                      uint32_t server_tag, uint8_t acl,
+                                      uint8_t firmware_level,
+                                      bool include_extended)
 {
     if (!_serial || !pubkey_prefix) return false;
     int i = 0;
@@ -436,13 +439,11 @@ bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success
     _out_frame[i++] = success ? (is_admin ? 1 : permission) : 0;
     std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
     i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
-    // Extended fields: server timestamp tag (4 bytes), ACL (4 bytes), firmware level (1 byte)
-    // These are always appended when the login succeeds — official clients detect them by frame length.
-    if (success) {
-        uint32_t zero = 0;
-        std::memcpy(&_out_frame[i], &zero, 4);  i += 4;  // server tag (0 = local login)
-        std::memcpy(&_out_frame[i], &zero, 4);  i += 4;  // ACL bitmask (0 = no ACL)
-        _out_frame[i++] = SIGURDOS_COMPANION_FIRMWARE_VER_CODE;  // firmware protocol level
+    if (success && include_extended) {
+        std::memcpy(&_out_frame[i], &server_tag, 4);
+        i += 4;
+        _out_frame[i++] = acl;
+        _out_frame[i++] = firmware_level;
     }
     return _serial->writeFrame(_out_frame, i) == (size_t)i;
 }
@@ -1069,10 +1070,15 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
-    if (cmd == CMD_SET_CUSTOM_VAR && len >= 3) {
-        const char* varname = (const char*)&_cmd_frame[1];
-        const char* value = varname + strlen(varname) + 1;
-        if ((size_t)(value - (const char*)_cmd_frame) >= len) {
+    if (cmd == CMD_SET_CUSTOM_VAR && len >= 4) {
+        char* varname = (char*)&_cmd_frame[1];
+        char* value = std::strchr(varname, ':');
+        if (!value) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        *value++ = '\0';
+        if (!varname[0] || !value[0]) {
             writeErrFrame(ERR_CODE_ILLEGAL_ARG);
             return true;
         }
@@ -1096,13 +1102,13 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         }
         int i = 0;
         _out_frame[i++] = RESP_CODE_ADVERT_PATH;
+        std::memcpy(&_out_frame[i], &timestamp, 4);
+        i += 4;
         _out_frame[i++] = plen;
         if (plen > 0) {
             std::memcpy(&_out_frame[i], path_buf, plen);
             i += plen;
         }
-        std::memcpy(&_out_frame[i], &timestamp, 4);
-        i += 4;
         _serial->writeFrame(_out_frame, i);
         return true;
     }

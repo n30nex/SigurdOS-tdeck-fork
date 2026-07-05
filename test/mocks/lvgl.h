@@ -111,8 +111,17 @@ typedef void (*lv_event_cb_t)(lv_event_t* e);
 #define LV_STATE_PRESSED  (1 << 3)
 
 // ── Events ───────────────────────────────────────────────
-#define LV_EVENT_CLICKED    0x07
-#define LV_EVENT_PRESSED    0x01
+typedef int lv_event_code_t;
+#define LV_EVENT_ALL             0x00
+#define LV_EVENT_PRESSED         0x01
+#define LV_EVENT_PRESSING        0x02
+#define LV_EVENT_RELEASED        0x06
+#define LV_EVENT_CLICKED         0x07
+#define LV_EVENT_LONG_PRESSED    0x08
+#define LV_EVENT_VALUE_CHANGED   0x09
+#define LV_EVENT_READY           0x0A
+#define LV_EVENT_DELETE          0x0B
+#define LV_EVENT_SCREEN_LOADED   0x0C
 
 // ── Input device types ───────────────────────────────────
 #define LV_INDEV_TYPE_POINTER  0

@@ -17,17 +17,21 @@ struct StoredContact {
     char name[SIGURDOS_CONTACT_NAME_LEN];
     uint8_t type;
     uint8_t perm;
+    uint32_t sync_since;
 };
 
 using ContactStoreReadFn = bool (*)(int index, StoredContact* out, void* ctx);
 using ContactStoreWriteFn = bool (*)(const StoredContact& contact, void* ctx);
 
 namespace detail {
-static constexpr size_t CONTACT_STORE_RECORD_SIZE =
+static constexpr size_t CONTACT_STORE_RECORD_SIZE_V1 =
     SIGURDOS_CONTACT_PUBKEY_LEN +
     SIGURDOS_CONTACT_NAME_LEN +
     1 +  // type
     1;   // perm
+static constexpr size_t CONTACT_STORE_RECORD_SIZE =
+    CONTACT_STORE_RECORD_SIZE_V1 +
+    4;   // ContactInfo::sync_since for room-server history sync
 
 // File-format magic. Read as a little-endian int32 these bytes are
 // 0xB1434753 — negative — so firmware older than the versioned format
@@ -35,7 +39,7 @@ static constexpr size_t CONTACT_STORE_RECORD_SIZE =
 // existing `n <= 0` check: a downgrade after upgrade loses saved
 // contacts but cannot ingest garbage.
 static constexpr uint8_t CONTACT_STORE_MAGIC[4] = {'S', 'G', 'C', 0xB1};
-static constexpr uint8_t CONTACT_STORE_VERSION = 1;
+static constexpr uint8_t CONTACT_STORE_VERSION = 2;
 
 void writeContactRecord(const StoredContact& contact, uint8_t* rec, size_t len);
 bool readContactRecord(StoredContact& contact, const uint8_t* rec, size_t len);

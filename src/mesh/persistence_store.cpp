@@ -3,8 +3,11 @@
 
 #include "persistence_store.h"
 
-#if defined(ESP32_PLATFORM)
+#if defined(ESP32_PLATFORM) || defined(SIGURDOS_NATIVE_PREFERENCES)
 #include <Preferences.h>
+#endif
+
+#if defined(ESP32_PLATFORM)
 #include <SPIFFS.h>
 #include <FS.h>
 #else
@@ -21,28 +24,53 @@ namespace mesh {
 
 bool channelStoreSave(int count, ChannelReadFn read, void* ctx)
 {
-    if (!read) return false;
+    if (!read || count < 0 || count > 255) return false;
 
-#if defined(ESP32_PLATFORM)
+#if defined(ESP32_PLATFORM) || defined(SIGURDOS_NATIVE_PREFERENCES)
     Preferences nvs;
     if (!nvs.begin("sigurdos", false)) return false;
-    nvs.putUChar("ch_cnt", (uint8_t)count);
+    uint8_t old_count = nvs.getUChar("ch_cnt", 0);
+    bool ok = true;
     for (int i = 0; i < count; i++) {
         char name[32] = {0};
         uint8_t secret[32] = {0};
         uint8_t hash[32] = {0};
         if (!read(i, name, sizeof(name), secret, sizeof(secret),
-                  hash, sizeof(hash), ctx)) continue;
+                  hash, sizeof(hash), ctx)) {
+            ok = false;
+            break;
+        }
         char key[16];
         snprintf(key, sizeof(key), "ch_%d_name", i);
-        nvs.putString(key, name);
+        if (nvs.putString(key, name) == 0) {
+            ok = false;
+            break;
+        }
         snprintf(key, sizeof(key), "ch_%d_sec", i);
-        nvs.putBytes(key, secret, sizeof(secret));
+        if (nvs.putBytes(key, secret, sizeof(secret)) != sizeof(secret)) {
+            ok = false;
+            break;
+        }
         snprintf(key, sizeof(key), "ch_%d_hash", i);
-        nvs.putBytes(key, hash, sizeof(hash));
+        if (nvs.putBytes(key, hash, sizeof(hash)) != sizeof(hash)) {
+            ok = false;
+            break;
+        }
     }
+
+    for (int i = count; ok && i < old_count; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "ch_%d_name", i);
+        if (nvs.isKey(key) && !nvs.remove(key)) ok = false;
+        snprintf(key, sizeof(key), "ch_%d_sec", i);
+        if (nvs.isKey(key) && !nvs.remove(key)) ok = false;
+        snprintf(key, sizeof(key), "ch_%d_hash", i);
+        if (nvs.isKey(key) && !nvs.remove(key)) ok = false;
+    }
+
+    if (ok && nvs.putUChar("ch_cnt", (uint8_t)count) != 1) ok = false;
     nvs.end();
-    return true;
+    return ok;
 #else
     (void)count;
     return false;
@@ -53,7 +81,7 @@ int channelStoreLoad(ChannelLoadFn load, void* ctx)
 {
     if (!load) return 0;
 
-#if defined(ESP32_PLATFORM)
+#if defined(ESP32_PLATFORM) || defined(SIGURDOS_NATIVE_PREFERENCES)
     Preferences nvs;
     if (!nvs.begin("sigurdos", true)) return 0;
     int n = nvs.getUChar("ch_cnt", 0);

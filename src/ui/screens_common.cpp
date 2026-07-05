@@ -22,6 +22,7 @@
 #include "theme.h"
 #include "responsive.h"
 #include "../hal/battery.h"
+#include "../hal/gps.h"
 #include "../hal/wifi_ota.h"
 #include "../hal/prefs.h"
 #include "../mesh/mesh_wrapper.h"
@@ -42,6 +43,9 @@ static lv_obj_t* s_back_btn = nullptr;
 
 // WiFi status icon in bottom bar
 static lv_obj_t* g_wifi_icon = nullptr;
+static lv_obj_t* g_top_gps_icon = nullptr;
+static lv_obj_t* g_top_wifi_icon = nullptr;
+static lv_obj_t* g_top_ble_icon = nullptr;
 
 // ════════════════════════════════════════════════════════
 // make_screen_full — builds consistent top+bottom bars
@@ -61,8 +65,8 @@ lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_border_width(top, 0, 0);
 
     lv_obj_t* back = lv_btn_create(top);
-    lv_obj_set_size(back, 24, TOP_BAR_H - 4);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_set_size(back, 38, TOP_BAR_H - 2);
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 1, 0);
     apply_topbar_icon_btn(back);
     s_back_btn = back; // store for back-swipe highlight
     if (can_go_back()) {
@@ -102,12 +106,7 @@ lv_obj_t* make_screen_full(const char* title)
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
-    // Signal dots (right of top bar, iOS-style)
-    {
-        int rssi = sigurdos::mesh::getLastRSSI();
-        lv_obj_t* sig = create_signal_dots(top, rssi);
-        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
-    }
+    add_topbar_status_indicators(top);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(scr);
@@ -187,6 +186,93 @@ void update_wifi_status() {
     }
 }
 
+void add_topbar_status_indicators(lv_obj_t* top, int right_offset_px)
+{
+    if (!top) return;
+
+    g_top_gps_icon = lv_label_create(top);
+    lv_label_set_text(g_top_gps_icon, "G");
+    lv_obj_set_style_text_font(g_top_gps_icon, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_width(g_top_gps_icon, 12);
+    lv_label_set_long_mode(g_top_gps_icon, LV_LABEL_LONG_DOT);
+    lv_obj_align(g_top_gps_icon, LV_ALIGN_RIGHT_MID, right_offset_px - 32, 0);
+
+    g_top_wifi_icon = lv_label_create(top);
+    lv_label_set_text(g_top_wifi_icon, "W");
+    lv_obj_set_style_text_font(g_top_wifi_icon, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_width(g_top_wifi_icon, 12);
+    lv_label_set_long_mode(g_top_wifi_icon, LV_LABEL_LONG_DOT);
+    lv_obj_align(g_top_wifi_icon, LV_ALIGN_RIGHT_MID, right_offset_px - 16, 0);
+
+    g_top_ble_icon = lv_label_create(top);
+    lv_label_set_text(g_top_ble_icon, "B");
+    lv_obj_set_style_text_font(g_top_ble_icon, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_width(g_top_ble_icon, 12);
+    lv_label_set_long_mode(g_top_ble_icon, LV_LABEL_LONG_DOT);
+    lv_obj_align(g_top_ble_icon, LV_ALIGN_RIGHT_MID, right_offset_px, 0);
+
+    update_topbar_status();
+}
+
+void update_topbar_status()
+{
+    if (g_top_gps_icon && !lv_obj_is_valid(g_top_gps_icon)) g_top_gps_icon = nullptr;
+    if (g_top_wifi_icon && !lv_obj_is_valid(g_top_wifi_icon)) g_top_wifi_icon = nullptr;
+    if (g_top_ble_icon && !lv_obj_is_valid(g_top_ble_icon)) g_top_ble_icon = nullptr;
+
+    if (g_top_gps_icon) {
+        uint32_t color = TEXT_SECONDARY;
+        if (sigurdos::prefs_get().gps_enabled) {
+            if (sigurdos_gps_has_fix()) {
+                color = ACCENT_GREEN;
+            } else if (sigurdos_gps_satellites_in_view() > 0) {
+                color = ACCENT_YELLOW;
+            } else {
+                color = ACCENT_RED;
+            }
+        }
+        lv_label_set_text(g_top_gps_icon, "G");
+        lv_obj_set_style_text_color(g_top_gps_icon, lv_color_hex(color), 0);
+    }
+
+    if (g_top_wifi_icon) {
+        auto status = sigurdos::wifi_sta::getStatus();
+        if (sigurdos::wifi_sta::isConnected()) status = sigurdos::wifi_sta::Status::Connected;
+
+        uint32_t color = TEXT_SECONDARY;
+        switch (status) {
+        case sigurdos::wifi_sta::Status::Connected:
+            color = ACCENT_GREEN;
+            break;
+        case sigurdos::wifi_sta::Status::Connecting:
+            color = ACCENT_YELLOW;
+            break;
+        case sigurdos::wifi_sta::Status::Failed:
+            color = ACCENT_RED;
+            break;
+        case sigurdos::wifi_sta::Status::Idle:
+        default:
+            color = TEXT_SECONDARY;
+            break;
+        }
+        lv_label_set_text(g_top_wifi_icon, "W");
+        lv_obj_set_style_text_color(g_top_wifi_icon, lv_color_hex(color), 0);
+    }
+
+    if (g_top_ble_icon) {
+        uint32_t color = TEXT_SECONDARY;
+        if (sigurdos::mesh::companionBleConnected()) {
+            color = ACCENT_GREEN;
+        } else if (sigurdos::mesh::companionBleEnabled()) {
+            color = ACCENT;
+        } else if (!sigurdos::mesh::companionBleAvailable()) {
+            color = ACCENT_RED;
+        }
+        lv_label_set_text(g_top_ble_icon, "B");
+        lv_obj_set_style_text_color(g_top_ble_icon, lv_color_hex(color), 0);
+    }
+}
+
 // ════════════════════════════════════════════════════════
 // Back-button highlight for back-swipe visual feedback
 // ════════════════════════════════════════════════════════
@@ -211,6 +297,9 @@ void screens_clear_back_btn()
 void screens_clear_wifi_icon()
 {
     g_wifi_icon = nullptr;
+    g_top_gps_icon = nullptr;
+    g_top_wifi_icon = nullptr;
+    g_top_ble_icon = nullptr;
 }
 
 // ════════════════════════════════════════════════════════

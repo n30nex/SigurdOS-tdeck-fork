@@ -90,59 +90,6 @@ inline void theme_apply(uint8_t id)
     CHANNEL_HASH = t.channel_hash;
 }
 
-// ── Signal dot constants ──────────────────────────────────
-constexpr int SIGNAL_DOT_COUNT = 5;
-constexpr int SIGNAL_DOT_DIAM  = 11;    // diameter of each dot (px)
-constexpr int SIGNAL_DOT_GAP   = 3;     // gap between dots (px)
-constexpr int SIGNAL_DOT_H     = 22;    // container height (px)
-
-// Convert RSSI dBm to number of active dots (1-5)
-inline int rssi_to_dots(int rssi)
-{
-    if (rssi > -70)  return 5;
-    if (rssi > -85)  return 4;
-    if (rssi > -95)  return 3;
-    if (rssi > -105) return 2;
-    return 1;
-}
-
-// Create a row of iOS-style signal strength dots.
-// Active dots are filled ACCENT, inactive are unfilled (border only, TEXT_MUTED).
-inline lv_obj_t* create_signal_dots(lv_obj_t* parent, int rssi)
-{
-    int total_w = SIGNAL_DOT_COUNT * SIGNAL_DOT_DIAM
-                + (SIGNAL_DOT_COUNT - 1) * SIGNAL_DOT_GAP;
-
-    lv_obj_t* cont = lv_obj_create(parent);
-    lv_obj_set_size(cont, total_w, SIGNAL_DOT_H);
-    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(cont, 0, 0);
-    lv_obj_set_style_pad_all(cont, 0, 0);
-    lv_obj_remove_flag(cont, LV_OBJ_FLAG_CLICKABLE);
-
-    int active = rssi_to_dots(rssi);
-
-    for (int i = 0; i < SIGNAL_DOT_COUNT; i++) {
-        lv_obj_t* dot = lv_obj_create(cont);
-        lv_obj_set_size(dot, SIGNAL_DOT_DIAM, SIGNAL_DOT_DIAM);
-        if (i < active) {
-            lv_obj_set_style_bg_color(dot, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(dot, 0, 0);
-        } else {
-            lv_obj_set_style_bg_opa(dot, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(dot, 2, 0);
-            lv_obj_set_style_border_color(dot, lv_color_hex(TEXT_SECONDARY), 0);
-        }
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_align(dot, LV_ALIGN_LEFT_MID,
-                     i * (SIGNAL_DOT_DIAM + SIGNAL_DOT_GAP), 0);
-    }
-
-    return cont;
-}
-
 // ── Apply dark background to an object ──────────────────
 inline void apply_dark_bg(lv_obj_t* obj) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(BG_PRIMARY), 0);

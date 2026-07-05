@@ -39,6 +39,8 @@ struct GpsDiagDialogCtx {
 
 static const char* gps_diag_assessment()
 {
+    if (!sigurdos::prefs_get().gps_enabled) return "disabled";
+    if (!sigurdos_gps_initialized()) return "not_initialized";
     if (sigurdos_gps_active_baud() == 0 && sigurdos_gps_chars_processed() == 0) {
         return "not_initialized_or_no_uart";
     }
@@ -60,7 +62,12 @@ static void update_gps_status_row(lv_obj_t* row)
 {
     if (!row) return;
     char row_buf[48];
-    snprintf(row_buf, sizeof(row_buf), "  GPS: %s", sigurdos_gps_has_fix() ? "Fix acquired" : "No fix");
+    const char* state = "OFF";
+    if (sigurdos::prefs_get().gps_enabled) {
+        state = sigurdos_gps_has_fix() ? "Fix acquired"
+            : (sigurdos_gps_initialized() ? "No fix" : "Not started");
+    }
+    snprintf(row_buf, sizeof(row_buf), "  GPS: %s", state);
     update_row_label(row, row_buf);
 }
 
@@ -183,7 +190,14 @@ void settings_gps_show()
     int row = 0;
 
     // GPS status
-    snprintf(buf, sizeof(buf), "  GPS: %s", sigurdos_gps_has_fix() ? "Fix acquired" : "No fix");
+    {
+        const char* gps_state = "OFF";
+        if (p.gps_enabled) {
+            gps_state = sigurdos_gps_has_fix() ? "Fix acquired"
+                : (sigurdos_gps_initialized() ? "No fix" : "Not started");
+        }
+        snprintf(buf, sizeof(buf), "  GPS: %s", gps_state);
+    }
     lv_obj_t* row0 = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
     lv_obj_set_style_bg_color(row0, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_bg_opa(row0, LV_OPA_COVER, 0);
@@ -202,16 +216,21 @@ void settings_gps_show()
     lv_obj_set_style_text_color(btn_gps_en, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(btn_gps_en, [](lv_event_t* e) {
         lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* status_row = (lv_obj_t*)lv_event_get_user_data(e);
         sigurdos::NodePrefs np = sigurdos::prefs_get();
         np.gps_enabled = !np.gps_enabled;
         sigurdos::prefs_set(np);
+        if (np.gps_enabled && !sigurdos_gps_initialized()) {
+            sigurdos_gps_init();
+        }
         char row_buf[64];
         snprintf(row_buf, sizeof(row_buf), "  GPS: %s", np.gps_enabled ? "ON" : "OFF");
         lv_obj_t* lbl = lv_obj_get_child(target, 1);
         if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
             lv_label_set_text(lbl, row_buf);
         }
-    }, LV_EVENT_CLICKED, nullptr);
+        update_gps_status_row(status_row);
+    }, LV_EVENT_CLICKED, row0);
     row++;
 
     // GPS interval cycle

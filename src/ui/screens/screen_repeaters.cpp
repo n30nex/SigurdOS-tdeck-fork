@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../contact_paging.h"
 #include "../chat_screen.h"
+#include "../repeater_refresh_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
@@ -39,6 +40,46 @@ using namespace theme;
 using namespace responsive;
 
 static int g_repeaters_page = 0;
+static bool g_repeater_detail_open = false;
+static Screen g_repeater_detail_source = Screen::Repeaters;
+static char g_repeater_detail_name[32] = {0};
+
+void repeater_detail_close_state()
+{
+    g_repeater_detail_name[0] = '\0';
+    clear_back_override();
+    g_repeater_detail_open = false;
+}
+
+bool repeater_detail_is_open_for(const char* contact_name)
+{
+    return g_repeater_detail_open && contact_name && contact_name[0] &&
+           strcmp(g_repeater_detail_name, contact_name) == 0;
+}
+
+static void clear_repeater_pending_login(const char* name)
+{
+    if (!name || !name[0]) return;
+    cancel_login_poll_for(name);
+    uint8_t st = sigurdos::mesh::getLoginStatus(name);
+    if (sigurdos::mesh::loginStatusNeedsLocalCancel(st)) {
+        sigurdos::mesh::sendLogout(name);
+        sigurdos::mesh::clearLoginState(name);
+    }
+}
+
+static bool repeater_detail_back_override()
+{
+    Screen source = g_repeater_detail_source;
+    clear_repeater_pending_login(g_repeater_detail_name);
+    repeater_detail_close_state();
+    if (source == Screen::Contacts) {
+        contacts_screen_show();
+    } else {
+        repeaters_screen_show();
+    }
+    return true;
+}
 
 static int compare_contacts_by_last_seen_desc(const void* a, const void* b)
 {
@@ -49,12 +90,187 @@ static int compare_contacts_by_last_seen_desc(const void* a, const void* b)
     return strcmp(ca->name, cb->name);
 }
 
+struct RepeaterListSignature {
+    int count;
+    uint32_t newest_last_seen;
+};
+
+struct RepeaterRefreshState {
+    lv_obj_t* screen;
+    RepeaterListSignature signature;
+};
+
+struct RepeaterPendingRefreshState {
+    lv_obj_t* screen;
+    char name[32];
+    uint16_t pending_polls;
+};
+
+struct RoomSyncCtx {
+    char* name;
+};
+
+struct RepeaterActionCtx {
+    char* name;
+    uint8_t contact_type;
+};
+
+static void fail_room_admin_login_visible(const char* name)
+{
+    if (!name || !name[0]) return;
+    sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+    sigurdos::mesh::mesh_v2_queue_push(
+        "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+
+    lv_obj_t* parent = lv_scr_act();
+    if (!parent) return;
+    auto dsz = dialog_size(236, 90);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    if (!dlg) return;
+    lv_obj_set_size(dlg, dsz.w, dsz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT_ORANGE), 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* msg = lv_label_create(dlg);
+    lv_label_set_text(msg, "Room admin login unsupported");
+    lv_obj_set_width(msg, dsz.w - 16);
+    lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 6);
+
+    lv_obj_t* ok = lv_btn_create(dlg);
+    lv_obj_set_size(ok, 86, 26);
+    lv_obj_align(ok, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_bg_color(ok, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(ok, 0, 0);
+    lv_obj_t* ok_lbl = lv_label_create(ok);
+    lv_label_set_text(ok_lbl, "OK");
+    lv_obj_set_style_text_color(ok_lbl, lv_color_hex(BG_PRIMARY), 0);
+    lv_obj_center(ok_lbl);
+    lv_obj_add_event_cb(ok, [](lv_event_t* e) {
+        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
+        if (dlg) lv_obj_del_async(dlg);
+    }, LV_EVENT_CLICKED, nullptr);
+}
+
+static RepeaterListSignature get_repeater_signature()
+{
+    RepeaterListSignature sig{0, 0};
+    sigurdos::mesh::ContactInfo* contacts =
+        new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    if (!contacts) return sig;
+
+    int total = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    if (total < 0) total = 0;
+    if (total > MAX_CONTACTS) total = MAX_CONTACTS;
+
+    for (int i = 0; i < total; i++) {
+        if (contacts[i].type != ADV_TYPE_REPEATER) continue;
+        sig.count++;
+        if (contacts[i].last_seen > sig.newest_last_seen) {
+            sig.newest_last_seen = contacts[i].last_seen;
+        }
+    }
+
+    delete[] contacts;
+    return sig;
+}
+
+static bool repeater_signature_changed(const RepeaterListSignature& a,
+                                       const RepeaterListSignature& b)
+{
+    return a.count != b.count || a.newest_last_seen != b.newest_last_seen;
+}
+
+static void repeater_pending_refresh_timer_cb(lv_timer_t* timer)
+{
+    auto* state = static_cast<RepeaterPendingRefreshState*>(lv_timer_get_user_data(timer));
+    bool screen_valid = state && state->screen && lv_obj_is_valid(state->screen);
+    bool screen_active = screen_valid && lv_scr_act() == state->screen;
+    if (!state || !state->name[0] || !screen_active ||
+        !repeater_detail_is_open_for(state->name)) {
+        delete state;
+        lv_timer_del(timer);
+        return;
+    }
+
+    uint8_t status = sigurdos::mesh::getLoginStatus(state->name);
+    if (repeater_detail_pending_refresh_should_keep_polling(status)) {
+        state->pending_polls++;
+        if (!login_poll_timed_out(state->pending_polls)) {
+            return;
+        }
+        sigurdos::mesh::forceLoginState(state->name, LOGIN_STATUS_FAILED, 0);
+        status = LOGIN_STATUS_FAILED;
+    }
+
+    char safe_name[32];
+    snprintf(safe_name, sizeof(safe_name), "%s", state->name);
+    delete state;
+    lv_timer_del(timer);
+    if (status == LOGIN_STATUS_OK) {
+        repeater_detail_screen_show(safe_name, true);
+    } else {
+        repeater_detail_screen_show(safe_name, false);
+    }
+}
+
+static void arm_repeater_pending_refresh(lv_obj_t* screen, const char* contact_name)
+{
+    if (!screen || !contact_name || !contact_name[0]) return;
+    auto* state = new(std::nothrow) RepeaterPendingRefreshState;
+    if (!state) return;
+    state->screen = screen;
+    state->name[0] = '\0';
+    state->pending_polls = 0;
+    snprintf(state->name, sizeof(state->name), "%s", contact_name);
+    lv_timer_t* timer = lv_timer_create(repeater_pending_refresh_timer_cb,
+                                        REPEATER_LOGIN_POLL_INTERVAL_MS,
+                                        state);
+    if (!timer) delete state;
+}
+
+static void repeaters_refresh_timer_cb(lv_timer_t* timer)
+{
+    auto* state = static_cast<RepeaterRefreshState*>(lv_timer_get_user_data(timer));
+    bool screen_valid = state && state->screen && lv_obj_is_valid(state->screen);
+    bool screen_active = screen_valid && lv_scr_act() == state->screen;
+    bool screen_current = current_screen() == Screen::Repeaters;
+    if (!repeater_refresh_allowed(state != nullptr, screen_valid, screen_current,
+                                  screen_active, g_repeater_detail_open)) {
+        delete state;
+        lv_timer_del(timer);
+        return;
+    }
+
+    RepeaterListSignature current = get_repeater_signature();
+    if (repeater_signature_changed(current, state->signature)) {
+        delete state;
+        lv_timer_del(timer);
+        repeaters_screen_show();
+    }
+}
+
+static void arm_repeaters_refresh(lv_obj_t* screen, RepeaterListSignature signature)
+{
+    auto* state = new(std::nothrow) RepeaterRefreshState{screen, signature};
+    if (!state) return;
+    lv_timer_t* timer = lv_timer_create(repeaters_refresh_timer_cb, 1500, state);
+    if (!timer) delete state;
+}
+
 // ════════════════════════════════════════════════════════
 // Repeaters — infrastructure relay nodes only
 // ════════════════════════════════════════════════════════
 void repeaters_screen_show()
 {
+    repeater_detail_close_state();
     lv_obj_t* scr = make_screen_full("Repeaters");
+    RepeaterListSignature signature{0, 0};
 
     sigurdos::mesh::ContactInfo* contacts =
         new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
@@ -72,6 +288,10 @@ void repeaters_screen_show()
     int n = 0;
     for (int i = 0; i < total; i++) {
         if (contacts[i].type == ADV_TYPE_REPEATER) {
+            signature.count++;
+            if (contacts[i].last_seen > signature.newest_last_seen) {
+                signature.newest_last_seen = contacts[i].last_seen;
+            }
             if (n < i) contacts[n] = contacts[i];
             n++;
         }
@@ -95,6 +315,7 @@ void repeaters_screen_show()
         lv_obj_set_style_text_font(info, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
         delete[] contacts;
+        arm_repeaters_refresh(scr, signature);
         show_screen(scr);
         return;
     }
@@ -209,19 +430,22 @@ void repeaters_screen_show()
 
         // Click handler — open dedicated repeater detail with login flow
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
-            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_current_target(e);
             const char* name = (const char*)lv_obj_get_user_data(target);
             if (name) {
-                repeater_detail_screen_show(name);
+                char safe_name[32];
+                snprintf(safe_name, sizeof(safe_name), "%s", name);
+                repeater_detail_screen_show(safe_name);
             }
         }, LV_EVENT_CLICKED, nullptr);
 
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
-            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
         }, LV_EVENT_DELETE, nullptr);
     }
 
     delete[] page_contacts;
+    arm_repeaters_refresh(scr, signature);
     show_screen(scr);
 }
 
@@ -229,12 +453,17 @@ void repeaters_screen_show()
 // Sends an admin CLI command to a logged-in repeater/server and pushes
 // a confirmation message into the message queue. The actual response
 // arrives later as a chat message from the server.
-static void repeater_send(const char* contact_name, const char* cmd, const char* fmt) {
-    if (!contact_name || !cmd || !cmd[0]) return;
-    sigurdos::mesh::sendCommand(contact_name, cmd);
+static bool repeater_send(const char* contact_name, const char* cmd, const char* fmt) {
+    if (!contact_name || !cmd || !cmd[0]) return false;
+    bool sent = sigurdos::mesh::sendCommand(contact_name, cmd);
     char buf[80];
-    snprintf(buf, sizeof(buf), fmt, cmd);
+    if (sent) {
+        snprintf(buf, sizeof(buf), fmt, cmd);
+    } else {
+        snprintf(buf, sizeof(buf), "! Send failed: %s", cmd);
+    }
     sigurdos::mesh::mesh_v2_queue_push("System", "", buf, 0, 0.0f);
+    return sent;
 }
 
 // Generic input dialog — shows a text entry box and sends
@@ -295,12 +524,26 @@ static void repeater_input_dialog(const char* contact_name,
     lv_label_set_text(cl, "Cancel");
     lv_obj_center(cl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce)));
     }, LV_EVENT_CLICKED, nullptr);
 
     // Send button
-    struct RiData { char* name; const char* prefix; lv_obj_t* ta; };
-    RiData* rd = new RiData{strdup(contact_name), strdup(cmd_prefix), ta};
+    struct RiData { char* name; char* prefix; lv_obj_t* ta; bool submitted; };
+    RiData* rd = new(std::nothrow) RiData{
+        strdup(contact_name),
+        strdup(cmd_prefix ? cmd_prefix : ""),
+        ta,
+        false
+    };
+    if (!rd || !rd->name || !rd->prefix) {
+        if (rd) {
+            free(rd->name);
+            free(rd->prefix);
+            delete rd;
+        }
+        lv_obj_del_async(dlg);
+        return;
+    }
 
     lv_obj_t* send_btn = lv_btn_create(dlg);
     lv_obj_set_size(send_btn, 80, 24);
@@ -314,8 +557,10 @@ static void repeater_input_dialog(const char* contact_name,
     lv_obj_set_user_data(send_btn, rd);
 
     lv_obj_add_event_cb(send_btn, [](lv_event_t* le) {
-        RiData* d = (RiData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        if (d && d->name && d->prefix && d->ta) {
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(le);
+        RiData* d = (RiData*)lv_obj_get_user_data(btn);
+        if (d && d->name && d->prefix && d->ta && !d->submitted) {
+            d->submitted = true;
             const char* val = lv_textarea_get_text(d->ta);
             if (val && val[0]) {
                 char cmd[64];
@@ -323,7 +568,7 @@ static void repeater_input_dialog(const char* contact_name,
                 repeater_send(d->name, cmd, "Sent: %s");
             }
         }
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le)));
+        lv_obj_del_async(lv_obj_get_parent(btn));
     }, LV_EVENT_CLICKED, nullptr);
 
     // Enter key handler
@@ -353,10 +598,13 @@ static void repeater_input_dialog(const char* contact_name,
 
     // Cleanup
     lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        RiData* d = (RiData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
+        lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+        if (lv_event_get_target(de) != obj) return;
+        RiData* d = (RiData*)lv_obj_get_user_data(obj);
+        lv_obj_set_user_data(obj, nullptr);
         if (d) {
             free(d->name);
-            free((void*)d->prefix);
+            free(d->prefix);
             delete d;
         }
     }, LV_EVENT_DELETE, nullptr);
@@ -371,6 +619,15 @@ static void repeater_input_dialog(const char* contact_name,
 void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 {
     if (!contact_name || !contact_name[0]) return;
+    if (!g_repeater_detail_open) {
+        g_repeater_detail_source = current_screen();
+    }
+    g_repeater_detail_open = true;
+    set_back_override(repeater_detail_back_override);
+    char safe_contact_name[32];
+    snprintf(safe_contact_name, sizeof(safe_contact_name), "%s", contact_name);
+    contact_name = safe_contact_name;
+    snprintf(g_repeater_detail_name, sizeof(g_repeater_detail_name), "%s", contact_name);
 
     // Look up the contact first (need type for screen title). Avoid copying
     // the full 350-contact table just to open one repeater detail page.
@@ -417,6 +674,22 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
     int row = 0;
 
+    lv_obj_t* back_row = lv_list_add_btn(list, LV_SYMBOL_LEFT, "Back to Repeaters");
+    lv_obj_set_style_bg_color(back_row, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_bg_opa(back_row, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(back_row, lv_color_hex(TEXT_PRIMARY), 0);
+    char* back_name = strdup(contact_name);
+    lv_obj_set_user_data(back_row, back_name);
+    lv_obj_add_event_cb(back_row, [](lv_event_t* e) {
+        const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+        clear_repeater_pending_login(name);
+        repeaters_screen_show();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(back_row, [](lv_event_t* e) {
+        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+    }, LV_EVENT_DELETE, nullptr);
+    row++;
+
     // skip_login=false: ALWAYS show pre-login (don't trust cached login state)
     // skip_login=true:  show post-login only if actually logged in (timer path)
     if (!skip_login || login_st != LOGIN_STATUS_OK) {
@@ -457,18 +730,18 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_center(fav_icon);
             lv_obj_set_user_data(fav_btn, fav_name);
             lv_obj_add_event_cb(fav_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                 const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (name) {
                     bool cur = sigurdos::mesh::isContactFavourite(name);
                     sigurdos::mesh::setContactFavourite(name, !cur);
-
-                    repeater_detail_screen_show(name, true);
-
+                    char safe_name[32];
+                    snprintf(safe_name, sizeof(safe_name), "%s", name);
+                    repeater_detail_screen_show(safe_name, true);
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(fav_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
             }, LV_EVENT_DELETE, nullptr);
         }
         row++;
@@ -543,7 +816,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
                 case LOGIN_STATUS_OK:     login_text = "Logged in";      login_color = ACCENT_GREEN; break;
 
-                case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
+                case LOGIN_STATUS_PENDING: login_text = "Pending; auto-fail"; login_color = ACCENT; break;
                 case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
             }
             lv_obj_t* lr = lv_obj_create(list);
@@ -566,6 +839,9 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_align(login_v, LV_ALIGN_RIGHT_MID, -4, 0);
             row++;
         }
+        if (login_st == LOGIN_STATUS_PENDING) {
+            arm_repeater_pending_refresh(scr, contact_name);
+        }
 
         // Spacer (flex grow — fills remaining space)
         lv_obj_t* spacer = lv_obj_create(list);
@@ -576,29 +852,116 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
         row++;
 
-        // Login button (prominent)
+        // Login/open button (prominent)
         if (login_st != LOGIN_STATUS_PENDING) {
             char* li_name = strdup(contact_name);
-            lv_obj_t* login_btn = lv_btn_create(list);
-            lv_obj_set_size(login_btn, LV_PCT(100), 32);
-            lv_obj_set_style_bg_color(login_btn, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_bg_opa(login_btn, LV_OPA_COVER, 0);
-            lv_obj_set_style_radius(login_btn, 0, 0);
-            lv_obj_set_style_border_width(login_btn, 0, 0);
-            lv_obj_t* login_lbl = lv_label_create(login_btn);
-            lv_label_set_text(login_lbl, LV_SYMBOL_DIRECTORY "  Login");
-            lv_obj_set_style_text_color(login_lbl, lv_color_hex(BG_PRIMARY), 0);
-            lv_obj_center(login_lbl);
-            lv_obj_set_user_data(login_btn, li_name);
-            lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(btn);
-                if (name) show_login_password_dialog(name);
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+            RepeaterActionCtx* li_ctx = li_name
+                ? new(std::nothrow) RepeaterActionCtx{li_name, target->type}
+                : nullptr;
+            if (!li_ctx) free(li_name);
+            if (li_ctx) {
+                lv_obj_t* login_btn = lv_btn_create(list);
+                lv_obj_set_size(login_btn, LV_PCT(100), 32);
+                lv_obj_set_style_bg_color(login_btn, lv_color_hex(ACCENT), 0);
+                lv_obj_set_style_bg_opa(login_btn, LV_OPA_COVER, 0);
+                lv_obj_set_style_radius(login_btn, 0, 0);
+                lv_obj_set_style_border_width(login_btn, 0, 0);
+                lv_obj_t* login_lbl = lv_label_create(login_btn);
+                lv_label_set_text(login_lbl,
+                    target->type == ADV_TYPE_ROOM
+                        ? LV_SYMBOL_ENVELOPE "  Open Room"
+                        : LV_SYMBOL_DIRECTORY "  Login");
+                lv_obj_set_style_text_color(login_lbl, lv_color_hex(BG_PRIMARY), 0);
+                lv_obj_center(login_lbl);
+                lv_obj_set_user_data(login_btn, li_ctx);
+                lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                    auto* ctx = (RepeaterActionCtx*)lv_obj_get_user_data(btn);
+                    if (!ctx || !ctx->name) return;
+                    char safe_name[32];
+                    snprintf(safe_name, sizeof(safe_name), "%s", ctx->name);
+                    if (login_contact_type_is_room(ctx->contact_type)) {
+                        repeater_detail_close_state();
+                        sigurdos::mesh::clearLoginState(safe_name);
+                        chat_screen_open_room(safe_name);
+                    } else {
+                        show_login_password_dialog(safe_name, ctx->contact_type);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
+                    auto* ctx = (RepeaterActionCtx*)lv_obj_get_user_data(
+                        (lv_obj_t*)lv_event_get_current_target(e));
+                    if (ctx) {
+                        free(ctx->name);
+                        delete ctx;
+                    }
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
+
+            if (target->type == ADV_TYPE_ROOM) {
+                char* admin_name = strdup(contact_name);
+                if (admin_name) {
+                    lv_obj_t* admin_btn = lv_btn_create(list);
+                    lv_obj_set_size(admin_btn, LV_PCT(100), 30);
+                    lv_obj_set_style_bg_color(admin_btn, lv_color_hex(BG_TERTIARY), 0);
+                    lv_obj_set_style_bg_opa(admin_btn, LV_OPA_COVER, 0);
+                    lv_obj_set_style_radius(admin_btn, 0, 0);
+                    lv_obj_set_style_border_width(admin_btn, 0, 0);
+                    lv_obj_t* admin_lbl = lv_label_create(admin_btn);
+                    lv_label_set_text(admin_lbl, LV_SYMBOL_SETTINGS "  Admin Login");
+                    lv_obj_set_style_text_color(admin_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+                    lv_obj_center(admin_lbl);
+                    lv_obj_set_user_data(admin_btn, admin_name);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                        const char* name = (const char*)lv_obj_get_user_data(btn);
+                        if (name) {
+                            char safe_name[32];
+                            snprintf(safe_name, sizeof(safe_name), "%s", name);
+                            fail_room_admin_login_visible(safe_name);
+                        }
+                    }, LV_EVENT_CLICKED, nullptr);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                    }, LV_EVENT_DELETE, nullptr);
+                    row++;
+                }
+            }
+        }
+
+        if (login_st == LOGIN_STATUS_PENDING || login_st == LOGIN_STATUS_FAILED) {
+            char* cx_name = strdup(contact_name);
+            if (cx_name) {
+                lv_obj_t* cancel_btn = lv_btn_create(list);
+                lv_obj_set_size(cancel_btn, LV_PCT(100), 32);
+                lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_TERTIARY), 0);
+                lv_obj_set_style_bg_opa(cancel_btn, LV_OPA_COVER, 0);
+                lv_obj_set_style_radius(cancel_btn, 0, 0);
+                lv_obj_set_style_border_width(cancel_btn, 0, 0);
+                lv_obj_t* cancel_lbl = lv_label_create(cancel_btn);
+                lv_label_set_text(cancel_lbl, login_st == LOGIN_STATUS_PENDING
+                    ? LV_SYMBOL_CLOSE "  Cancel Pending"
+                    : LV_SYMBOL_CLOSE "  Clear Failed");
+                lv_obj_set_style_text_color(cancel_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+                lv_obj_center(cancel_lbl);
+                lv_obj_set_user_data(cancel_btn, cx_name);
+                lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                    const char* name = (const char*)lv_obj_get_user_data(btn);
+                    if (!name) return;
+                    char safe_name[32];
+                    snprintf(safe_name, sizeof(safe_name), "%s", name);
+                    cancel_login_poll_for(safe_name);
+                    sigurdos::mesh::sendLogout(safe_name);
+                    sigurdos::mesh::clearLoginState(safe_name);
+                    repeater_detail_screen_show(safe_name, false);
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
 
     } else {
@@ -618,8 +981,13 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Set-value button: opens an input dialog and sends <prefix> + user input
         struct SetCtx { char* name; char prefix[24]; char title[24]; char hint[32]; bool pw; };
         auto add_set = [&](const char* icon_lbl, const char* title, const char* hint, const char* prefix, bool pw) {
-            auto* ctx = new SetCtx();
+            auto* ctx = new(std::nothrow) SetCtx{};
+            if (!ctx) return;
             ctx->name = strdup(contact_name);
+            if (!ctx->name) {
+                delete ctx;
+                return;
+            }
             ctx->pw = pw;
             strncpy(ctx->prefix, prefix, sizeof(ctx->prefix)-1);
             strncpy(ctx->title, title, sizeof(ctx->title)-1);
@@ -633,11 +1001,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 lv_obj_set_style_text_color(vl, lv_color_hex(ACCENT), 0);
             lv_obj_set_user_data(r, ctx);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                auto* c = (SetCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                auto* c = (SetCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
                 if (c && c->name) repeater_input_dialog(c->name, c->title, c->hint, c->prefix, c->pw);
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                auto* c = (SetCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                auto* c = (SetCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
                 if (c) { free(c->name); delete c; }
             }, LV_EVENT_DELETE, nullptr);
             row++;
@@ -646,8 +1014,13 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Action button: sends a command immediately and pushes confirmation
         struct ActCtx { char* name; char cmd[32]; char fmt[48]; };
         auto add_act = [&](const char* icon_lbl, const char* cmd, const char* fmt) {
-            auto* ctx = new ActCtx();
+            auto* ctx = new(std::nothrow) ActCtx{};
+            if (!ctx) return;
             ctx->name = strdup(contact_name);
+            if (!ctx->name) {
+                delete ctx;
+                return;
+            }
             strncpy(ctx->cmd, cmd, sizeof(ctx->cmd)-1);
             strncpy(ctx->fmt, fmt, sizeof(ctx->fmt)-1);
             lv_obj_t* r = lv_list_add_btn(list, icon_lbl, ">");
@@ -659,11 +1032,69 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 lv_obj_set_style_text_color(vl, lv_color_hex(ACCENT), 0);
             lv_obj_set_user_data(r, ctx);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                auto* c = (ActCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                auto* c = (ActCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
                 if (c && c->name) repeater_send(c->name, c->cmd, c->fmt);
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                auto* c = (ActCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+                auto* c = (ActCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                if (c) { free(c->name); delete c; }
+            }, LV_EVENT_DELETE, nullptr);
+            row++;
+        };
+
+        struct QueryCtx { char* name; RepeaterManagementRequest request; };
+        auto add_query = [&](const char* icon_lbl, RepeaterManagementRequest request) {
+            auto* ctx = new(std::nothrow) QueryCtx{strdup(contact_name), request};
+            if (!ctx || !ctx->name) {
+                if (ctx) {
+                    free(ctx->name);
+                    delete ctx;
+                }
+                return;
+            }
+            lv_obj_t* r = lv_list_add_btn(list, icon_lbl, ">");
+            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_t* vl = lv_obj_get_child(r, 1);
+            if (vl && lv_obj_check_type(vl, &lv_label_class))
+                lv_obj_set_style_text_color(vl, lv_color_hex(ACCENT), 0);
+            lv_obj_set_user_data(r, ctx);
+            lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                auto* c = (QueryCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                if (!c || !c->name) return;
+                bool sent = false;
+                switch (c->request) {
+                case RepeaterManagementRequest::Status:
+                    sent = sigurdos::mesh::requestStatus(c->name);
+                    if (sent) {
+                        node_status_request_started(c->name);
+                        navigate_to(Screen::NodeStatus);
+                    }
+                    break;
+                case RepeaterManagementRequest::Telemetry:
+                    sent = sigurdos::mesh::requestTelemetry(c->name);
+                    if (sent) {
+                        telemetry_request_started(c->name);
+                        navigate_to(Screen::Telemetry);
+                    }
+                    break;
+                case RepeaterManagementRequest::Neighbours:
+                    sent = sigurdos::mesh::requestNeighbours(c->name);
+                    if (sent) {
+                        node_neighbours_request_started(c->name);
+                        navigate_to(Screen::NodeNeighbours);
+                    }
+                    break;
+                }
+                if (!sent) {
+                    sigurdos::mesh::mesh_v2_queue_push(
+                        "System", "", repeater_management_request_failed_message(c->request),
+                        0, 0.0f);
+                }
+            }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                auto* c = (QueryCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
                 if (c) { free(c->name); delete c; }
             }, LV_EVENT_DELETE, nullptr);
             row++;
@@ -693,48 +1124,150 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             add_con("Login", "Logged in", ACCENT_GREEN);
             uint8_t perm = sigurdos::mesh::getLoginPermission(contact_name);
             char perm_buf[24];
-            if (perm == 1) {
-                snprintf(perm_buf, sizeof(perm_buf), "Admin (perm=%d)", perm);
-            } else if (perm == 0) {
+            if (perm >= PERM_ACL_ADMIN) {
+                snprintf(perm_buf, sizeof(perm_buf), "Admin");
+            } else if (perm >= PERM_ACL_READ_WRITE) {
                 snprintf(perm_buf, sizeof(perm_buf), "Read-Write");
+            } else if (perm >= PERM_ACL_READ_ONLY) {
+                snprintf(perm_buf, sizeof(perm_buf), "Read-Only");
             } else {
                 snprintf(perm_buf, sizeof(perm_buf), "Guest");
             }
-            add_con("Permission", perm_buf, perm == 1 ? ACCENT : TEXT_SECONDARY);
+            add_con("Permission", perm_buf, perm >= PERM_ACL_ADMIN ? ACCENT : TEXT_SECONDARY);
         }
 
-        // Determine if the user has admin permission
-        // Server permission encoding: 1 = Admin, 0 = Read-Write, 2 = Guest
-        bool is_admin = (sigurdos::mesh::getLoginPermission(contact_name) == 1);
+        // ── Section: Live Requests ────────────────────────
+        sec_header("  Live Requests");
+        add_query(LV_SYMBOL_SETTINGS "  Request Status", RepeaterManagementRequest::Status);
+        add_query(LV_SYMBOL_WIFI "  Request Telemetry", RepeaterManagementRequest::Telemetry);
+        add_query(LV_SYMBOL_LIST "  Request Neighbours", RepeaterManagementRequest::Neighbours);
+        if (target->type == ADV_TYPE_ROOM) {
+            lv_obj_t* sync = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Resync Past Posts", ">");
+            lv_obj_set_style_bg_color(sync, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_obj_set_style_bg_opa(sync, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(sync, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_t* sync_v = lv_obj_get_child(sync, 1);
+            if (sync_v && lv_obj_check_type(sync_v, &lv_label_class))
+                lv_obj_set_style_text_color(sync_v, lv_color_hex(ACCENT), 0);
+            auto* sync_ctx = new(std::nothrow) RoomSyncCtx{strdup(contact_name)};
+            if (sync_ctx && sync_ctx->name) {
+                lv_obj_set_user_data(sync, sync_ctx);
+                lv_obj_add_event_cb(sync, [](lv_event_t* e) {
+                    auto* c = (RoomSyncCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                    if (!c || !c->name) return;
+                    if (!sigurdos::mesh::resetRoomServerSync(c->name)) {
+                        sigurdos::mesh::mesh_v2_queue_push("System", "",
+                            "Room resync failed: contact not found", 0, 0.0f);
+                        return;
+                    }
+
+                    char saved_pw[16] = {0};
+                    if (sigurdos::loadRepeaterPassword(c->name, saved_pw, sizeof(saved_pw))) {
+                        if (!saved_pw[0] ||
+                            !login_submit_sends_network_login(ADV_TYPE_ROOM, saved_pw)) {
+                            fail_room_admin_login_visible(c->name);
+                            return;
+                        }
+                        bool sent = sigurdos::mesh::sendLoginForContactType(
+                            c->name, saved_pw, ADV_TYPE_ROOM);
+                        sigurdos::mesh::mesh_v2_queue_push(
+                            "System", "",
+                            sent ? "Room resync login sent" : "Room resync login failed",
+                            0, 0.0f);
+                    } else {
+                        show_login_password_dialog(c->name, ADV_TYPE_ROOM);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(sync, [](lv_event_t* e) {
+                    auto* c = (RoomSyncCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                    if (c) { free(c->name); delete c; }
+                }, LV_EVENT_DELETE, nullptr);
+            } else if (sync_ctx) {
+                free(sync_ctx->name);
+                delete sync_ctx;
+            }
+            row++;
+
+            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_ENVELOPE "  Open Room Chat", ">");
+            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_t* vl = lv_obj_get_child(r, 1);
+            if (vl && lv_obj_check_type(vl, &lv_label_class))
+                lv_obj_set_style_text_color(vl, lv_color_hex(ACCENT), 0);
+            struct RoomChatCtx { char* name; };
+            auto* room_ctx = new(std::nothrow) RoomChatCtx{strdup(contact_name)};
+            if (room_ctx && room_ctx->name) {
+                lv_obj_set_user_data(r, room_ctx);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    auto* c = (RoomChatCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                    if (c && c->name) {
+                        char safe_name[32];
+                        snprintf(safe_name, sizeof(safe_name), "%s", c->name);
+                        repeater_detail_close_state();
+                        chat_screen_open_room(safe_name);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    auto* c = (RoomChatCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                    if (c) { free(c->name); delete c; }
+                }, LV_EVENT_DELETE, nullptr);
+            } else if (room_ctx) {
+                free(room_ctx->name);
+                delete room_ctx;
+            }
+            row++;
+        }
+
+        // Determine if the user has admin permission. MeshCore v7+ returns
+        // the ACL role byte; legacy responses fall back to an admin flag.
+        const uint8_t login_perm = sigurdos::mesh::getLoginPermission(contact_name);
+        bool is_admin = (login_perm >= PERM_ACL_ADMIN);
+        bool show_low_risk_management_rows =
+            repeater_show_low_risk_management_rows(login_st == LOGIN_STATUS_OK);
+        bool show_admin_management_rows = repeater_show_admin_management_rows(is_admin);
+        bool show_admin_radio_rows = repeater_show_admin_radio_rows(is_admin);
+        bool show_admin_password_rows = repeater_show_admin_password_rows(is_admin);
 
         // ── Section: Radio Settings ──────────────────────
-        if (is_admin) {
-        sec_header("  Radio Settings");
-        add_set(LV_SYMBOL_WIFI "  Freq (MHz)",  "Set Freq",       "e.g. 868.0",       "set freq ",  false);
-        add_set(LV_SYMBOL_WIFI "  Bandwidth",   "Set Bandwidth",  "e.g. 125.0",       "set bw ",    false);
-        add_set(LV_SYMBOL_WIFI "  Spreading Factor", "Set SF",    "Range 5-12",       "set sf ",    false);
-        add_set(LV_SYMBOL_WIFI "  Coding Rate",  "Set CR",        "Range 5-8",        "set cr ",    false);
+        if (show_admin_radio_rows) {
+            sec_header("  Radio Settings");
+            add_set(LV_SYMBOL_WIFI "  Radio Params", "Set Radio", "freq,bw,sf,cr",
+                    "set radio ", false);
+            add_set(LV_SYMBOL_WIFI "  Temporary Radio", "Temp Radio", "freq,bw,sf,cr,mins",
+                    "tempradio ", false);
+        }
+
+        // ── Section: Session Actions ─────────────────────
+        if (show_low_risk_management_rows) {
+            sec_header("  Session Actions");
+            add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
+            add_act(LV_SYMBOL_REFRESH "  Advert (flood)", "advert", "Sent: flood advert");
+            add_act(LV_SYMBOL_LIST "  Version", "ver", "Sent: ver");
         }
 
         // ── Section: Management ──────────────────────────
-        if (is_admin) {
-        sec_header("  Management");
-        add_set(LV_SYMBOL_REFRESH "  Advert Duration", "Advert Duration", "Hours (24/72/168)", "set advert.duration ", false);
-        add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
-        add_set(LV_SYMBOL_CLOSE "  Admin Password",   "Admin Password",   "New admin password", "password ",  true);
-        add_set(LV_SYMBOL_CLOSE "  Guest Password",   "Guest Password",   "New guest password", "set guest.password ", false);
-        add_act(LV_SYMBOL_LIST "  Version",           "ver",              "Sent: ver");
+        if (show_admin_management_rows) {
+            sec_header("  Management");
+            add_set(LV_SYMBOL_REFRESH "  Local Advert", "Local Advert", "Minutes 60-240 or 0",
+                    "set advert.interval ", false);
+            add_set(LV_SYMBOL_REFRESH "  Flood Advert", "Flood Advert", "Hours 3-168 or 0",
+                    "set flood.advert.interval ", false);
+            if (show_admin_password_rows) {
+                add_set(LV_SYMBOL_CLOSE "  Admin Password", "Admin Password",
+                        "New admin password", "password ", true);
+                add_set(LV_SYMBOL_CLOSE "  Guest Password", "Guest Password",
+                        "New guest password", "set guest.password ", false);
+            }
         }
 
         // ── Section: Network ─────────────────────────────
-        if (is_admin) {
-        sec_header("  Network");
-        add_act(LV_SYMBOL_LIST "  Neighbours",        "neighbors",        "Sent: neighbors");
-        add_act(LV_SYMBOL_LIST "  Regions",           "region",           "Sent: region");
-        add_act(LV_SYMBOL_REFRESH "  Repeat On",      "set repeat on",    "Sent: repeat on");
-        add_act(LV_SYMBOL_REFRESH "  Repeat Off",     "set repeat off",   "Sent: repeat off");
-        add_act(LV_SYMBOL_REFRESH "  Advert (flood)",  "advert",          "Sent: flood advert");
-        add_act(LV_SYMBOL_EDIT "  Public Key",        "get public.key",   "Sent: get public.key");
+        if (show_admin_management_rows) {
+            sec_header("  Network");
+            add_act(LV_SYMBOL_LIST "  Regions", "region", "Sent: region");
+            add_act(LV_SYMBOL_REFRESH "  Repeat On", "set repeat on", "Sent: repeat on");
+            add_act(LV_SYMBOL_REFRESH "  Repeat Off", "set repeat off", "Sent: repeat off");
+            add_act(LV_SYMBOL_EDIT "  Public Key", "get public.key", "Sent: get public.key");
         }
 
         // ── Section: Commands ────────────────────────────
@@ -743,126 +1276,122 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Admin Cmd (admin only)
         if (is_admin) {
             char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD "  Admin Cmd", ">");
-            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) show_admin_cmd_dialog(name);
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
-        }
-
-        // Fetch Msgs (available to all logged-in users)
-        {
-            char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_LIST "  Fetch Msgs", ">");
-            lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) show_fetch_msgs_dialog(name);
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+            if (n) {
+                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD "  Admin Cmd", ">");
+                lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_text_color(r, lv_color_hex(TEXT_PRIMARY), 0);
+                lv_obj_set_user_data(r, n);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                    if (name) show_admin_cmd_dialog(name);
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
 
         // Reboot (with confirmation dialog) — admin only
         if (is_admin) {
             char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Reboot", "!!");
-            lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_RED), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) {
-                    // Confirmation dialog before reboot
-                    lv_obj_t* act = lv_scr_act();
-                    auto dsz = dialog_size(220, 80);
-                    lv_obj_t* dlg = lv_obj_create(act);
-                    lv_obj_set_size(dlg, dsz.w, dsz.h);
-                    lv_obj_center(dlg);
-                    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
-                    lv_obj_set_style_radius(dlg, 0, 0);
-                    lv_obj_set_style_border_width(dlg, 0, 0);
-                    lv_obj_t* tl = lv_label_create(dlg);
-                    lv_label_set_text(tl, "Reboot repeater?");
-                    lv_obj_set_style_text_color(tl, lv_color_hex(ACCENT_RED), 0);
-                    lv_obj_align(tl, LV_ALIGN_TOP_MID, 0, 10);
-                    char* cn = strdup(name);
-                    lv_obj_set_user_data(dlg, cn);
-                    lv_obj_t* yb = lv_btn_create(dlg);
-                    lv_obj_set_size(yb, 80, 24);
-                    lv_obj_align(yb, LV_ALIGN_BOTTOM_LEFT, 10, -4);
-                    lv_obj_set_style_bg_color(yb, lv_color_hex(ACCENT_RED), 0);
-                    lv_obj_set_style_radius(yb, 0, 0);
-                    lv_obj_t* yl = lv_label_create(yb);
-                    lv_label_set_text(yl, "Reboot");
-                    lv_obj_center(yl);
-                    lv_obj_set_style_text_color(yl, lv_color_hex(0xffffff), 0);
-                    lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
-                        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
-                        const char* cn = (const char*)lv_obj_get_user_data(dlg);
+            if (n) {
+                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Reboot", "!!");
+                lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_RED), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
+                lv_obj_set_user_data(r, n);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                    if (name) {
+                        // Confirmation dialog before reboot
+                        lv_obj_t* act = lv_scr_act();
+                        auto dsz = dialog_size(220, 80);
+                        lv_obj_t* dlg = lv_obj_create(act);
+                        lv_obj_set_size(dlg, dsz.w, dsz.h);
+                        lv_obj_center(dlg);
+                        lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+                        lv_obj_set_style_radius(dlg, 0, 0);
+                        lv_obj_set_style_border_width(dlg, 0, 0);
+                        lv_obj_t* tl = lv_label_create(dlg);
+                        lv_label_set_text(tl, "Reboot repeater?");
+                        lv_obj_set_style_text_color(tl, lv_color_hex(ACCENT_RED), 0);
+                        lv_obj_align(tl, LV_ALIGN_TOP_MID, 0, 10);
+                        char* cn = strdup(name);
+                        if (!cn) {
+                            lv_obj_del_async(dlg);
+                            return;
+                        }
+                        lv_obj_set_user_data(dlg, cn);
+                        lv_obj_t* yb = lv_btn_create(dlg);
+                        lv_obj_set_size(yb, 80, 24);
+                        lv_obj_align(yb, LV_ALIGN_BOTTOM_LEFT, 10, -4);
+                        lv_obj_set_style_bg_color(yb, lv_color_hex(ACCENT_RED), 0);
+                        lv_obj_set_style_radius(yb, 0, 0);
+                        lv_obj_t* yl = lv_label_create(yb);
+                        lv_label_set_text(yl, "Reboot");
+                        lv_obj_center(yl);
+                        lv_obj_set_style_text_color(yl, lv_color_hex(0xffffff), 0);
+                        lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
+                            lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce));
+                            const char* cn = (const char*)lv_obj_get_user_data(dlg);
 
-                        if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
+                            if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
 
-                        lv_obj_del_async(dlg);
-                    }, LV_EVENT_CLICKED, nullptr);
-                    lv_obj_t* nb = lv_btn_create(dlg);
-                    lv_obj_set_size(nb, 80, 24);
-                    lv_obj_align(nb, LV_ALIGN_BOTTOM_RIGHT, -10, -4);
-                    lv_obj_set_style_bg_color(nb, lv_color_hex(BG_INPUT), 0);
-                    lv_obj_set_style_radius(nb, 0, 0);
-                    lv_obj_t* nl = lv_label_create(nb);
-                    lv_label_set_text(nl, "Cancel");
-                    lv_obj_center(nl);
-                    lv_obj_add_event_cb(nb, [](lv_event_t* ce) {
-                        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
-                    }, LV_EVENT_CLICKED, nullptr);
-                    lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-                        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
-                    }, LV_EVENT_DELETE, nullptr);
-                }
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+                            lv_obj_del_async(dlg);
+                        }, LV_EVENT_CLICKED, nullptr);
+                        lv_obj_t* nb = lv_btn_create(dlg);
+                        lv_obj_set_size(nb, 80, 24);
+                        lv_obj_align(nb, LV_ALIGN_BOTTOM_RIGHT, -10, -4);
+                        lv_obj_set_style_bg_color(nb, lv_color_hex(BG_INPUT), 0);
+                        lv_obj_set_style_radius(nb, 0, 0);
+                        lv_obj_t* nl = lv_label_create(nb);
+                        lv_label_set_text(nl, "Cancel");
+                        lv_obj_center(nl);
+                        lv_obj_add_event_cb(nb, [](lv_event_t* ce) {
+                            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce)));
+                        }, LV_EVENT_CLICKED, nullptr);
+                        lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
+                            lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+                            if (lv_event_get_target(de) != obj) return;
+                            free(lv_obj_get_user_data(obj));
+                            lv_obj_set_user_data(obj, nullptr);
+                        }, LV_EVENT_DELETE, nullptr);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
 
         // Logout
         {
             char* n = strdup(contact_name);
-            lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Logout", ">");
-            lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_ORANGE), 0);
-            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
-            lv_obj_set_user_data(r, n);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (name) {
-                    sigurdos::mesh::sendLogout(name);
-                    lv_timer_create([](lv_timer_t* t) {
-                        go_back();
-                        lv_timer_del(t);
-                    }, 600, nullptr);
-                }
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(r, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-            row++;
+            if (n) {
+                lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Logout", ">");
+                lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_ORANGE), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
+                lv_obj_set_user_data(r, n);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                    if (name) {
+                        sigurdos::mesh::sendLogout(name);
+                        lv_timer_t* timer = lv_timer_create([](lv_timer_t* t) {
+                            go_back();
+                            lv_timer_del(t);
+                        }, 600, nullptr);
+                        if (timer) lv_timer_set_repeat_count(timer, 1);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(r, [](lv_event_t* e) {
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                }, LV_EVENT_DELETE, nullptr);
+                row++;
+            }
         }
     }
 

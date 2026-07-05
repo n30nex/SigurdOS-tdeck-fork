@@ -25,6 +25,9 @@
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
 #define REQ_TYPE_GET_TELEMETRY_DATA  0x03
 #endif
+#ifndef REQ_TYPE_GET_NEIGHBOURS
+#define REQ_TYPE_GET_NEIGHBOURS  0x06
+#endif
 #include <SPI.h>
 #include <SPIFFS.h>
 #include <Preferences.h>  // for NVS prefs
@@ -107,6 +110,11 @@ static uint32_t      msg_drop_count = 0;
 // Unread message count — incremented on every incoming (non-self) message,
 // reset to 0 when the chat screen is opened. Used by the home screen badge.
 static int           unread_count = 0;
+static int           unread_channel_count = 0;
+static int           unread_dm_count = 0;
+static int           unread_contact_count = 0;
+static int           unread_repeater_count = 0;
+static uint32_t      mesh_activity_seq = 0;
 
 #include "companion_adapter.inc"
 
@@ -199,8 +207,14 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
+    m.txt_type = txt_type;
     m.is_self = false;
-    if (strcmp(sender, own_name) != 0) unread_count++;
+    if (strcmp(sender, own_name) != 0) {
+        unread_count++;
+        if (channel && channel[0]) unread_channel_count++;
+        else unread_dm_count++;
+        mesh_activity_seq++;
+    }
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
@@ -222,6 +236,18 @@ void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_t
     // report an ACK (it is created lazily on the first incoming/companion path).
     if (g_companion_bridge_ptr) {
         g_companion_bridge_ptr->notifySendConfirmed(ack, trip_time_ms);
+    }
+}
+
+void sigurdos::mesh::mesh_v2_note_contact_activity(uint8_t contact_type,
+                                                   bool is_new_visible_contact) {
+    if (contact_type == ADV_TYPE_NONE) return;
+    mesh_activity_seq++;
+    if (!is_new_visible_contact) return;
+    if (contact_type == ADV_TYPE_REPEATER) {
+        unread_repeater_count++;
+    } else {
+        unread_contact_count++;
     }
 }
 
@@ -257,9 +283,15 @@ static void queue_push(const char* sender, const char* channel, const char* text
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = rtc_clock.getCurrentTime();
+    m.txt_type = 0;
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
-    if (strcmp(sender, own_name) != 0) unread_count++;
+    if (strcmp(sender, own_name) != 0) {
+        unread_count++;
+        if (channel && channel[0]) unread_channel_count++;
+        else unread_dm_count++;
+        mesh_activity_seq++;
+    }
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     // Log as packet entry (accessible via Packets screen)
@@ -336,37 +368,14 @@ static uint32_t _last_status_tag = 0;
 static sigurdos::mesh::NodeStatus _cached_status;
 static bool _has_cached_status = false;
 
-// Parse a 56-byte RepeaterStats blob into NodeStatus struct
-static void parse_status_blob(const uint8_t* data, uint8_t len, sigurdos::mesh::NodeStatus* out) {
-    if (!data || !out) return;
-    memset(out, 0, sizeof(*out));
-    uint8_t avail = len < NODE_STATUS_RESPONSE_SIZE ? len : NODE_STATUS_RESPONSE_SIZE;
-    // data[0..3] = tag, skip that; status blob starts at data[4]
-    const uint8_t* blob = data + 4;
-    uint8_t blen = avail > 4 ? avail - 4 : 0;
-    if (blen < 2) return;  // need at least batt_milli_volts
-    unsigned ofs = 0;
-    auto r16 = [&](int16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
-    auto ru16 = [&](uint16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
-    auto ru32 = [&](uint32_t* dst) { if (ofs + 4 <= blen) { memcpy(dst, blob + ofs, 4); ofs += 4; } };
-    ru16(&out->batt_milli_volts);
-    ru16(&out->curr_tx_queue_len);
-    r16(&out->noise_floor);
-    r16(&out->last_rssi);
-    ru32(&out->n_packets_recv);
-    ru32(&out->n_packets_sent);
-    ru32(&out->total_air_time_secs);
-    ru32(&out->total_up_time_secs);
-    ru32(&out->n_sent_flood);
-    ru32(&out->n_sent_direct);
-    ru32(&out->n_recv_flood);
-    ru32(&out->n_recv_direct);
-    ru16(&out->err_events);
-    r16(&out->last_snr);
-    ru16(&out->n_direct_dups);
-    ru16(&out->n_flood_dups);
-    ru32(&out->total_rx_air_time_secs);
-    ru32(&out->n_recv_errors);
+// ── Neighbours request tracking ───────────────
+static uint32_t _last_neighbours_tag = 0;
+static sigurdos::mesh::NodeNeighboursResult _cached_neighbours;
+static bool _has_cached_neighbours = false;
+
+// Parse a tagged RepeaterStats response into NodeStatus.
+static bool parse_status_blob(const uint8_t* data, uint8_t len, sigurdos::mesh::NodeStatus* out) {
+    return sigurdos::mesh::parseNodeStatusResponse(data, len, out);
 }
 
 // ════════════════════════════════════════════════════
@@ -430,6 +439,28 @@ void pushPacketLog(const char* source, int rssi, float snr, const char* type) {
     e.type[sizeof(e.type) - 1] = '\0';
     pkt_log_head = (pkt_log_head + 1) % MAX_PACKET_LOG;
     if (pkt_log_count < MAX_PACKET_LOG) pkt_log_count++;
+}
+
+static bool signalSamplePresent(int rssi, float snr)
+{
+    return rssi != 0 || snr != 0.0f;
+}
+
+static bool latestPacketSignalForSource(const char* source, int* rssi, float* snr)
+{
+    if (!source || !source[0] || !rssi || !snr) return false;
+
+    for (int c = 0; c < pkt_log_count; c++) {
+        int idx = pkt_log_head - 1 - c;
+        if (idx < 0) idx += MAX_PACKET_LOG;
+        const PacketLogEntry& e = pkt_log[idx];
+        if (strcmp(e.source, source) != 0) continue;
+        if (!signalSamplePresent(e.rssi, e.snr)) continue;
+        *rssi = e.rssi;
+        *snr = e.snr;
+        return true;
+    }
+    return false;
 }
 
 // ── ACK tracking bridge ──────────────────────
@@ -502,6 +533,9 @@ void clearResponses() {
 
 // ── Room message fetch (Phase 4.6) ───────────────────
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name) {
+    // Stock MeshCore room servers do not expose a compatible fetch/read request.
+    // Keep this fail-closed so unsupported attempts do not occupy pending slots.
+    if (!roomMessageFetchSupported()) return false;
     if (!radioTxAllowed()) return false;
     return g_mesh ? g_mesh->sendRoomMsgFetchRequest(contact_name, channel_name) : false;
 }
@@ -538,29 +572,77 @@ void clearRoomMsgFetch() {
 }
 
 // ── Room message posting ───────────────────────────
+static char g_active_room_server[32] = "";
+
+bool setActiveRoomServer(const char* contact_name) {
+    if (!contact_name || !contact_name[0]) return false;
+    if (g_mesh) {
+        bool found_same_name = false;
+        bool found_room = false;
+        for (int i = 0; i < g_mesh->getContactCount(); i++) {
+            auto* c = g_mesh->getContact(i);
+            if (c && strcmp(c->name, contact_name) == 0) {
+                found_same_name = true;
+                if (c->type == ADV_TYPE_ROOM) {
+                    found_room = true;
+                    break;
+                }
+            }
+        }
+        if (found_same_name && !found_room) return false;
+        // Allow opening a persisted room transcript even if the room advert has
+        // not been re-heard since boot. Sends will still fail closed if the
+        // contact truly is absent, but the UI will not silently do nothing.
+    }
+    strncpy(g_active_room_server, contact_name, sizeof(g_active_room_server) - 1);
+    g_active_room_server[sizeof(g_active_room_server) - 1] = '\0';
+    return true;
+}
+
+void clearActiveRoomServer() {
+    g_active_room_server[0] = '\0';
+}
+
+const char* getActiveRoomServer() {
+    return g_active_room_server;
+}
+
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
     if (!radioTxAllowed()) return 0;
     if (!g_mesh || !contact_name || !channel_name || !text) return 0;
+    bool found_room = false;
+    for (int i = 0; i < g_mesh->getContactCount(); i++) {
+        auto* c = g_mesh->getContact(i);
+        if (c && strcmp(c->name, contact_name) == 0 &&
+            roomMessageTargetAllowsSend(c->type)) {
+            found_room = true;
+            break;
+        }
+    }
+    if (!found_room) return 0;
     // Format: "[channel_name] text" — embeds the channel name in the message text
     // so the room server can identify which channel the message is for.
     char buf[160];
-    int n = snprintf(buf, sizeof(buf), "#%s %s", channel_name, text);
-    if (n <= 0) return 0;
-    if (n >= (int)sizeof(buf)) n = sizeof(buf) - 1;
-    // Send as a peer TXT_MSG to the room server contact (like a DM).
-    return sendMessage(contact_name, buf);
+    if (!formatRoomMessageText(channel_name, text, buf, sizeof(buf))) return 0;
+    // Send as a peer TXT_MSG to the room server contact. Do not persist this as
+    // a DM: it is transport for an already-stored channel post.
+    uint32_t ts = getCurrentTimeUnique();
+    if (ts == 0) ts = 1;
+    bool ok = g_mesh->sendTextTo(contact_name, buf, ts);
+    if (ok) pushPacketLog(own_name, 0, 0.0f, "TX_ROOM");
+    return ok ? ts : 0;
 }
 
 int getLoggedInRoomServerCount() {
     if (!g_mesh) return 0;
     int count = 0;
     int n = g_mesh->getContactCount();
-    ::ContactInfo tmp;
     for (int i = 0; i < n; i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
-            tmp.type == ADV_TYPE_ROOM &&
-            tmp.name[0] &&
-            g_mesh->isLoggedIn(tmp.name)) {
+        auto* tmp = g_mesh->getContact(i);
+        if (tmp &&
+            tmp->type == ADV_TYPE_ROOM &&
+            tmp->name[0] &&
+            g_mesh->isLoggedIn(tmp->name)) {
             count++;
         }
     }
@@ -571,15 +653,15 @@ const char* getLoggedInRoomServerName(int index) {
     if (!g_mesh || index < 0) return "";
     int count = 0;
     int n = g_mesh->getContactCount();
-    ::ContactInfo tmp;
     for (int i = 0; i < n; i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
-            tmp.type == ADV_TYPE_ROOM &&
-            tmp.name[0] &&
-            g_mesh->isLoggedIn(tmp.name)) {
+        auto* tmp = g_mesh->getContact(i);
+        if (tmp &&
+            tmp->type == ADV_TYPE_ROOM &&
+            tmp->name[0] &&
+            g_mesh->isLoggedIn(tmp->name)) {
             if (count == index) {
                 static char name_buf[32];
-                strncpy(name_buf, tmp.name, sizeof(name_buf) - 1);
+                strncpy(name_buf, tmp->name, sizeof(name_buf) - 1);
                 name_buf[sizeof(name_buf) - 1] = '\0';
                 return name_buf;
             }
@@ -593,17 +675,11 @@ const char* getLoggedInRoomServerName(int index) {
 bool requestStatus(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS);
-    if (ok) {
-        // Find the tag from the pending request table
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_status_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
-    }
+    _last_status_tag = 0;
+    _has_cached_status = false;
+    memset(&_cached_status, 0, sizeof(_cached_status));
+    bool ok = g_mesh->sendRequestTracked(dest_name, REQ_TYPE_GET_STATUS,
+                                         &_last_status_tag);
     return ok;
 }
 
@@ -613,7 +689,7 @@ bool hasStatusResponse() {
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
         if (re && re->tag == _last_status_tag) {
-            parse_status_blob(re->data, re->len, &_cached_status);
+            if (!parse_status_blob(re->data, re->len, &_cached_status)) return false;
             _has_cached_status = true;
             return true;
         }
@@ -631,16 +707,11 @@ bool getStatusResult(NodeStatus* out) {
 bool requestTelemetry(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_TELEMETRY_DATA);
-    if (ok) {
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_telemetry_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
-    }
+    _last_telemetry_tag = 0;
+    _has_cached_telemetry = false;
+    memset(&_cached_telemetry, 0, sizeof(_cached_telemetry));
+    bool ok = g_mesh->sendRequestTracked(dest_name, REQ_TYPE_GET_TELEMETRY_DATA,
+                                         &_last_telemetry_tag);
     return ok;
 }
 
@@ -732,6 +803,58 @@ bool getTelemetryResult(TelemetryResult* out) {
     return true;
 }
 
+// ── Repeater neighbours query ─────────────────
+bool requestNeighbours(const char* dest_name) {
+    if (!radioTxAllowed()) return false;
+    if (!g_mesh || !dest_name || !dest_name[0]) return false;
+
+    uint8_t req[11];
+    uint32_t nonce = 0;
+    fast_rng.random(reinterpret_cast<uint8_t*>(&nonce), sizeof(nonce));
+    if (!buildNeighboursRequest(req, sizeof(req),
+                                NEIGHBOUR_DEFAULT_COUNT,
+                                0,
+                                NEIGHBOUR_DEFAULT_ORDER_NEWEST,
+                                NEIGHBOUR_PUBKEY_PREFIX_BYTES,
+                                nonce)) {
+        return false;
+    }
+
+    _last_neighbours_tag = 0;
+    _has_cached_neighbours = false;
+    memset(&_cached_neighbours, 0, sizeof(_cached_neighbours));
+
+    bool ok = g_mesh->sendRequestWithDataTracked(dest_name, req, sizeof(req),
+                                                 &_last_neighbours_tag);
+    return ok;
+}
+
+bool hasNeighboursResponse() {
+    if (!g_mesh || _last_neighbours_tag == 0) return false;
+    int n = g_mesh->getResponseCount();
+    for (int i = 0; i < n; i++) {
+        auto* re = g_mesh->getResponse(i);
+        if (re && re->tag == _last_neighbours_tag) {
+            NodeNeighboursResult result;
+            if (!parseNeighboursResponse(re->data, re->len,
+                                         NEIGHBOUR_PUBKEY_PREFIX_BYTES,
+                                         &result)) {
+                return false;
+            }
+            _cached_neighbours = result;
+            _has_cached_neighbours = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool getNeighboursResult(NodeNeighboursResult* out) {
+    if (!out || !_has_cached_neighbours) return false;
+    memcpy(out, &_cached_neighbours, sizeof(*out));
+    return true;
+}
+
 // ── Path discovery (Phase 4.4) ────────────────
 uint32_t discoverPath(const char* dest_name) {
     if (!radioTxAllowed()) return 0;
@@ -756,6 +879,8 @@ void injectMessage(const char* sender, const char* channel, const char* text)
 {
     if (!sender || !text) return;
     queue_push(sender, channel, text);
+    storeIncomingMessageForCompanion(sender, channel, text, -50, 8.0f,
+                                     0, 0xFF, nullptr, 0);
     if (!channel || channel[0] == '\0') {
         pushPacketLog(sender, -50, 8.0f, "DM");
     } else {
@@ -1120,7 +1245,20 @@ uint32_t sendMessage(const char* dest, const char* text) {
 
 bool sendChannelMessage(const char* channel_name, const char* text) {
     if (!radioTxAllowed()) return false;
-    if (!g_mesh) return false;
+    if (!g_mesh || !channel_name || !channel_name[0] || !text || !text[0]) return false;
+
+    // Room-server chat is not the normal group-channel flood path. When the UI
+    // opens a channel from a specific room server, post only to that server and
+    // persist the local channel transcript after the room send succeeds.
+    if (g_active_room_server[0]) {
+        uint32_t room_ts = sendRoomMessage(g_active_room_server, channel_name, text);
+        if (room_ts != 0) {
+            storeOutgoingMessageForCompanion(channel_name, text, room_ts, true);
+            return true;
+        }
+        return false;
+    }
+
     bool sent = false;
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
         auto* ch = g_mesh->getChannel(i);
@@ -1133,15 +1271,11 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
             break;
         }
     }
-    // Also forward the message to any logged-in room server contacts.
-    // This ensures room servers receive messages posted in their channels.
-    // Skip room servers with active permissions (> guest) — they already
-    // receive the channel flood. Only guest-level room servers need the DM fallback.
+    // Best-effort bridge normal channel sends into logged-in room servers.
     int n_room = getLoggedInRoomServerCount();
     for (int ri = 0; ri < n_room; ri++) {
         const char* room_name = getLoggedInRoomServerName(ri);
         if (room_name && room_name[0]) {
-            if (getLoginPermission(room_name) > 0) continue;
             uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
             if (room_ts != 0) sent = true;
         }
@@ -1172,7 +1306,28 @@ int pendingMessageCount() { return msg_count; }
 uint32_t getQueueDropCount() { return msg_drop_count; }
 
 int getUnreadMessageCount() { return unread_count; }
-void resetUnreadMessageCount() { unread_count = 0; }
+void resetUnreadMessageCount() {
+    unread_count = 0;
+    unread_channel_count = 0;
+    unread_dm_count = 0;
+}
+int getUnreadChannelMessageCount() { return unread_channel_count; }
+void resetUnreadChannelMessageCount() {
+    unread_count -= unread_channel_count;
+    if (unread_count < 0) unread_count = 0;
+    unread_channel_count = 0;
+}
+int getUnreadDmMessageCount() { return unread_dm_count; }
+void resetUnreadDmMessageCount() {
+    unread_count -= unread_dm_count;
+    if (unread_count < 0) unread_count = 0;
+    unread_dm_count = 0;
+}
+int getUnreadContactCount() { return unread_contact_count; }
+void resetUnreadContactCount() { unread_contact_count = 0; }
+int getUnreadRepeaterCount() { return unread_repeater_count; }
+void resetUnreadRepeaterCount() { unread_repeater_count = 0; }
+uint32_t getMeshActivitySeq() { return mesh_activity_seq; }
 
 // ── Contacts ────────────────────────────────────
 
@@ -1202,6 +1357,9 @@ static void fillContactInfo(ContactInfo& dest, const ::ContactInfo& src) {
     dest.longitude = (float)src.gps_lon / 1000000.0f;
     dest.rssi = g_mesh->getContactRSSI(src.id.pub_key);
     dest.snr  = g_mesh->getContactSNR(src.id.pub_key);
+    if (!signalSamplePresent(dest.rssi, dest.snr)) {
+        latestPacketSignalForSource(dest.name, &dest.rssi, &dest.snr);
+    }
     dest.last_seen = src.last_advert_timestamp;
 }
 
@@ -1288,6 +1446,7 @@ bool addChannel(const char* name, const char* psk) {
 bool addHashtagChannel(const char* name) {
     // Validate channel name
     if (!channel_name_valid(name)) return false;
+    if (isReservedPublicHashtagName(name)) return false;
     bool ok = g_mesh ? g_mesh->addHashtagChannel(name) : false;
     if (ok) syncRegionsFromChannels();
     return ok;
@@ -1430,6 +1589,10 @@ uint32_t getCurrentTime() {
     return initialized ? rtc_clock.getCurrentTime() : 0;
 }
 
+uint32_t getCurrentTimeUnique() {
+    return initialized ? rtc_clock.getCurrentTimeUnique() : 0;
+}
+
 bool setSystemTime(uint32_t epoch_seconds) {
     if (!initialized) return false;
     rtc_clock.setCurrentTime(epoch_seconds);
@@ -1537,8 +1700,8 @@ const PingResult* getPingResult(int i) {
     return reinterpret_cast<const PingResult*>(r);
 }
 
-void saveChannels() {
-    if (!g_mesh) return;
+bool saveChannels() {
+    if (!g_mesh) return false;
     int n = g_mesh->getChannelCount();
 
     // Channel read callback for the store
@@ -1557,7 +1720,7 @@ void saveChannels() {
         return true;
     };
 
-    sigurdos::mesh::channelStoreSave(n, read_fn, g_mesh);
+    return sigurdos::mesh::channelStoreSave(n, read_fn, g_mesh);
 }
 
 void loadChannels() {
@@ -1582,13 +1745,14 @@ void saveState() {
 static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, void*)
 {
     if (!g_mesh || !out) return false;
-    ::ContactInfo c;
-    if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+    const ::ContactInfo* c = g_mesh->getContact(index);
+    if (!c) return false;
 
-    memcpy(out->pub_key, c.id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
-    memcpy(out->name, c.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
-    out->type = c.type;
-    out->perm = (c.flags >> 1) & 0x03;
+    memcpy(out->pub_key, c->id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
+    memcpy(out->name, c->name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
+    out->type = c->type;
+    out->perm = (c->flags >> 1) & 0x03;
+    out->sync_since = c->sync_since;
     return true;
 }
 
@@ -1601,6 +1765,7 @@ static bool writeStoredContact(const sigurdos::mesh::StoredContact& stored, void
     memcpy(c.name, stored.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
     c.type = stored.type;
     c.flags = (c.flags & 0x01) | ((stored.perm & 0x03) << 1);
+    c.sync_since = stored.sync_since;
     c.name[31] = '\0';
     c.out_path_len = OUT_PATH_UNKNOWN;
     c.shared_secret_valid = false;
@@ -1612,11 +1777,13 @@ void saveContacts() {
     if (!g_mesh) return;
     int n = g_mesh->getNumContacts();
     sigurdos::mesh::contactStoreSave(n, readStoredContact, nullptr);
+    g_mesh->markContactsPersistedBaseline();
 }
 
 void loadContacts() {
     if (!g_mesh) return;
     sigurdos::mesh::contactStoreLoad(writeStoredContact, nullptr);
+    g_mesh->markContactsPersistedBaseline();
 }
 
 void reloadContactsAfterIdentityChange() {
@@ -1792,7 +1959,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
         if (!g_mesh || !name) return false;
         ::ContactInfo tmp;
         for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-            if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (g_mesh->getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 // Get writable pointer to the actual MeshCore ContactInfo
                 ::ContactInfo* live = g_mesh->lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
                 if (!live) return false;
@@ -1809,11 +1976,29 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
         if (!g_mesh || !name) return -1;
         ::ContactInfo tmp;
         for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-            if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (g_mesh->getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 return (tmp.flags >> 1) & 0x03;
             }
         }
         return -1;
+    }
+
+    bool resetRoomServerSync(const char* name) {
+        if (!g_mesh || !name || !name[0]) return false;
+        ::ContactInfo tmp;
+        for (int i = 0; i < g_mesh->getNumContacts(); i++) {
+            if (!g_mesh->getContactByPublicIndex((uint32_t)i, tmp) ||
+                strcmp(tmp.name, name) != 0) {
+                continue;
+            }
+            if (tmp.type != ADV_TYPE_ROOM) return false;
+            ::ContactInfo* live = g_mesh->lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
+            if (!live) return false;
+            live->sync_since = 0;
+            saveContacts();
+            return true;
+        }
+        return false;
     }
 
     // ── Channel management extensions ────────────
@@ -1827,21 +2012,38 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
     }
 
     // ── Repeater/room login (Phase 4.5) ──────────────
-    bool sendLogin(const char* name, const char* password) {
+    static bool sendLoginMatchingContact(const char* name,
+                                         const char* password,
+                                         uint8_t contact_type_hint) {
         if (!radioTxAllowed()) return false;
         if (!g_mesh || !name || !password) return false;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
-                g_mesh->sendLoginTo(*c, password);
-                return true;
+                if (!loginContactTypeMatchesHint(c->type, contact_type_hint)) continue;
+                if (!loginPasswordAllowedForContactType(c->type, password)) continue;
+                return g_mesh->sendLoginTo(*c, password);
             }
         }
         return false;
     }
 
+    bool sendLogin(const char* name, const char* password) {
+        return sendLoginMatchingContact(name, password, ADV_TYPE_NONE);
+    }
+
+    bool sendLoginForContactType(const char* name,
+                                 const char* password,
+                                 uint8_t contact_type_hint) {
+        return sendLoginMatchingContact(name, password, contact_type_hint);
+    }
+
+    void clearLoginState(const char* name) {
+        if (!g_mesh || !name || !name[0]) return;
+        g_mesh->removeLoginEntry(name);
+    }
+
     void sendLogout(const char* name) {
-        if (!radioTxAllowed()) return;
         if (!g_mesh || !name) return;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
@@ -1850,6 +2052,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
                 return;
             }
         }
+        clearLoginState(name);
     }
 
     bool sendCommand(const char* name, const char* text) {
@@ -2327,9 +2530,9 @@ bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz)
     if (hex_sz < (size_t)(PUB_KEY_SIZE * 2 + 1)) return false;
     int count = g_mesh->getNumContacts();
     for (int i = 0; i < count; i++) {
-        ::ContactInfo c;
-        if (g_mesh->getContactByIdx(i, c) && strcmp(c.name, name) == 0) {
-            ::mesh::Utils::toHex(hex_out, c.id.pub_key, PUB_KEY_SIZE);
+        const ::ContactInfo* c = g_mesh->getContact(i);
+        if (c && strcmp(c->name, name) == 0) {
+            ::mesh::Utils::toHex(hex_out, c->id.pub_key, PUB_KEY_SIZE);
             return true;
         }
     }

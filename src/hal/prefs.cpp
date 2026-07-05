@@ -33,9 +33,7 @@ bool prefs_load(NodePrefs& p) {
     p.bw           = nvs.getFloat("bw", 0.0f);
     p.sf           = nvs.getUChar("sf", 0);
     p.cr           = nvs.getUChar("cr", 0);
-    p.tx_power_dbm  = nvs.getChar("txpwr", 0);
-    if (p.tx_power_dbm > 0 && p.tx_power_dbm < 2) p.tx_power_dbm = 2;
-    if (p.tx_power_dbm > 22) p.tx_power_dbm = 22;
+    p.tx_power_dbm = prefs_normalize_tx_power_dbm(nvs.getChar("txpwr", 0));
     size_t rf_prof_len = nvs.getString("rf_prof", p.radio_profile, sizeof(p.radio_profile));
     if (rf_prof_len == 0 || rf_prof_len > sizeof(p.radio_profile)) { p.radio_profile[0] = '\0'; }
     else { p.radio_profile[sizeof(p.radio_profile) - 1] = '\0'; }
@@ -43,6 +41,7 @@ bool prefs_load(NodePrefs& p) {
     p.kbd_backlight = nvs.getUChar("kbd_bl", 127);
     p.kbd_layout = nvs.getUChar("kbd_layout", 0);
     if (p.kbd_layout >= 12) p.kbd_layout = 0;
+    p.kbd_raw_overlay = nvs.getBool("kbd_raw", false);
     p.display_brightness = nvs.getUChar("disp_bl", 200);
     // Clamp recovered brightness to safe range (0 = dead screen, >240 may wrap)
     if (p.display_brightness < 20) p.display_brightness = 20;
@@ -54,6 +53,9 @@ bool prefs_load(NodePrefs& p) {
     p.advert_location_valid = nvs.getBool("adv_loc", false);
     p.advert_lat = nvs.getInt("adv_lat", 0);
     p.advert_lon = nvs.getInt("adv_lon", 0);
+    p.map_location_valid = nvs.getBool("map_loc", false);
+    p.map_lat = nvs.getInt("map_lat", 0);
+    p.map_lon = nvs.getInt("map_lon", 0);
     p.rx_delay_base  = nvs.getFloat("rx_del", 10.0f);
     p.tx_delay_factor = nvs.getFloat("tx_del", 1.0f);
     p.direct_tx_delay_factor = nvs.getFloat("dir_tx", 1.0f);
@@ -116,11 +118,12 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putFloat("bw", p.bw);
     nvs.putUChar("sf", p.sf);
     nvs.putUChar("cr", p.cr);
-    nvs.putChar("txpwr", p.tx_power_dbm < -9 ? (int8_t)(-9) : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
+    nvs.putChar("txpwr", prefs_normalize_tx_power_dbm(p.tx_power_dbm));
     nvs.putString("rf_prof", p.radio_profile);
     nvs.putBool("cfg", p.configured);
     nvs.putUChar("kbd_bl", p.kbd_backlight);
     nvs.putUChar("kbd_layout", p.kbd_layout);
+    nvs.putBool("kbd_raw", p.kbd_raw_overlay);
     nvs.putUChar("disp_bl", p.display_brightness);
     nvs.putUShort("auto_off", p.auto_off_timeout);
     nvs.putUShort("chat_cap", p.chat_msg_cap);
@@ -129,6 +132,9 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putBool("adv_loc", p.advert_location_valid);
     nvs.putInt("adv_lat", p.advert_lat);
     nvs.putInt("adv_lon", p.advert_lon);
+    nvs.putBool("map_loc", p.map_location_valid);
+    nvs.putInt("map_lat", p.map_lat);
+    nvs.putInt("map_lon", p.map_lon);
     nvs.putFloat("rx_del", p.rx_delay_base);
     nvs.putFloat("tx_del", p.tx_delay_factor);
     nvs.putFloat("dir_tx", p.direct_tx_delay_factor);
@@ -187,6 +193,7 @@ void prefs_set(const NodePrefs& p) {
 // ── Repeater password storage ─────────────────────────────────────────
 static constexpr const char* PW_NS = "sigurdos_pw";
 static constexpr int MAX_SAVED_PWS = 8;
+static constexpr const char* MAP_TILE_PROVIDER_KEY = "tile_url";
 
 static uint8_t clampPasswordStoreCount(uint8_t count) {
     return (count > MAX_SAVED_PWS) ? MAX_SAVED_PWS : count;
@@ -311,6 +318,97 @@ void removeRepeaterPassword(const char* name) {
         }
     }
     nvs.end();
+}
+
+static bool normalizeMapTileProviderUrl(const char* provider_url,
+                                        char* out,
+                                        size_t out_size) {
+    if (!provider_url || !out || out_size == 0) return false;
+    out[0] = '\0';
+
+    while (*provider_url == ' ' || *provider_url == '\t' ||
+           *provider_url == '\r' || *provider_url == '\n') {
+        provider_url++;
+    }
+
+    size_t len = strlen(provider_url);
+    while (len > 0 &&
+           (provider_url[len - 1] == ' ' || provider_url[len - 1] == '\t' ||
+            provider_url[len - 1] == '\r' || provider_url[len - 1] == '\n')) {
+        len--;
+    }
+
+    while (len > 8 && provider_url[len - 1] == '/') {
+        len--;
+    }
+
+    if (len == 0 || len >= out_size) return false;
+    memcpy(out, provider_url, len);
+    out[len] = '\0';
+    return true;
+}
+
+bool mapTileProviderUrlValid(const char* provider_url) {
+    if (!provider_url || !provider_url[0]) return false;
+
+    const size_t len = strlen(provider_url);
+    if (len >= MAP_TILE_PROVIDER_MAX_LEN) return false;
+
+    const bool http =
+        strncmp(provider_url, "http://", 7) == 0 ||
+        strncmp(provider_url, "https://", 8) == 0;
+    if (!http) return false;
+
+    for (const char* p = provider_url; *p; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+        if (c <= ' ' || c == '"' || c == '\'' || c == '<' || c == '>') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool saveMapTileProvider(const char* provider_url) {
+    char normalized[MAP_TILE_PROVIDER_MAX_LEN] = {};
+    if (!normalizeMapTileProviderUrl(provider_url, normalized, sizeof(normalized)) ||
+        !mapTileProviderUrlValid(normalized)) {
+        return false;
+    }
+
+    Preferences nvs;
+    if (!nvs.begin(NVS_NS, false)) return false;
+    nvs.putString(MAP_TILE_PROVIDER_KEY, normalized);
+    nvs.end();
+    return true;
+}
+
+bool loadMapTileProvider(char* provider_url, size_t max_len) {
+    if (!provider_url || max_len == 0) return false;
+    provider_url[0] = '\0';
+
+    Preferences nvs;
+    if (!nvs.begin(NVS_NS, true)) return false;
+    char stored[MAP_TILE_PROVIDER_MAX_LEN] = {};
+    size_t ret = nvs.getString(MAP_TILE_PROVIDER_KEY, stored, sizeof(stored));
+    nvs.end();
+
+    if (ret == 0 || ret > sizeof(stored) ||
+        !mapTileProviderUrlValid(stored) ||
+        strlen(stored) >= max_len) {
+        provider_url[0] = '\0';
+        return false;
+    }
+
+    strcpy(provider_url, stored);
+    return true;
+}
+
+bool clearMapTileProvider() {
+    Preferences nvs;
+    if (!nvs.begin(NVS_NS, false)) return false;
+    nvs.remove(MAP_TILE_PROVIDER_KEY);
+    nvs.end();
+    return true;
 }
 
 } // namespace sigurdos

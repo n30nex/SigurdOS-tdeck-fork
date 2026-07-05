@@ -23,14 +23,17 @@
 #include "../responsive.h"
 #include "../home_screen.h"
 #include "../../hal/keyboard.h"
+#include "../../hal/buzzer.h"
 #include "../../hal/prefs.h"
 #include "../../hal/sdcard.h"
 #include "../../hal/tdeck_pins.h"
+#include "../../hal/time_sync_policy.h"
 #include "../../hal/touch.h"
 #include "../../hal/trackball.h"
 #include "../../hal/launcher_env.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/github_ota.h"
+#include "../../hal/gps.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../diagnostics/build_info.h"
 #include "../../fonts/emoji_font.h"
@@ -47,6 +50,16 @@ using namespace responsive;
 
 static lv_obj_t* g_date_row = nullptr;   // for live update after setting time
 static lv_obj_t* g_time_row = nullptr;
+static lv_obj_t* g_time_source_row = nullptr;
+
+static void update_time_source_row()
+{
+    if (!g_time_source_row) return;
+    const auto source = sigurdos::time_source_current(sigurdos_gps_time_synced());
+    char buf[40];
+    snprintf(buf, sizeof(buf), "  Time Source: %s", sigurdos::time_source_label(source));
+    update_row_label(g_time_source_row, buf);
+}
 
 static void show_build_info_dialog(lv_obj_t* parent)
 {
@@ -303,7 +316,9 @@ static void input_diag_update(InputDiagDialogCtx* ctx)
              (unsigned long)kd.event_count,
              (unsigned long)kd.overwrite_count,
              (unsigned long)kd.last_event_ms,
-             kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "n/a",
+             kd.raw_overlay_enabled
+                ? (kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "wait")
+                : "off",
              kd.raw_matrix[0],
              kd.raw_matrix[1],
              kd.raw_matrix[2],
@@ -538,6 +553,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
         }
 
         if (valid && sigurdos::mesh::setSystemTime(epoch)) {
+            sigurdos::time_source_mark(sigurdos::TimeSource::Manual);
             int yy, mmo, dd, hh, mmi;
             sigurdos::mesh::getCurrentLocalDateTime(&yy, &mmo, &dd, &hh, &mmi);
             char dbuf[32], tbuf[16];
@@ -545,6 +561,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
             snprintf(tbuf, sizeof(tbuf), "  Time: %02d:%02d", hh, mmi);
             update_row_label(g_date_row, dbuf);
             update_row_label(g_time_row, tbuf);
+            update_time_source_row();
             home_screen_update_time(tbuf);
             lv_obj_del_async(dlg);
         }
@@ -618,6 +635,18 @@ void settings_system_show()
         row++;
     }
 
+    // Time source
+    {
+        const auto source = sigurdos::time_source_current(sigurdos_gps_time_synced());
+        snprintf(buf, sizeof(buf), "  Time Source: %s", sigurdos::time_source_label(source));
+        lv_obj_t* btn_source = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_source, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_source, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_source, lv_color_hex(TEXT_PRIMARY), 0);
+        g_time_source_row = btn_source;
+        row++;
+    }
+
     // Run Setup Wizard
     lv_obj_t* btn_wizard = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, "  Run Setup Wizard");
     lv_obj_set_style_bg_color(btn_wizard, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
@@ -635,6 +664,54 @@ void settings_system_show()
     lv_obj_set_style_text_color(btn_input_diag, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(btn_input_diag, [](lv_event_t* e) {
         show_input_diag_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Buzzer notification toggle and direct self-test
+    {
+        snprintf(buf, sizeof(buf), "  Buzzer Notifications: %s",
+                 p.buzzer_quiet ? "OFF" : "ON");
+        lv_obj_t* btn_buzzer_toggle = lv_list_add_btn(list, LV_SYMBOL_AUDIO, buf);
+        lv_obj_set_style_bg_color(btn_buzzer_toggle, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_buzzer_toggle, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_buzzer_toggle, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_buzzer_toggle, [](lv_event_t* e) {
+            auto np = sigurdos::prefs_get();
+            np.buzzer_quiet = !np.buzzer_quiet;
+            sigurdos::prefs_set(np);
+            char label[48];
+            snprintf(label, sizeof(label), "  Buzzer Notifications: %s",
+                     np.buzzer_quiet ? "OFF" : "ON");
+            update_row_label((lv_obj_t*)lv_event_get_target(e), label);
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+
+        lv_obj_t* btn_buzzer_test = lv_list_add_btn(list, LV_SYMBOL_AUDIO, "  Test Buzzer");
+        lv_obj_set_style_bg_color(btn_buzzer_test, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_buzzer_test, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_buzzer_test, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_buzzer_test, [](lv_event_t*) {
+            sigurdos::hal::buzzer_self_test();
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
+    // Keyboard raw overlay
+    snprintf(buf, sizeof(buf), "  Keyboard Mode: %s",
+             p.kbd_raw_overlay ? "Enhanced" : "Factory");
+    lv_obj_t* btn_kbd_mode = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD, buf);
+    lv_obj_set_style_bg_color(btn_kbd_mode, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_kbd_mode, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_kbd_mode, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_kbd_mode, [](lv_event_t* e) {
+        auto np = sigurdos::prefs_get();
+        np.kbd_raw_overlay = !np.kbd_raw_overlay;
+        sigurdos::prefs_set(np);
+        char label[48];
+        snprintf(label, sizeof(label), "  Keyboard Mode: %s",
+                 np.kbd_raw_overlay ? "Enhanced" : "Factory");
+        update_row_label((lv_obj_t*)lv_event_get_target(e), label);
+        sigurdos_keyboard_reset_scan_state();
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
@@ -1233,6 +1310,7 @@ void settings_system_show()
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         g_date_row = nullptr;
         g_time_row = nullptr;
+        g_time_source_row = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
     show_screen(scr);

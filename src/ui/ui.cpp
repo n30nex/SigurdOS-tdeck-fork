@@ -22,6 +22,7 @@
 #include "chat_screen.h"
 #include "screens.h"
 #include "navigation.h"
+#include "notifications.h"
 #include "theme.h"
 #include "responsive.h"
 using namespace sigurdos::responsive;
@@ -41,6 +42,86 @@ static lv_obj_t* splash_status = nullptr;
 static uint32_t splash_start = 0;
 static bool home_shown = false;
 static bool persisted_state_loaded = false;
+
+struct ActivityFlashCtx {
+    lv_obj_t* flash;
+    uint8_t step;
+};
+
+static ActivityFlashCtx* activity_flash_ctx = nullptr;
+static lv_timer_t* activity_flash_timer = nullptr;
+
+static uint32_t activity_flash_color(uint8_t step)
+{
+    return (step % 2 == 0) ? 0xffffff : theme::ACCENT;
+}
+
+static void activity_flash_cleanup(bool delete_flash)
+{
+    if (activity_flash_timer) {
+        lv_timer_t* timer = activity_flash_timer;
+        activity_flash_timer = nullptr;
+        lv_timer_del(timer);
+    }
+    if (activity_flash_ctx) {
+        if (delete_flash && activity_flash_ctx->flash &&
+            lv_obj_is_valid(activity_flash_ctx->flash)) {
+            lv_obj_del_async(activity_flash_ctx->flash);
+        }
+        delete activity_flash_ctx;
+        activity_flash_ctx = nullptr;
+    }
+}
+
+static void activity_flash_timer_cb(lv_timer_t* timer)
+{
+    auto* ctx = (ActivityFlashCtx*)lv_timer_get_user_data(timer);
+    if (!ctx || !ctx->flash || !lv_obj_is_valid(ctx->flash)) {
+        if (activity_flash_timer == timer) activity_flash_timer = nullptr;
+        if (activity_flash_ctx == ctx) activity_flash_ctx = nullptr;
+        delete ctx;
+        lv_timer_del(timer);
+        return;
+    }
+
+    if (ctx->step >= 4) {
+        lv_obj_del_async(ctx->flash);
+        if (activity_flash_timer == timer) activity_flash_timer = nullptr;
+        if (activity_flash_ctx == ctx) activity_flash_ctx = nullptr;
+        delete ctx;
+        lv_timer_del(timer);
+        return;
+    }
+
+    lv_obj_set_style_bg_color(ctx->flash, lv_color_hex(activity_flash_color(ctx->step)), 0);
+    ctx->step++;
+}
+
+static void show_activity_flash()
+{
+    lv_obj_t* active = lv_scr_act();
+    if (!active) return;
+
+    activity_flash_cleanup(true);
+
+    lv_obj_t* flash = lv_obj_create(active);
+    lv_obj_set_size(flash, LV_PCT(100), 3);
+    lv_obj_align(flash, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(flash, lv_color_hex(activity_flash_color(0)), 0);
+    lv_obj_set_style_bg_opa(flash, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(flash, 0, 0);
+    lv_obj_set_style_pad_all(flash, 0, 0);
+    lv_obj_remove_flag(flash, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_move_foreground(flash);
+
+    activity_flash_ctx = new ActivityFlashCtx{flash, 1};
+    activity_flash_timer = lv_timer_create(activity_flash_timer_cb, 90, activity_flash_ctx);
+    if (!activity_flash_timer) {
+        lv_obj_delete_delayed(flash, 360);
+        delete activity_flash_ctx;
+        activity_flash_ctx = nullptr;
+    }
+}
 
 void init()
 {
@@ -158,12 +239,42 @@ void loop()
             last_msg_poll = millis();
             static sigurdos::mesh::MeshMessage msgs[4];  // static to avoid ~1300B stack in loop()
             int n = sigurdos::mesh::pollMessages(msgs, 4);
-            bool got_new = (n > 0);
+            bool incoming_msg = false;
+            bool incoming_channel_msg = false;
+            int incoming_count = 0;
+            int incoming_visible_count = 0;
             for (int i = 0; i < n; i++) {
-                chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text, msgs[i].is_self);
+                const bool rendered_visible =
+                    chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text,
+                                        msgs[i].is_self, msgs[i].txt_type);
+                if (!msgs[i].is_self) {
+                    incoming_msg = true;
+                    incoming_count++;
+                    if (rendered_visible) incoming_visible_count++;
+                    if (msgs[i].channel[0]) incoming_channel_msg = true;
+                }
             }
-            if (got_new && !sigurdos::prefs_get().buzzer_quiet) {
-                sigurdos::hal::buzzer_beep_short();
+            static uint32_t last_activity_seq = 0;
+            const uint32_t activity_seq = sigurdos::mesh::getMeshActivitySeq();
+            const bool got_new_activity = (activity_seq != last_activity_seq);
+            const bool all_incoming_visible =
+                incoming_count > 0 && incoming_visible_count == incoming_count;
+            const auto notification = activity_notification_plan(
+                got_new_activity, sigurdos::prefs_get().buzzer_quiet,
+                incoming_msg, incoming_channel_msg, all_incoming_visible);
+            if (got_new_activity) {
+                last_activity_seq = activity_seq;
+            }
+            if (notification.flash) {
+                show_activity_flash();
+                home_screen_update_badges();
+            }
+            if (notification.buzz) {
+                if (notification.buzz_pattern == sigurdos::hal::BuzzerPatternKind::Double) {
+                    sigurdos::hal::buzzer_beep_double();
+                } else {
+                    sigurdos::hal::buzzer_beep_short();
+                }
             }
             // Refresh ACK status on the current chat screen
             chat_screen_refresh_acks();

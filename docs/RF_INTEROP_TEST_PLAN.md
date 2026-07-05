@@ -310,7 +310,7 @@ Expected observations:
 Pass if transmit and receive are both proven by peer logs and DUT packet/chat
 evidence. Fail if only local UI state changed.
 
-### TX4: Room Server Login And Fetch
+### TX4: Room Server Login And Post
 
 Prerequisite: the room server is discovered over RF. Use `addroomserver` only as
 a dry UI rehearsal; it does not prove RF discovery.
@@ -321,7 +321,6 @@ Commands:
 contactstats
 login Room-0703 <password>
 loginstat Room-0703
-fetchmsgs Room-0703 #testingsigurdos
 nav chat
 widgets
 nav heard
@@ -333,13 +332,16 @@ Expected observations:
 - `contactstats` reports at least one room server before login.
 - `login` returns `OK` or a pending state that later becomes `status=2` in
   `loginstat`.
-- `fetchmsgs` returns `OK`.
-- Chat shows fetched room messages or a clear room-server response.
-- Heard/Packets and/or peer room-server logs show exactly one fetch request.
+- The room-server post path accepts a test message or shows a clear visible
+  failure state.
+- Chat shows the room post state, and Heard/Packets and/or peer room-server
+  logs show the room-server interaction.
 
-Pass if login state, fetch request, and room response are all captured. Fail if
-the room was only injected locally, if no response is visible, or if repeated
-fetches were needed without being called out.
+Pass if login state, room post behavior, and a visible response/failure state
+are all captured. Fail if the room was only injected locally or if no response
+is visible. Stock MeshCore room servers do not currently expose a compatible
+fetch/read request, so `fetchmsgs` is intentionally unsupported in the current
+release path.
 
 ### TX5: Repeater Status Request
 

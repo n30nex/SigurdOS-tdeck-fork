@@ -51,6 +51,10 @@ inline SigurdosMapDefaultView sigurdos_map_default_view_for_radio_profile(
         return {SIGURDOS_MAP_DEFAULT_CA_LAT, SIGURDOS_MAP_DEFAULT_CA_LON,
                 SIGURDOS_MAP_DEFAULT_CA_ZOOM};
     }
+    if (radio_profile_id && std::strcmp(radio_profile_id, "na_rec") == 0) {
+        return {SIGURDOS_MAP_DEFAULT_US_LAT, SIGURDOS_MAP_DEFAULT_US_LON,
+                SIGURDOS_MAP_DEFAULT_US_ZOOM};
+    }
     return {SIGURDOS_MAP_DEFAULT_US_LAT, SIGURDOS_MAP_DEFAULT_US_LON,
             SIGURDOS_MAP_DEFAULT_US_ZOOM};
 }

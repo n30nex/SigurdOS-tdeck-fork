@@ -20,6 +20,7 @@
 /**
  * Unit tests for NodePrefs defaults and native preference persistence.
  */
+#include <cstdio>
 #include <cstring>
 
 #include <gtest/gtest.h>
@@ -34,6 +35,16 @@ protected:
         sigurdos::NodePrefs defaults;
         defaults.set_defaults();
         sigurdos::prefs_set(defaults);
+
+        const char* names[] = {
+            "Repeater A", "Repeater B", "Repeater C", "Repeater D",
+            "Slot0", "Slot1", "Slot2", "Slot3",
+            "Slot4", "Slot5", "Slot6", "Slot7", "Slot8"
+        };
+        for (const char* name : names) {
+            sigurdos::removeRepeaterPassword(name);
+        }
+        sigurdos::clearMapTileProvider();
     }
 };
 
@@ -42,6 +53,26 @@ TEST_F(PrefsTest, DefaultRxBoostedGainIsDisabled) {
     prefs.set_defaults();
 
     EXPECT_FALSE(prefs.rx_boosted_gain);
+}
+
+TEST_F(PrefsTest, TxPowerNormalizationKeepsUnconfiguredAndClampsConfiguredRange) {
+    EXPECT_EQ(0, sigurdos::prefs_normalize_tx_power_dbm(0));
+    EXPECT_EQ(2, sigurdos::prefs_normalize_tx_power_dbm(-9));
+    EXPECT_EQ(2, sigurdos::prefs_normalize_tx_power_dbm(1));
+    EXPECT_EQ(2, sigurdos::prefs_normalize_tx_power_dbm(2));
+    EXPECT_EQ(22, sigurdos::prefs_normalize_tx_power_dbm(23));
+}
+
+TEST_F(PrefsTest, TxPowerClampAppliesThroughNativePrefsMock) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.tx_power_dbm = -9;
+    ASSERT_TRUE(sigurdos::prefs_save(prefs));
+    EXPECT_EQ(2, sigurdos::prefs_get().tx_power_dbm);
+
+    prefs.tx_power_dbm = 23;
+    sigurdos::prefs_set(prefs);
+    EXPECT_EQ(22, sigurdos::prefs_get().tx_power_dbm);
 }
 
 TEST_F(PrefsTest, RxBoostedGainRoundTripsThroughPrefsSetAndGet) {
@@ -117,6 +148,22 @@ TEST_F(PrefsTest, KeyboardLayoutRoundTripsThroughPrefs) {
     EXPECT_EQ(9, loaded.kbd_layout);
 }
 
+TEST_F(PrefsTest, KeyboardRawOverlayDefaultsOffAndRoundTrips) {
+    sigurdos::NodePrefs defaults;
+    defaults.set_defaults();
+    EXPECT_FALSE(defaults.kbd_raw_overlay);
+
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.kbd_raw_overlay = true;
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_TRUE(loaded.kbd_raw_overlay);
+}
+
 TEST_F(PrefsTest, RadioProfileRoundTripsThroughPrefs) {
     sigurdos::NodePrefs saved;
     saved.set_defaults();
@@ -129,6 +176,122 @@ TEST_F(PrefsTest, RadioProfileRoundTripsThroughPrefs) {
     loaded.set_defaults();
     ASSERT_TRUE(sigurdos::prefs_load(loaded));
     EXPECT_STREQ("ca_902_928", loaded.radio_profile);
+}
+
+TEST_F(PrefsTest, MapLocationRoundTripsThroughPrefs) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.map_location_valid = true;
+    saved.map_lat = 43653200;
+    saved.map_lon = -79383200;
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_TRUE(loaded.map_location_valid);
+    EXPECT_EQ(43653200, loaded.map_lat);
+    EXPECT_EQ(-79383200, loaded.map_lon);
+}
+
+TEST_F(PrefsTest, WifiCredentialReuseRequiresMatchingSsid) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    std::strncpy(prefs.wifi_ssid, "Workshop", sizeof(prefs.wifi_ssid) - 1);
+    std::strncpy(prefs.wifi_password, "correct horse battery staple",
+                 sizeof(prefs.wifi_password) - 1);
+
+    EXPECT_TRUE(sigurdos::prefs_wifi_ssid_matches(prefs, "Workshop"));
+    EXPECT_FALSE(sigurdos::prefs_wifi_ssid_matches(prefs, "Guest"));
+    EXPECT_FALSE(sigurdos::prefs_wifi_ssid_matches(prefs, ""));
+    EXPECT_FALSE(sigurdos::prefs_wifi_ssid_matches(prefs, nullptr));
+}
+
+TEST_F(PrefsTest, WifiCredentialReuseHonorsEncryptedNetworks) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    std::strncpy(prefs.wifi_ssid, "Workshop", sizeof(prefs.wifi_ssid) - 1);
+
+    EXPECT_TRUE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", false));
+    EXPECT_FALSE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", true));
+
+    std::strncpy(prefs.wifi_password, "secret", sizeof(prefs.wifi_password) - 1);
+    EXPECT_TRUE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Workshop", true));
+    EXPECT_FALSE(sigurdos::prefs_wifi_credentials_reusable(prefs, "Guest", false));
+}
+
+TEST_F(PrefsTest, MapTileProviderUrlValidationRejectsUnsafeValues) {
+    EXPECT_TRUE(sigurdos::mapTileProviderUrlValid("https://tiles.example.test/osm"));
+    EXPECT_TRUE(sigurdos::mapTileProviderUrlValid("http://localhost:8080/tiles"));
+
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid(nullptr));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid(""));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid("ftp://tiles.example.test"));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid("https://tiles.example.test/with space"));
+    EXPECT_FALSE(sigurdos::mapTileProviderUrlValid("https://tiles.example.test/<bad>"));
+}
+
+TEST_F(PrefsTest, MapTileProviderSaveLoadAndClearRoundTrips) {
+    char loaded[sigurdos::MAP_TILE_PROVIDER_MAX_LEN] = {};
+
+    EXPECT_FALSE(sigurdos::loadMapTileProvider(loaded, sizeof(loaded)));
+    ASSERT_TRUE(sigurdos::saveMapTileProvider("  https://tiles.example.test/osm/  "));
+    ASSERT_TRUE(sigurdos::loadMapTileProvider(loaded, sizeof(loaded)));
+    EXPECT_STREQ("https://tiles.example.test/osm", loaded);
+
+    ASSERT_TRUE(sigurdos::clearMapTileProvider());
+    loaded[0] = '\0';
+    EXPECT_FALSE(sigurdos::loadMapTileProvider(loaded, sizeof(loaded)));
+    EXPECT_STREQ("", loaded);
+}
+
+TEST_F(PrefsTest, RepeaterPasswordSaveLoadAndForgetRoundTrips) {
+    char loaded[64] = {0};
+
+    EXPECT_FALSE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "admin-secret"));
+    ASSERT_TRUE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    EXPECT_STREQ("admin-secret", loaded);
+
+    sigurdos::removeRepeaterPassword("Repeater A");
+    loaded[0] = '\0';
+    EXPECT_FALSE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    EXPECT_STREQ("", loaded);
+}
+
+TEST_F(PrefsTest, RepeaterPasswordSaveUpdatesExistingContactSlot) {
+    char loaded[64] = {0};
+
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "old-secret"));
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "new-secret"));
+
+    ASSERT_TRUE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    EXPECT_STREQ("new-secret", loaded);
+}
+
+TEST_F(PrefsTest, RepeaterPasswordForgetCompactsRemainingEntries) {
+    char loaded[64] = {0};
+
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater A", "alpha"));
+    ASSERT_TRUE(sigurdos::saveRepeaterPassword("Repeater B", "bravo"));
+    sigurdos::removeRepeaterPassword("Repeater A");
+
+    EXPECT_FALSE(sigurdos::loadRepeaterPassword("Repeater A", loaded, sizeof(loaded)));
+    loaded[0] = '\0';
+    ASSERT_TRUE(sigurdos::loadRepeaterPassword("Repeater B", loaded, sizeof(loaded)));
+    EXPECT_STREQ("bravo", loaded);
+}
+
+TEST_F(PrefsTest, RepeaterPasswordStoreRejectsNinthSavedContact) {
+    char name[16];
+    for (int i = 0; i < 8; i++) {
+        std::snprintf(name, sizeof(name), "Slot%d", i);
+        ASSERT_TRUE(sigurdos::saveRepeaterPassword(name, "secret"));
+    }
+
+    EXPECT_FALSE(sigurdos::saveRepeaterPassword("Slot8", "secret"));
+    EXPECT_TRUE(sigurdos::saveRepeaterPassword("Slot7", "updated"));
 }
 
 } // namespace

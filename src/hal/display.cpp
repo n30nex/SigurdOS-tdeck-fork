@@ -257,6 +257,14 @@ static void focus_chat_input_if_active()
     }
 }
 
+static bool focused_keyboard_target_is_textarea()
+{
+    lv_group_t* g = lv_group_get_default();
+    lv_obj_t* focused = g ? lv_group_get_focused(g) : nullptr;
+    return focused && lv_obj_is_valid(focused) &&
+           lv_obj_check_type(focused, &lv_textarea_class);
+}
+
 static void close_character_picker(bool restore_focus)
 {
     lv_obj_t* target = character_picker_target;
@@ -678,6 +686,19 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
             if (dispatch_keyboard_layout_key(key, data)) return;
             data->key = keyboard_key_to_lvgl_key(key);
             data->state = LV_INDEV_STATE_PRESSED;
+            sigurdos_display_wake();
+            sigurdos_keyboard_consume_key();
+            return;
+        }
+
+        if (key == 0x08 && !focused_keyboard_target_is_textarea()) {
+            if (sigurdos::ui::can_go_back()) {
+                sigurdos::ui::go_back();
+            } else {
+                sigurdos::ui::handle_back_swipe(SigurdOSTrackballEvent::Left);
+                sigurdos::ui::handle_back_swipe(SigurdOSTrackballEvent::Left);
+            }
+            data->state = LV_INDEV_STATE_RELEASED;
             sigurdos_display_wake();
             sigurdos_keyboard_consume_key();
             return;

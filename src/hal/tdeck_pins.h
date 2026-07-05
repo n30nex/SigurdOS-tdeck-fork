@@ -85,6 +85,7 @@ static constexpr uint64_t SIGURDOS_LORA_DIO1_WAKE_MASK =
 // T-Deck Keyboard (ESP32-C3 I2C slave at 0x55)
 // ════════════════════════════════════════════════════════
 #define TDECK_KB_I2C_ADDR  0x55   // keyboard MCU I2C address
+#define PIN_KEYBOARD_INT     46   // LilyGO T-Deck keyboard interrupt
 
 // ════════════════════════════════════════════════════════
 // Trackball / User Button
@@ -121,9 +122,12 @@ static constexpr uint64_t SIGURDOS_LORA_DIO1_WAKE_MASK =
 #define PIN_SD_CS        39  // T-Deck microSD chip select (GPIO 39)
 
 // ════════════════════════════════════════════════════════
-// Audio Buzzer
+// Audio output (I2S speaker)
 // ════════════════════════════════════════════════════════
-#define PIN_BUZZER       46
+#define PIN_I2S_WS        5
+#define PIN_I2S_BCK       7
+#define PIN_I2S_DOUT      6
+#define PIN_BUZZER        SIGURDOS_GPIO_DISABLED
 
 // ════════════════════════════════════════════════════════
 // LoRa Radio Defaults

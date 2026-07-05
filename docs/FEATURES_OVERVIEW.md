@@ -51,7 +51,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
   - [GPS NMEA Parser](#gps-nmea-parser)
   - [SD Card Storage](#sd-card-storage)
   - [LoRa SX1262 Radio](#lora-sx1262-radio)
-  - [Buzzer](#buzzer)
+  - [Notification Audio](#notification-audio)
   - [Peripheral Power](#peripheral-power)
 - [Offline Map Renderer](#offline-map-renderer)
 
@@ -63,7 +63,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
 |-------|-------------|-------------|
 | **UI** | Discord-inspired dark pixel interface, 12-tile home grid, chat, settings, and diagnostics screens | `src/ui/*` |
 | **Mesh** | Full MeshCore protocol stack — routing, encryption, group channels, direct messages | `src/mesh/*`, `lib/meshcore/` |
-| **HAL** | All T-Deck peripherals — display, touch, keyboard, trackball, GPS, battery, SD, buzzer, LoRa | `src/hal/*` |
+| **HAL** | All T-Deck peripherals — display, touch, keyboard, trackball, GPS, battery, SD, notification audio, LoRa | `src/hal/*` |
 | **Apps** | Offline map renderer with PNG tile decode and LRU PSRAM cache | `src/app/*` |
 | **Boot** | Sequenced startup: board → display → mesh → UI → peripherals | `src/main.cpp` |
 
@@ -71,7 +71,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
 
 ## Home Screen — 12-Grid Tiles
 
-The home screen is a 4×3 adaptive icon grid with a top bar (channel hashtags, 24h time) and a bottom bar (device name, signal bars, battery %). Navigation uses the 5-direction trackball or capacitive touch.
+The home screen is a 4×3 adaptive icon grid with a top bar (channel snapshot, GPS/WiFi/BLE status, 24h time) and a bottom bar (device name, battery %). Navigation uses the 5-direction trackball or capacitive touch.
 
 See [`src/ui/home_screen.cpp`](../src/ui/home_screen.cpp), [`src/ui/home_screen.h`](../src/ui/home_screen.h).
 
@@ -161,14 +161,15 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Back stack** — linear stack (drops oldest when full, no wrapping), with `can_go_back()` and `go_back()`
 - **Universal back-swipe** — two-swipe commit pattern: first Left neutralises, second Left triggers back
 - **Top bar** — ← back button, channel hashtag snapshot, 24h time
-- **Bottom bar** — device name, signal bars, battery percentage
+- **Top bar status** — compact `G W B` labels for GPS, WiFi, and BLE state
+- **Bottom bar** — device name and battery percentage
 **Sources:** [`src/ui/navigation.cpp`](../src/ui/navigation.cpp), [`src/ui/navigation.h`](../src/ui/navigation.h), [`src/ui/screens.h`](../src/ui/screens.h)
 
 ### Pixel Theme System
 - **Discord-inspired dark palette** — deep black `#0F0F0F` background, cyan `#00BFFF` accents
 - **Color constants** — 7 background levels, 7 accent colors, 4 text colors, channel colors
 - **Style helpers** — `apply_dark_bg()`, `apply_pixel_card()`, `apply_pixel_btn()`, `apply_pixel_btn_outline()`, `apply_pixel_input()`, `apply_pixel_badge()`, `apply_topbar_icon_btn()`
-- **Signal dots** — `create_signal_dots()` draws an iOS-style 5-dot RSSI indicator in the top bar (cyan filled dots for active, muted outlines for inactive)
+- **Top bar status labels** — `add_topbar_status_indicators()` draws compact GPS/WiFi/BLE state labels without RSSI dot widgets
 - **Focus style** — yellow accent border for keyboard/trackball focus state
 - **Zero radius** on all elements, 2px minimum borders
 **Sources:** [`src/ui/theme.h`](../src/ui/theme.h), [`test/test_theme/`](../test/test_theme/)
@@ -241,10 +242,10 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 **Sources:** [`src/mesh/contact_store.cpp`](../src/mesh/contact_store.cpp), [`src/mesh/contact_store.h`](../src/mesh/contact_store.h), [`src/mesh/persistence_store.cpp`](../src/mesh/persistence_store.cpp), [`src/mesh/persistence_store.h`](../src/mesh/persistence_store.h)
 
 ### Web Flasher Support
-- **Pre-built binaries** in `webflasher/` — bootloader, partitions, boot_app0, firmware, merged full image, and the Launcher-named copy
+- **Generated binaries** in `webflasher/` after a firmware build — bootloader, partitions, boot_app0, firmware, merged full image, and the Launcher-named copy
 - **Manifest JSON** — versioned metadata (version, git SHA, SHA-256 checksums, offsets) for the `flasher.sigurdos.dev` custom firmware installer
 - **4-partition flash layout** — bootloader (0x0000), partitions (0x8000), boot_app0 (0xe000), firmware (0x10000)
-**Sources:** [`webflasher/manifest.json`](../webflasher/manifest.json), [`firmware/README.md`](../firmware/README.md), [`webflasher/`](../webflasher/)
+**Sources:** [`scripts/merge_bin.py`](../scripts/merge_bin.py), [`firmware/README.md`](../firmware/README.md), [`platformio.ini`](../platformio.ini)
 
 ### OTA Firmware Update
 - **AP upload OTA** — Settings → System → "OTA Update" starts a `SigurdOS-OTA` WiFi AP and upload page at `192.168.4.1`.
@@ -369,8 +370,8 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Configurable:** Frequency, bandwidth, spreading factor, coding rate, TX power via Radio Setup screen
 **Sources:** [`src/hal/tdeck_pins.h`](../src/hal/tdeck_pins.h), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`lib/meshcore/`](../lib/meshcore/)
 
-### Buzzer
-- **Pin:** GPIO 46 (active low)
+### Notification Audio
+- **Output:** T-Deck I2S speaker (`WS=5`, `BCK=7`, `DOUT=6`); GPIO 46 is the keyboard interrupt and must not be driven for audio
 - **Non-blocking pattern playback** — notification patterns (short/double beep) are stepped by `buzzer_loop()` from the main loop instead of blocking delays
 - **Quiet mode** — buzzer can be silenced via preferences
 **Sources:** [`src/hal/buzzer.cpp`](../src/hal/buzzer.cpp), [`src/hal/buzzer.h`](../src/hal/buzzer.h)

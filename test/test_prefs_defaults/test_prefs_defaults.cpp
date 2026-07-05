@@ -86,12 +86,16 @@ TEST(PrefsDefaultsTest, UiConnectivityAndRegionDefaultsAreInitialized) {
 
     EXPECT_EQ(127, prefs.kbd_backlight);
     EXPECT_EQ(0, prefs.kbd_layout);
+    EXPECT_FALSE(prefs.kbd_raw_overlay);
     EXPECT_EQ(200, prefs.display_brightness);
     EXPECT_EQ(30, prefs.auto_off_timeout);
     EXPECT_EQ(0, prefs.theme_id);
     EXPECT_FALSE(prefs.buzzer_quiet);
     EXPECT_EQ('\0', prefs.wifi_ssid[0]);
     EXPECT_EQ('\0', prefs.wifi_password[0]);
+    EXPECT_FALSE(prefs.map_location_valid);
+    EXPECT_EQ(0, prefs.map_lat);
+    EXPECT_EQ(0, prefs.map_lon);
     EXPECT_EQ('\0', prefs.active_region[0]);
 }
 

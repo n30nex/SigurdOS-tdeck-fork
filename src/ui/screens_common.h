@@ -19,13 +19,14 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <lvgl.h>
+#include <cstdint>
 #include "navigation.h"
 
 namespace sigurdos::ui {
 
 // Shared screen infrastructure (implementation in screens_common.cpp).
 // make_screen_full — builds the consistent top bar (back button, title,
-// time, signal dots) and bottom bar (device name, WiFi icon, battery).
+// time, GPS/WiFi/BLE status) and bottom bar (device name, WiFi icon, battery).
 lv_obj_t* make_screen_full(const char* title);
 
 // Load a fully built screen object (lv_scr_load wrapper).
@@ -34,6 +35,11 @@ void show_screen(lv_obj_t* scr);
 // Update the text inside a settings row button (used after live value set).
 // Shared by the Bluetooth and Settings screens.
 void update_row_label(lv_obj_t* row, const char* new_text);
+
+// Compact top-bar GPS/WiFi/BLE status indicators. Screens with custom top bars
+// can opt in by adding these to their top object.
+void add_topbar_status_indicators(lv_obj_t* top, int right_offset_px = -76);
+void update_topbar_status();
 
 // Device PIN gate — true while a previous unlock is within the grace window.
 bool pin_grace_active();
@@ -48,7 +54,8 @@ void add_contact_pager(lv_obj_t* scr, int page, int pages, int total,
 
 // Contact/repeater dialogs shared by the Contact detail and Repeater detail
 // screens (implemented in screens/screen_contacts.cpp).
-void show_login_password_dialog(const char* contact_name);
+void show_login_password_dialog(const char* contact_name,
+                                uint8_t contact_type_hint = 0);
 void show_admin_cmd_dialog(const char* contact_name);
 void show_fetch_msgs_dialog(const char* contact_name);
 

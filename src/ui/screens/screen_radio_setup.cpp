@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../repeat_button.h"
 #include <SPIFFS.h>
 #include "../chat_screen.h"
 #include "../theme.h"
@@ -61,7 +62,7 @@ enum RfField : int {
 };
 
 static lv_obj_t* s_custom_rf_labels[RF_FIELD_COUNT] = {};
-static lv_obj_t* s_main_profile_btns[8] = {};
+static lv_obj_t* s_main_profile_btns[16] = {};
 static lv_obj_t* s_main_sf_label = nullptr;
 static lv_obj_t* s_main_bw_label = nullptr;
 static lv_obj_t* s_main_cr_label = nullptr;
@@ -213,6 +214,14 @@ static void rf_adjust_cb(lv_event_t* e)
     adjust_rf_field(field, delta);
 }
 
+static void rf_adjust_action(void* user_data)
+{
+    intptr_t packed = (intptr_t)user_data;
+    RfField field = (RfField)((packed >> 8) & 0xFF);
+    int delta = (packed & 0xFF) == 1 ? 1 : -1;
+    adjust_rf_field(field, delta);
+}
+
 static lv_obj_t* make_rf_button(lv_obj_t* parent, int w, int h,
                                 const char* text, uint32_t color)
 {
@@ -240,8 +249,8 @@ static void add_custom_rf_row(lv_obj_t* parent, const char* name, RfField field,
 
     lv_obj_t* minus = make_rf_button(parent, 34, 22, "-", ACCENT_RED);
     lv_obj_align(minus, LV_ALIGN_TOP_LEFT, 76, y);
-    lv_obj_add_event_cb(minus, rf_adjust_cb, LV_EVENT_CLICKED,
-                        (void*)(intptr_t)(((int)field << 8) | 0));
+    attach_hold_repeat(minus, rf_adjust_action,
+                       (void*)(intptr_t)(((int)field << 8) | 0));
 
     lv_obj_t* value = make_rf_button(parent, 98, 22, "", BG_INPUT);
     lv_obj_align(value, LV_ALIGN_TOP_LEFT, 116, y);
@@ -251,8 +260,8 @@ static void add_custom_rf_row(lv_obj_t* parent, const char* name, RfField field,
 
     lv_obj_t* plus = make_rf_button(parent, 34, 22, "+", ACCENT);
     lv_obj_align(plus, LV_ALIGN_TOP_LEFT, 222, y);
-    lv_obj_add_event_cb(plus, rf_adjust_cb, LV_EVENT_CLICKED,
-                        (void*)(intptr_t)(((int)field << 8) | 1));
+    attach_hold_repeat(plus, rf_adjust_action,
+                       (void*)(intptr_t)(((int)field << 8) | 1));
 }
 
 void custom_rf_screen_show()
@@ -471,13 +480,11 @@ void radio_setup_screen_show()
 
     auto* sf_minus = make_rf_button(cont, 24, 20, "-", ACCENT_RED);
     lv_obj_align(sf_minus, LV_ALIGN_TOP_LEFT, rx + rw - 54, ry - 2);
-    lv_obj_add_event_cb(sf_minus, [](lv_event_t*) { adjust_rf_field(RF_SF, -1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(sf_minus, [](void*) { adjust_rf_field(RF_SF, -1); }, nullptr);
 
     auto* sf_plus = make_rf_button(cont, 24, 20, "+", ACCENT);
     lv_obj_align(sf_plus, LV_ALIGN_TOP_LEFT, rx + rw - 26, ry - 2);
-    lv_obj_add_event_cb(sf_plus, [](lv_event_t*) { adjust_rf_field(RF_SF, 1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(sf_plus, [](void*) { adjust_rf_field(RF_SF, 1); }, nullptr);
     ry += 24;
 
     // BW row
@@ -490,13 +497,11 @@ void radio_setup_screen_show()
 
     auto* bw_minus = make_rf_button(cont, 24, 20, "-", ACCENT_RED);
     lv_obj_align(bw_minus, LV_ALIGN_TOP_LEFT, rx + rw - 54, ry - 2);
-    lv_obj_add_event_cb(bw_minus, [](lv_event_t*) { adjust_rf_field(RF_BW, -1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(bw_minus, [](void*) { adjust_rf_field(RF_BW, -1); }, nullptr);
 
     auto* bw_plus = make_rf_button(cont, 24, 20, "+", ACCENT);
     lv_obj_align(bw_plus, LV_ALIGN_TOP_LEFT, rx + rw - 26, ry - 2);
-    lv_obj_add_event_cb(bw_plus, [](lv_event_t*) { adjust_rf_field(RF_BW, 1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(bw_plus, [](void*) { adjust_rf_field(RF_BW, 1); }, nullptr);
     ry += 24;
 
     // CR row
@@ -509,13 +514,11 @@ void radio_setup_screen_show()
 
     auto* cr_minus = make_rf_button(cont, 24, 20, "-", ACCENT_RED);
     lv_obj_align(cr_minus, LV_ALIGN_TOP_LEFT, rx + rw - 54, ry - 2);
-    lv_obj_add_event_cb(cr_minus, [](lv_event_t*) { adjust_rf_field(RF_CR, -1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(cr_minus, [](void*) { adjust_rf_field(RF_CR, -1); }, nullptr);
 
     auto* cr_plus = make_rf_button(cont, 24, 20, "+", ACCENT);
     lv_obj_align(cr_plus, LV_ALIGN_TOP_LEFT, rx + rw - 26, ry - 2);
-    lv_obj_add_event_cb(cr_plus, [](lv_event_t*) { adjust_rf_field(RF_CR, 1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(cr_plus, [](void*) { adjust_rf_field(RF_CR, 1); }, nullptr);
     ry += 24;
 
     // TX power row
@@ -528,13 +531,11 @@ void radio_setup_screen_show()
 
     auto* pwr_minus = make_rf_button(cont, 24, 20, "-", ACCENT_RED);
     lv_obj_align(pwr_minus, LV_ALIGN_TOP_LEFT, rx + rw - 54, ry - 2);
-    lv_obj_add_event_cb(pwr_minus, [](lv_event_t*) { adjust_rf_field(RF_PWR, -1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(pwr_minus, [](void*) { adjust_rf_field(RF_PWR, -1); }, nullptr);
 
     auto* pwr_plus = make_rf_button(cont, 24, 20, "+", ACCENT);
     lv_obj_align(pwr_plus, LV_ALIGN_TOP_LEFT, rx + rw - 26, ry - 2);
-    lv_obj_add_event_cb(pwr_plus, [](lv_event_t*) { adjust_rf_field(RF_PWR, 1); },
-                        LV_EVENT_CLICKED, nullptr);
+    attach_hold_repeat(pwr_plus, [](void*) { adjust_rf_field(RF_PWR, 1); }, nullptr);
     ry += 28;
 
     // ── RX boosted gain toggle ──────────────────────

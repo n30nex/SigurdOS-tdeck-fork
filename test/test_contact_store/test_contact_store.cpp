@@ -23,6 +23,7 @@ StoredContact makeContact(uint8_t seed, const char* name, uint8_t type, uint8_t 
     std::strncpy(contact.name, name, sizeof(contact.name) - 1);
     contact.type = type;
     contact.perm = perm;
+    contact.sync_since = 1000u + seed;
     return contact;
 }
 
@@ -52,6 +53,16 @@ void appendInt(std::vector<uint8_t>& bytes, int value)
 }
 
 void appendRecord(std::vector<uint8_t>& bytes, const StoredContact& contact)
+{
+    bytes.insert(bytes.end(), contact.pub_key, contact.pub_key + SIGURDOS_CONTACT_PUBKEY_LEN);
+    bytes.insert(bytes.end(), contact.name, contact.name + SIGURDOS_CONTACT_NAME_LEN);
+    bytes.push_back(contact.type);
+    bytes.push_back(contact.perm);
+    const uint8_t* sync = reinterpret_cast<const uint8_t*>(&contact.sync_since);
+    bytes.insert(bytes.end(), sync, sync + 4);
+}
+
+void appendRecordV1(std::vector<uint8_t>& bytes, const StoredContact& contact)
 {
     bytes.insert(bytes.end(), contact.pub_key, contact.pub_key + SIGURDOS_CONTACT_PUBKEY_LEN);
     bytes.insert(bytes.end(), contact.name, contact.name + SIGURDOS_CONTACT_NAME_LEN);
@@ -120,8 +131,8 @@ TEST_F(ContactStoreTest, LegacyFileLoadsUnchanged) {
     // Hand-written legacy file: bare count + records, no magic/version.
     std::vector<uint8_t> legacy;
     appendInt(legacy, 2);
-    appendRecord(legacy, contacts[0]);
-    appendRecord(legacy, contacts[1]);
+    appendRecordV1(legacy, contacts[0]);
+    appendRecordV1(legacy, contacts[1]);
     writeBytes(path, legacy);
 
     StoredContact out[2]{};
@@ -130,9 +141,31 @@ TEST_F(ContactStoreTest, LegacyFileLoadsUnchanged) {
     EXPECT_STREQ(out[0].name, "Alice");
     EXPECT_EQ(out[0].type, 2);
     EXPECT_EQ(out[0].perm, 1);
+    EXPECT_EQ(out[0].sync_since, 0u);
     EXPECT_STREQ(out[1].name, "Bob");
     EXPECT_EQ(out[1].type, 3);
     EXPECT_EQ(out[1].perm, 2);
+    EXPECT_EQ(out[1].sync_since, 0u);
+}
+
+TEST_F(ContactStoreTest, VersionOneFileLoadsWithEmptySyncCursor) {
+    StoredContact contacts[2] = {
+        makeContact(0x10, "Alice", 2, 1),
+        makeContact(0x40, "Bob", 3, 2),
+    };
+
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 2, 1);
+    appendRecordV1(raw, contacts[0]);
+    appendRecordV1(raw, contacts[1]);
+    writeBytes(path, raw);
+
+    StoredContact out[2]{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 2);
+    EXPECT_STREQ(out[0].name, "Alice");
+    EXPECT_EQ(out[0].sync_since, 0u);
+    EXPECT_STREQ(out[1].name, "Bob");
+    EXPECT_EQ(out[1].sync_since, 0u);
 }
 
 TEST_F(ContactStoreTest, MagicParsesAsNegativeCountOnOldFirmware) {
@@ -208,11 +241,13 @@ TEST_F(ContactStoreTest, RoundTripPreservesOrderAndTerminatesName) {
     EXPECT_STREQ(out[0].name, "Alice");
     EXPECT_EQ(out[0].type, 7);
     EXPECT_EQ(out[0].perm, 0);
+    EXPECT_EQ(out[0].sync_since, contacts[0].sync_since);
 
     EXPECT_EQ(std::memcmp(out[1].pub_key, contacts[1].pub_key, SIGURDOS_CONTACT_PUBKEY_LEN), 0);
     EXPECT_EQ(out[1].name[SIGURDOS_CONTACT_NAME_LEN - 1], '\0');
     EXPECT_EQ(out[1].type, 8);
     EXPECT_EQ(out[1].perm, 3);
+    EXPECT_EQ(out[1].sync_since, contacts[1].sync_since);
 }
 
 TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {
@@ -221,9 +256,9 @@ TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {
 
     std::vector<uint8_t> raw;
     appendInt(raw, 2);
-    appendRecord(raw, first);
-    appendRecord(raw, second);
-    raw.resize(sizeof(int) + sigurdos::mesh::detail::CONTACT_STORE_RECORD_SIZE + 12);
+    appendRecordV1(raw, first);
+    appendRecordV1(raw, second);
+    raw.resize(sizeof(int) + sigurdos::mesh::detail::CONTACT_STORE_RECORD_SIZE_V1 + 12);
     writeBytes(path, raw);
 
     StoredContact out[4]{};

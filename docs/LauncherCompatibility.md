@@ -70,7 +70,8 @@ Every pin SigurdOS touches matches the pins Launcher's T-Deck port touches. **Th
 | Trackball Click | GPIO 0 | `SEL_BTN=0` | ✅ |
 | Batt ADC | GPIO 4 | `ANALOG_BAT_PIN=4` | ✅ |
 | Periph Power | GPIO 10 | `PIN_POWER_ON=10` | ✅ |
-| Buzzer | GPIO 46 | (not configured) | ✅ |
+| Keyboard INT | GPIO 46 | `BOARD_KEYBOARD_INT=46` | ✅ |
+| Speaker I2S | WS=5, BCK=7, DOUT=6 | (not configured) | ✅ |
 | GPS RX/TX | 44/43 | (not configured) | ✅ |
 
 ---
@@ -342,7 +343,7 @@ These subsystems have been verified to be compatible by source inspection:
 9. **WiFi:** Full WiFi stack init works regardless of Launcher
 10. **SPIFFS persistence (merged-bin install):** Launcher creates a fresh 1 MB SPIFFS partition — identity+contacts persist across reboots
 11. **Battery reading:** ADC on GPIO 4, same voltage divider, same efuse-calibrated `analogReadMilliVolts` approach
-12. **Buzzer:** GPIO 46, Launcher doesn't touch it
+12. **Notification audio:** I2S speaker on GPIO 5/7/6; GPIO 46 remains keyboard interrupt
 13. **Self-OTA gating:** Already implemented (C4) — WiFi and GitHub OTA are refused with explanation when running under Launcher
 14. **Runtime Launcher detection:** Already implemented (C3) — dual-signal probe correctly identifies Launcher vs standalone
 15. **Boot-time persistence diagnostic:** Already implemented (C5) — clear warning when SPIFFS mount fails under Launcher (app-only install)

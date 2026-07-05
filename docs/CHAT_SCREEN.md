@@ -36,7 +36,7 @@ The entry point when tapping the CHATS tile on the home screen.
 
 ```
 ┌──────────────────────────────────┐
-│ ←  #general  #random  #help  14:32│  ← top bar with back button, channel snapshot, time
+│ ←        Chat       G W B 14:32│  ← top bar with back button, status, time
 ├──────────────────────────────────┤
 │ [#] general                      │  ← row: avatar, channel name, preview, time, unread
 │    Last message here...    14:30 │
@@ -49,7 +49,7 @@ The entry point when tapping the CHATS tile on the home screen.
 ├──────────────────────────────────┤
 │        [+ Add # Channel]         │  ← opens add-channel dialog
 ├──────────────────────────────────┤
-│ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar: device name, signal bars, battery
+│ SigurdOS T-Deck              72%  │  ← bottom bar: device name, battery
 └──────────────────────────────────┘
 ```
 
@@ -66,13 +66,13 @@ Each row in the list shows:
 #### Top Bar (List View)
 
 - **← Back button** — returns to previous screen (dims to `TEXT_MUTED` if no history)
-- **Channel hashtag snapshot** — space-separated list of all known channels prefixed with `#`, auto-truncated with `LV_LABEL_LONG_DOT`
+- **Title** — centered `"Chat"` label
+- **GPS/WiFi/BLE status** — compact `G W B` labels to the left of the time; green means fixed/connected, yellow means active/pending, red means failed/no fix, muted means off
 - **24h time** — right-aligned, from `mesh::getCurrentTime()`
 
 #### Bottom Bar
 
 - **Device name** (left) — from `mesh::getOwnName()`
-- **Signal dots** (center) — iOS-style 5-dot RSSI indicator from `create_signal_dots()` in `theme.h`
 - **Battery %** (right) — turns red below 20%
 
 #### Add Channel Dialog
@@ -93,7 +93,7 @@ Opened by tapping a channel row or calling `chat_screen_open_dm()`.
 
 ```
 ┌──────────────────────────────────┐
-│ ← [#general] [#random] [#help] 14:32│  ← top bar: back, scrollable channel pills, time
+│ ← [#general] [#random]  GWB S 14:32│  ← top bar: back, channel pills, status, search, time
 ├──────────────────────────────────┤
 │ Alice                    14:30   │  ← incoming message bubble (blue-gray)
 │ ┌────────────────────────────┐   │
@@ -114,7 +114,7 @@ Opened by tapping a channel row or calling `chat_screen_open_dm()`.
 │ │ Message       │               │
 │ └───────────────┘               │
 ├──────────────────────────────────┤
-│ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar
+│ SigurdOS T-Deck              72%  │  ← bottom bar
 └──────────────────────────────────┘
 ```
 
@@ -126,7 +126,7 @@ Opened by tapping a channel row or calling `chat_screen_open_dm()`.
   - Selected pill: `ACCENT` (`#00BFFF`) background with white text
   - Unselected pills: `BG_TERTIARY` (`#1E1E1E`) background with `CHANNEL_HASH` cyan text
   - Clicking a pill switches `active_channel` and re-renders messages
-- **DM signal bars** — for DM conversations, shows the contact's per-node RSSI signal bars in the top bar (to the left of the time)
+- **GPS/WiFi/BLE status** — compact `G W B` labels to the left of the search/time controls
 - **24h time** — right-aligned
 
 #### Message List
@@ -220,7 +220,6 @@ DMs are synthetic channels prefixed with `"DM: "` followed by the contact name.
 - **Creation**: `chat_screen_open_dm(contact_name)` checks if a DM channel already exists; if not, appends one to the channel list and opens its messaging view
 - **Routing**: When sending, the prefix is stripped and `mesh::sendMessage(dest, text)` is called instead of `mesh::sendChannelMessage()`
 - **Incoming DM routing**: When a message arrives with an empty channel field, the sender's name is wrapped as `"DM: sender"` to map it to the correct conversation
-- **Signal indicator**: DM conversations show the contact's RSSI-based signal bars inline in the top bar
 
 ---
 

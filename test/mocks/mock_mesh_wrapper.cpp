@@ -10,10 +10,19 @@ namespace sigurdos::mesh {
 static MeshMessage     mock_msgs[8];
 static int             mock_msg_count = 0;
 static uint32_t        mock_drop_count = 0;
+static int             mock_unread_count = 0;
+static int             mock_unread_channels = 0;
+static int             mock_unread_dms = 0;
+static int             mock_unread_contacts = 0;
+static int             mock_unread_repeaters = 0;
+static uint32_t        mock_activity_seq = 0;
 static char            mock_own_name[32] = "MockNode";
 static int             mock_noise = -120;
 static int             mock_rssi  = -80;
 static float           mock_snr   = 5.0f;
+static char            mock_login_name[32] = "";
+static uint8_t         mock_login_status = LOGIN_STATUS_NONE;
+static uint8_t         mock_login_permission = 0;
 
 // ── Lifecycle ────────────────────────────────────
 
@@ -40,6 +49,13 @@ bool sendChannelMessageWithScopeKey(const char* channel_name, const char* text, 
     return sendChannelMessage(channel_name, text);
 }
 
+uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
+    (void)contact_name;
+    (void)channel_name;
+    (void)text;
+    return 0;
+}
+
 int pollMessages(MeshMessage* out, int max) {
     int drained = 0;
     while (drained < max && mock_msg_count > 0) {
@@ -51,6 +67,66 @@ int pollMessages(MeshMessage* out, int max) {
 
 int pendingMessageCount() { return mock_msg_count; }
 uint32_t getQueueDropCount() { return mock_drop_count; }
+int getUnreadMessageCount() { return mock_unread_count; }
+void resetUnreadMessageCount() {
+    mock_unread_count = 0;
+    mock_unread_channels = 0;
+    mock_unread_dms = 0;
+}
+int getUnreadChannelMessageCount() { return mock_unread_channels; }
+void resetUnreadChannelMessageCount() {
+    mock_unread_count -= mock_unread_channels;
+    if (mock_unread_count < 0) mock_unread_count = 0;
+    mock_unread_channels = 0;
+}
+int getUnreadDmMessageCount() { return mock_unread_dms; }
+void resetUnreadDmMessageCount() {
+    mock_unread_count -= mock_unread_dms;
+    if (mock_unread_count < 0) mock_unread_count = 0;
+    mock_unread_dms = 0;
+}
+int getUnreadContactCount() { return mock_unread_contacts; }
+void resetUnreadContactCount() { mock_unread_contacts = 0; }
+int getUnreadRepeaterCount() { return mock_unread_repeaters; }
+void resetUnreadRepeaterCount() { mock_unread_repeaters = 0; }
+uint32_t getMeshActivitySeq() { return mock_activity_seq; }
+
+void mesh_v2_queue_push(const char* sender, const char* channel,
+                        const char* text, int rssi, float snr,
+                        uint32_t sender_timestamp, uint8_t path_len,
+                        const uint8_t* sender_prefix,
+                        uint8_t txt_type,
+                        const uint8_t* extra,
+                        uint8_t extra_len) {
+    (void)rssi;
+    (void)snr;
+    (void)sender_prefix;
+    (void)extra;
+    (void)extra_len;
+    if (mock_msg_count >= 8) return;
+    MeshMessage& m = mock_msgs[mock_msg_count++];
+    strncpy(m.sender, sender ? sender : "", sizeof(m.sender) - 1);
+    m.sender[sizeof(m.sender) - 1] = '\0';
+    strncpy(m.channel, channel ? channel : "", sizeof(m.channel) - 1);
+    m.channel[sizeof(m.channel) - 1] = '\0';
+    strncpy(m.text, text ? text : "", sizeof(m.text) - 1);
+    m.text[sizeof(m.text) - 1] = '\0';
+    m.timestamp = sender_timestamp;
+    m.txt_type = txt_type;
+    m.is_self = false;
+    mock_unread_count++;
+    if (channel && channel[0]) mock_unread_channels++;
+    else mock_unread_dms++;
+    mock_activity_seq++;
+}
+
+void mesh_v2_note_contact_activity(uint8_t contact_type, bool is_new_visible_contact) {
+    if (contact_type == ADV_TYPE_NONE) return;
+    mock_activity_seq++;
+    if (!is_new_visible_contact) return;
+    if (contact_type == ADV_TYPE_REPEATER) mock_unread_repeaters++;
+    else mock_unread_contacts++;
+}
 
 // ── Identity ─────────────────────────────────────
 
@@ -79,6 +155,25 @@ bool removeChannel(int idx) { (void)idx; return true; }
 bool removeContact(const char* name) { (void)name; return false; }
 bool resetPathTo(const char* name) { (void)name; return false; }
 
+// ── Room server context ─────────────────────────
+
+static char mock_active_room_server[32] = "";
+
+bool setActiveRoomServer(const char* contact_name) {
+    if (!contact_name || !contact_name[0]) return false;
+    strncpy(mock_active_room_server, contact_name, sizeof(mock_active_room_server) - 1);
+    mock_active_room_server[sizeof(mock_active_room_server) - 1] = '\0';
+    return true;
+}
+
+void clearActiveRoomServer() {
+    mock_active_room_server[0] = '\0';
+}
+
+const char* getActiveRoomServer() {
+    return mock_active_room_server;
+}
+
 // ── Radio stats ──────────────────────────────────
 
 int getNoiseFloor() { return mock_noise; }
@@ -87,6 +182,62 @@ float getLastSNR()  { return mock_snr; }
 
 bool sendAdvert() { return false; }
 void saveState() {}
+
+bool sendLogin(const char* name, const char* password) {
+    if (!name || !name[0] || !loginPasswordInputSubmittable(password)) return false;
+    strncpy(mock_login_name, name, sizeof(mock_login_name) - 1);
+    mock_login_name[sizeof(mock_login_name) - 1] = '\0';
+    mock_login_status = LOGIN_STATUS_PENDING;
+    mock_login_permission = 0;
+    return true;
+}
+
+bool sendLoginForContactType(const char* name, const char* password, uint8_t contact_type_hint) {
+    if (contact_type_hint != ADV_TYPE_NONE &&
+        contact_type_hint != ADV_TYPE_REPEATER &&
+        contact_type_hint != ADV_TYPE_ROOM) {
+        return false;
+    }
+    return sendLogin(name, password);
+}
+
+void sendLogout(const char* name) {
+    clearLoginState(name);
+}
+
+void clearLoginState(const char* name) {
+    if (!name || !name[0] || strcmp(mock_login_name, name) == 0) {
+        mock_login_name[0] = '\0';
+        mock_login_status = LOGIN_STATUS_NONE;
+        mock_login_permission = 0;
+    }
+}
+
+bool sendCommand(const char* name, const char* text) {
+    (void)name;
+    (void)text;
+    return false;
+}
+
+bool isLoggedIn(const char* name) {
+    return name && strcmp(mock_login_name, name) == 0 && mock_login_status == LOGIN_STATUS_OK;
+}
+
+uint8_t getLoginPermission(const char* name) {
+    return name && strcmp(mock_login_name, name) == 0 ? mock_login_permission : 0;
+}
+
+uint8_t getLoginStatus(const char* name) {
+    return name && strcmp(mock_login_name, name) == 0 ? mock_login_status : LOGIN_STATUS_NONE;
+}
+
+void forceLoginState(const char* name, uint8_t status, uint8_t permission) {
+    if (!name || !name[0]) return;
+    strncpy(mock_login_name, name, sizeof(mock_login_name) - 1);
+    mock_login_name[sizeof(mock_login_name) - 1] = '\0';
+    mock_login_status = status;
+    mock_login_permission = permission;
+}
 
 bool companionBleAvailable() { return false; }
 bool companionBleSetEnabled(bool enabled) { (void)enabled; return false; }
@@ -174,7 +325,11 @@ void mock_push_message(const char* sender, const char* text) {
     m.channel[0] = '\0';
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.timestamp = 0;
+    m.txt_type = 0;
     m.is_self = false;
+    mock_unread_count++;
+    mock_unread_dms++;
+    mock_activity_seq++;
 }
 
 void mock_set_noise(int v)  { mock_noise = v; }

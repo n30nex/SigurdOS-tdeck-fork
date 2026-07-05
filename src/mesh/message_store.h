@@ -9,15 +9,14 @@
 namespace sigurdos {
 namespace mesh {
 
-static constexpr size_t SIGURDOS_MSG_CONVERSATION_LEN = 32;
+static constexpr size_t SIGURDOS_MSG_CONVERSATION_LEN = 40;
 static constexpr size_t SIGURDOS_MSG_SENDER_LEN = 32;
 static constexpr size_t SIGURDOS_MSG_TEXT_LEN = 160;
 static constexpr size_t SIGURDOS_MSG_PREFIX_LEN = 6;
 
 struct StoredMessage {
-    // Monotonic store ID assigned at append time — used for per-record
-    // companion delivery tracking (a CMD_SYNC_NEXT_MESSAGE that successfully
-    // writes the frame marks only this specific record as sent).
+    // Monotonic non-zero store ID assigned at append time. Zero is reserved as
+    // the companion delivery sentinel, so persisted records must start at 1.
     uint32_t store_id;
     char conversation[SIGURDOS_MSG_CONVERSATION_LEN];
     char sender[SIGURDOS_MSG_SENDER_LEN];
@@ -46,11 +45,13 @@ struct StoredMessage {
 
 namespace detail {
 static constexpr uint32_t MESSAGE_STORE_MAGIC = 0x534d5347; // "SMSG"
+// v5 widened conversation names so "DM: " + a max-length contact name survives
+// reboot without truncating into a different conversation.
 // v4 added store_id (4), txt_type (1), extra_len (1), and extra[8] (8) for
 // exact companion message metadata. Old v3 records are rejected by readHeader
 // (version mismatch) and the store is rebuilt — acceptable for a persisted
 // message cache.
-static constexpr uint8_t MESSAGE_STORE_VERSION = 4;
+static constexpr uint8_t MESSAGE_STORE_VERSION = 5;
 static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     4 +  // store_id
     SIGURDOS_MSG_CONVERSATION_LEN +
@@ -72,6 +73,7 @@ void storedMessageNormalize(StoredMessage& msg);
 
 bool messageStoreBegin();
 bool messageStoreClear();
+bool messageStoreAppend(StoredMessage& msg);
 bool messageStoreAppend(const StoredMessage& msg);
 int  messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max);
 int  messageStoreLoadAll(StoredMessage* out, int max);
@@ -82,6 +84,7 @@ int  messageStoreCount();
 
 #if !defined(ESP32_PLATFORM)
 void messageStoreSetNativePath(const char* path);
+void messageStoreSetNativeFailNextReplaceRename(bool fail);
 #endif
 
 } // namespace mesh

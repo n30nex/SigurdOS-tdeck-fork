@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../contact_paging.h"
 #include "../chat_screen.h"
+#include "../repeater_refresh_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
@@ -116,7 +117,8 @@ void contacts_screen_set_filter(int adv_type) {
 
 void contacts_screen_show()
 {
-    lv_obj_t* scr = make_screen_full("Contacts");
+    const bool rooms_filter = (contacts_filter_type == ADV_TYPE_ROOM);
+    lv_obj_t* scr = make_screen_full(rooms_filter ? "Rooms" : "Contacts");
 
     sigurdos::mesh::ContactInfo* all_contacts =
         new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
@@ -155,12 +157,21 @@ void contacts_screen_show()
     if (n == 0) {
         g_contacts_page = 0;
         lv_obj_t* info = lv_label_create(scr);
-        lv_label_set_text(info,
-            "No contacts yet.\n\n"
-            "Companions (chat nodes) and room servers\n"
-            "appear here once they broadcast an advert\n"
-            "or send you a message.\n\n"
-            "Tap a contact to send a direct message.");
+        if (rooms_filter) {
+            lv_label_set_text(info,
+                "No room servers yet.\n\n"
+                "Room servers appear here after their\n"
+                "adverts are received.\n\n"
+                "Use ADVERTISE to announce this node,\n"
+                "or check PACKETS for room adverts.");
+        } else {
+            lv_label_set_text(info,
+                "No contacts yet.\n\n"
+                "Companions (chat nodes) and room servers\n"
+                "appear here once they broadcast an advert\n"
+                "or send you a message.\n\n"
+                "Tap a contact to send a direct message.");
+        }
         lv_obj_set_width(info, CONTENT_W);
         lv_obj_set_style_pad_left(info, 8, 0);
         lv_obj_set_style_pad_right(info, 8, 0);
@@ -281,26 +292,33 @@ void contacts_screen_show()
         // Store name + type for click handler
         // Room servers open the detail screen; chat nodes open DM
         struct ContactRowData { char* name; uint8_t type; };
-        ContactRowData* row_data = new ContactRowData{strdup(c.name), c.type};
-        lv_obj_set_user_data(row, row_data);
+        char* row_name = strdup(c.name);
+        ContactRowData* row_data = row_name
+            ? new(std::nothrow) ContactRowData{row_name, c.type}
+            : nullptr;
+        if (!row_data) {
+            free(row_name);
+        } else {
+            lv_obj_set_user_data(row, row_data);
 
-        lv_obj_add_event_cb(row, [](lv_event_t* e) {
-            lv_obj_t* target = (lv_obj_t*)lv_event_get_current_target(e);
-            ContactRowData* d = (ContactRowData*)lv_obj_get_user_data(target);
-            if (d && d->name) {
-                if (d->type == ADV_TYPE_ROOM) {
-                    repeater_detail_screen_show(d->name);
-                } else {
-                    chat_screen_open_dm(d->name);
+            lv_obj_add_event_cb(row, [](lv_event_t* e) {
+                lv_obj_t* target = (lv_obj_t*)lv_event_get_current_target(e);
+                ContactRowData* d = (ContactRowData*)lv_obj_get_user_data(target);
+                if (d && d->name) {
+                    if (d->type == ADV_TYPE_ROOM) {
+                        repeater_detail_screen_show(d->name);
+                    } else {
+                        chat_screen_open_dm(d->name);
+                    }
                 }
-            }
-        }, LV_EVENT_CLICKED, nullptr);
+            }, LV_EVENT_CLICKED, nullptr);
 
-        // Free the heap-allocated name copy when the row is deleted
-        lv_obj_add_event_cb(row, [](lv_event_t* e) {
-            ContactRowData* d = (ContactRowData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
-            if (d) { free(d->name); delete d; }
-        }, LV_EVENT_DELETE, nullptr);
+            // Free the heap-allocated name copy when the row is deleted
+            lv_obj_add_event_cb(row, [](lv_event_t* e) {
+                ContactRowData* d = (ContactRowData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+                if (d) { free(d->name); delete d; }
+            }, LV_EVENT_DELETE, nullptr);
+        }
     }
 
     delete[] page_contacts;
@@ -308,17 +326,199 @@ void contacts_screen_show()
 }
 
 // Forward declaration of login-polling timer (defined after dialog functions)
-static void start_login_poll_timer(const char* name);
+static void start_login_poll_timer(const char* name, bool auto_open_room = false);
+static void schedule_login_submit(const char* name,
+                                  const char* password,
+                                  bool save_password,
+                                  uint8_t contact_type_hint);
+
+static void schedule_chat_navigation()
+{
+    lv_timer_t* timer = lv_timer_create([](lv_timer_t* t) {
+        lv_timer_del(t);
+        sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
+    }, 30, nullptr);
+    if (timer) lv_timer_set_repeat_count(timer, 1);
+}
+
+static uint8_t contact_type_for_login(const char* name, uint8_t contact_type_hint)
+{
+    uint8_t live_contact_type = ADV_TYPE_NONE;
+    if (!name || !name[0]) {
+        return login_contact_type_from_hint(contact_type_hint, live_contact_type);
+    }
+    sigurdos::mesh::ContactInfo info{};
+    if (sigurdos::mesh::getContactByName(name, &info)) {
+        live_contact_type = info.type;
+    }
+    return login_contact_type_from_hint(contact_type_hint, live_contact_type);
+}
+
+static constexpr uint32_t LOGIN_DETAIL_REFRESH_MS = 150;
+
+struct LoginDetailRefreshCtx {
+    char* name;
+    bool skip_login;
+    Screen origin_screen;
+};
+
+static void schedule_login_detail_refresh(const char* name, bool skip_login)
+{
+    if (!name || !name[0]) return;
+    char* refresh_name = strdup(name);
+    if (!refresh_name) return;
+    auto* ctx = new(std::nothrow) LoginDetailRefreshCtx{
+        refresh_name, skip_login, current_screen()};
+    if (!ctx) {
+        free(refresh_name);
+        return;
+    }
+    lv_timer_t* timer = lv_timer_create([](lv_timer_t* t) {
+        auto* c = static_cast<LoginDetailRefreshCtx*>(lv_timer_get_user_data(t));
+        if (c && c->name &&
+            login_detail_refresh_allowed(repeater_detail_is_open_for(c->name),
+                                         current_screen() == c->origin_screen)) {
+            repeater_detail_screen_show(c->name, c->skip_login);
+        }
+        if (c) {
+            free(c->name);
+            delete c;
+        }
+        lv_timer_del(t);
+    }, LOGIN_DETAIL_REFRESH_MS, ctx);
+    if (!timer) {
+        free(ctx->name);
+        delete ctx;
+    }
+}
+
+struct DeferredLoginSubmitCtx {
+    char name[32];
+    char password[16];
+    uint8_t contact_type;
+    bool save_password;
+};
+
+struct PwDialogData {
+    char* name;
+    lv_obj_t* ta;
+    lv_obj_t* save_cb;
+    uint8_t contact_type;
+    bool submitted;
+};
+
+struct ContactActionCtx {
+    char* name;
+    uint8_t contact_type;
+};
+
+static void submit_login_dialog_once(PwDialogData* d)
+{
+    if (!d || !d->name || d->submitted) return;
+    const char* pw = (d->ta && lv_obj_is_valid(d->ta))
+        ? lv_textarea_get_text(d->ta)
+        : "";
+    if (!sigurdos::mesh::loginPasswordInputSubmittable(pw)) return;
+    d->submitted = true;
+    const bool save_password =
+        d->save_cb && lv_obj_is_valid(d->save_cb) &&
+        (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED);
+    schedule_login_submit(d->name, pw, save_password, d->contact_type);
+}
+
+static void fail_room_admin_login_visible(const char* name)
+{
+    if (!name || !name[0]) return;
+    sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+    sigurdos::mesh::mesh_v2_queue_push(
+        "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+    schedule_login_detail_refresh(name, false);
+}
+
+static void deferred_login_submit_cb(lv_timer_t* t)
+{
+    auto* ctx = static_cast<DeferredLoginSubmitCtx*>(lv_timer_get_user_data(t));
+    if (ctx && ctx->name[0]) {
+        const bool blank_room_guest_login =
+            login_submit_is_blank_room_guest(ctx->contact_type, ctx->password);
+        bool sent = false;
+        if (blank_room_guest_login) {
+            // Guest room entry is just a room-chat navigation action. Sending
+            // an opportunistic blank login here can wedge the UI in pending
+            // state or crash if the room server path is stale.
+            repeater_detail_close_state();
+            sigurdos::mesh::clearLoginState(ctx->name);
+            chat_screen_open_room(ctx->name);
+        } else if (login_submit_room_admin_fails_closed(ctx->contact_type,
+                                                        ctx->password)) {
+            fail_room_admin_login_visible(ctx->name);
+        } else if (login_submit_sends_network_login(ctx->contact_type,
+                                                    ctx->password)) {
+            sent = sigurdos::mesh::sendLoginForContactType(
+                ctx->name, ctx->password, ctx->contact_type);
+            if (sent) {
+                if (login_submit_starts_poll_timer(sent, blank_room_guest_login)) {
+                    start_login_poll_timer(ctx->name, false);
+                }
+                if (ctx->save_password && ctx->password[0]) {
+                    sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
+                }
+            } else {
+                sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
+            }
+        }
+        if (login_detail_refresh_after_submit(sent, blank_room_guest_login)) {
+            schedule_login_detail_refresh(ctx->name, false);
+        }
+    }
+    delete ctx;
+    lv_timer_del(t);
+}
+
+static void schedule_login_submit(const char* name,
+                                  const char* password,
+                                  bool save_password,
+                                  uint8_t contact_type_hint)
+{
+    if (!name || !name[0] ||
+        !sigurdos::mesh::loginPasswordInputSubmittable(password)) {
+        return;
+    }
+    const uint8_t contact_type = contact_type_for_login(name, contact_type_hint);
+    auto* ctx = new(std::nothrow) DeferredLoginSubmitCtx{};
+    if (!ctx) {
+        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+        schedule_login_detail_refresh(name, false);
+        return;
+    }
+    snprintf(ctx->name, sizeof(ctx->name), "%s", name);
+    snprintf(ctx->password, sizeof(ctx->password), "%s", password);
+    ctx->contact_type = contact_type;
+    ctx->save_password = save_password;
+    lv_timer_t* timer = lv_timer_create(deferred_login_submit_cb, 20, ctx);
+    if (!timer) {
+        sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
+        schedule_login_detail_refresh(ctx->name, false);
+        delete ctx;
+    }
+}
 
 // ── Login password dialog ─────────────────────────
 // Shows a modal dialog for entering a password to log into a repeater/room server.
 // Includes a "Save Password" checkbox that persists the password to NVS.
-void show_login_password_dialog(const char* contact_name)
+void show_login_password_dialog(const char* contact_name, uint8_t contact_type_hint)
 {
     if (!contact_name) return;
+    const uint8_t contact_type = contact_type_for_login(contact_name,
+                                                        contact_type_hint);
+    if (login_contact_type_is_room(contact_type) &&
+        !room_admin_password_login_supported()) {
+        fail_room_admin_login_visible(contact_name);
+        return;
+    }
 
     lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
-    auto dlg_sz = dialog_size(240, 130);
+    auto dlg_sz = dialog_size(240, 154);
     lv_obj_t* dlg = lv_obj_create(scr);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -343,6 +543,7 @@ void show_login_password_dialog(const char* contact_name)
     lv_textarea_set_placeholder_text(ta, "Password (press Enter to submit)");
     lv_textarea_set_password_mode(ta, true);
     lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta, sigurdos::mesh::LOGIN_PASSWORD_MAX_BYTES);
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_radius(ta, 0, 0);
@@ -361,9 +562,51 @@ void show_login_password_dialog(const char* contact_name)
 
     // Pre-fill password from NVS if saved
     char saved_pw[64] = {0};
-    if (sigurdos::loadRepeaterPassword(contact_name, saved_pw, sizeof(saved_pw))) {
+    bool has_saved_pw = sigurdos::loadRepeaterPassword(contact_name, saved_pw, sizeof(saved_pw));
+    if (has_saved_pw) {
         lv_textarea_set_text(ta, saved_pw);
         lv_obj_add_state(save_cb, LV_STATE_CHECKED);
+    }
+
+    struct ForgetPwData { char* name; lv_obj_t* ta; lv_obj_t* save_cb; };
+    if (has_saved_pw) {
+        char* fd_name = strdup(contact_name);
+        auto* fd = fd_name
+            ? new(std::nothrow) ForgetPwData{fd_name, ta, save_cb}
+            : nullptr;
+        if (!fd) {
+            free(fd_name);
+        } else {
+            lv_obj_t* forget_btn = lv_btn_create(dlg);
+            lv_obj_set_size(forget_btn, 124, 22);
+            lv_obj_align(forget_btn, LV_ALIGN_TOP_MID, 0, 86);
+            lv_obj_set_style_bg_color(forget_btn, lv_color_hex(BG_INPUT), 0);
+            lv_obj_set_style_radius(forget_btn, 0, 0);
+            lv_obj_set_style_border_color(forget_btn, lv_color_hex(ACCENT_ORANGE), 0);
+            lv_obj_set_style_border_width(forget_btn, 1, 0);
+            lv_obj_t* fl = lv_label_create(forget_btn);
+            lv_label_set_text(fl, "Forget Saved");
+            lv_obj_set_style_text_color(fl, lv_color_hex(ACCENT_ORANGE), 0);
+            lv_obj_set_style_text_font(fl, emoji_wrapped_montserrat_10, 0);
+            lv_obj_center(fl);
+            lv_obj_add_event_cb(forget_btn, [](lv_event_t* fe) {
+                auto* d = (ForgetPwData*)lv_event_get_user_data(fe);
+                if (!d || !d->name) return;
+                sigurdos::removeRepeaterPassword(d->name);
+                if (d->ta && lv_obj_is_valid(d->ta)) lv_textarea_set_text(d->ta, "");
+                if (d->save_cb && lv_obj_is_valid(d->save_cb)) {
+                    lv_obj_clear_state(d->save_cb, LV_STATE_CHECKED);
+                }
+                lv_obj_add_state((lv_obj_t*)lv_event_get_current_target(fe), LV_STATE_DISABLED);
+            }, LV_EVENT_CLICKED, fd);
+            lv_obj_add_event_cb(forget_btn, [](lv_event_t* fe) {
+                auto* d = (ForgetPwData*)lv_event_get_user_data(fe);
+                if (d) {
+                    free(d->name);
+                    delete d;
+                }
+            }, LV_EVENT_DELETE, fd);
+        }
     }
 
     // Cancel button
@@ -376,11 +619,15 @@ void show_login_password_dialog(const char* contact_name)
     lv_label_set_text(cl, "Cancel");
     lv_obj_center(cl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce)));
     }, LV_EVENT_CLICKED, nullptr);
 
     // Login button
     char* pw_name = strdup(contact_name);
+    if (!pw_name) {
+        lv_obj_del_async(dlg);
+        return;
+    }
     lv_obj_t* login_btn = lv_btn_create(dlg);
     lv_obj_set_size(login_btn, 80, 24);
     lv_obj_align(login_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
@@ -392,26 +639,25 @@ void show_login_password_dialog(const char* contact_name)
     lv_obj_set_style_text_color(lb, lv_color_hex(BG_PRIMARY), 0);
 
     // Store references for the click handler
-    struct PwDialogData { char* name; lv_obj_t* ta; lv_obj_t* save_cb; };
-    PwDialogData* dd = new PwDialogData{pw_name, ta, save_cb};
+    PwDialogData* dd = new(std::nothrow) PwDialogData{
+        pw_name, ta, save_cb, contact_type, false};
+    if (!dd) {
+        free(pw_name);
+        lv_obj_del_async(dlg);
+        return;
+    }
     lv_obj_set_user_data(login_btn, dd);
 
     lv_obj_add_event_cb(login_btn, [](lv_event_t* le) {
-        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        if (d && d->name) {
-            const char* pw = lv_textarea_get_text(d->ta);
-            if (pw && pw[0]) {
-                sigurdos::mesh::sendLogin(d->name, pw);
-                // Start a login-polling timer on the main screen
-                start_login_poll_timer(d->name);
-                // Save password to NVS if checkbox is checked
-                if (d->save_cb && (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
-                    sigurdos::saveRepeaterPassword(d->name, pw);
-                }
-            }
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(le);
+        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data(btn);
+        if (d && !d->submitted) {
+            lv_obj_add_state(btn, LV_STATE_DISABLED);
+            submit_login_dialog_once(d);
         }
+        lv_obj_set_user_data(btn, nullptr);
         // Close dialog
-        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
+        lv_obj_t* dlg = lv_obj_get_parent(btn);
         lv_obj_del_async(dlg);
     }, LV_EVENT_CLICKED, nullptr);
 
@@ -421,19 +667,19 @@ void show_login_password_dialog(const char* contact_name)
         uint32_t key = lv_event_get_key(te);
         if (key == LV_KEY_ENTER) {
             const char* pwt = lv_textarea_get_text(t);
-            if (pwt && pwt[0]) {
+            if (sigurdos::mesh::loginPasswordInputSubmittable(pwt)) {
                 lv_obj_t* parent = lv_obj_get_parent(t);
-                if (parent) {
-                    uint32_t c = lv_obj_get_child_cnt(parent);
-                    for (uint32_t i = 0; i < c; i++) {
-                        lv_obj_t* child = lv_obj_get_child(parent, i);
-                        if (child && lv_obj_check_type(child, &lv_button_class)) {
-                            PwDialogData* data = (PwDialogData*)lv_obj_get_user_data(child);
-                            if (data) {
-                                lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
-                                break;
-                            }
-                        }
+                PwDialogData* expected = parent
+                    ? (PwDialogData*)lv_obj_get_user_data(parent)
+                    : nullptr;
+                if (!parent || !expected || expected->submitted) return;
+                uint32_t c = lv_obj_get_child_cnt(parent);
+                for (uint32_t i = 0; i < c; i++) {
+                    lv_obj_t* child = lv_obj_get_child(parent, i);
+                    if (!child || !lv_obj_check_type(child, &lv_button_class)) continue;
+                    if (lv_obj_get_user_data(child) == expected) {
+                        lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
+                        break;
                     }
                 }
             }
@@ -442,7 +688,10 @@ void show_login_password_dialog(const char* contact_name)
 
     // Cleanup on delete
     lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
+        lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+        if (lv_event_get_target(de) != obj) return;
+        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data(obj);
+        lv_obj_set_user_data(obj, nullptr);
         if (d) {
             free(d->name);
             delete d;
@@ -458,13 +707,35 @@ void show_login_password_dialog(const char* contact_name)
 // Cancels itself if the user navigates away.
 struct LoginPollCtx {
     char* name;
-    lv_obj_t* screen;
+    Screen origin_screen;
+    bool auto_open_room;
+    uint16_t pending_polls;
 
     uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
 static lv_timer_t* g_login_poll_timer = nullptr;
 static uint32_t g_login_poll_gen = 0;
 
+void cancel_login_poll_for(const char* contact_name)
+{
+    if (!g_login_poll_timer) {
+        g_login_poll_gen++;
+        return;
+    }
+
+    LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(g_login_poll_timer);
+    if (contact_name && ctx && ctx->name && strcmp(ctx->name, contact_name) != 0) {
+        return;
+    }
+
+    g_login_poll_gen++;
+    if (ctx) {
+        free(ctx->name);
+        delete ctx;
+    }
+    lv_timer_del(g_login_poll_timer);
+    g_login_poll_timer = nullptr;
+}
 
 static void on_login_poll_timer(lv_timer_t* t) {
     LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(t);
@@ -475,10 +746,10 @@ static void on_login_poll_timer(lv_timer_t* t) {
     }
 
 
-    // If a newer generation timer was started, this ctx is stale
-    // If user navigated away from the screen, stop polling
-    if (!ctx->screen || ctx->gen != g_login_poll_gen || lv_scr_act() != ctx->screen) {
-
+    // If a newer generation timer was started or the user navigated away from
+    // the originating nav screen, stop polling. Do not bind to lv_scr_act():
+    // the pending/detail refresh intentionally replaces the LVGL screen.
+    if (ctx->gen != g_login_poll_gen || current_screen() != ctx->origin_screen) {
         free(ctx->name);
         delete ctx;
         lv_timer_del(t);
@@ -489,12 +760,20 @@ static void on_login_poll_timer(lv_timer_t* t) {
     uint8_t st = sigurdos::mesh::getLoginStatus(ctx->name);
     if (st == LOGIN_STATUS_OK) {
         char* n = strdup(ctx->name);
+        const bool auto_open_room = ctx->auto_open_room;
         free(ctx->name);
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
-        // Rebuild screen in post-login mode
-        repeater_detail_screen_show(n, true);
+        if (!n) {
+            return;
+        } else if (auto_open_room) {
+            repeater_detail_close_state();
+            chat_screen_open_room(n);
+        } else {
+            // Rebuild screen in post-login mode
+            repeater_detail_screen_show(n, true);
+        }
         free(n);
     } else if (st == LOGIN_STATUS_FAILED) {
         // Rebuild pre-login view so it shows "Login failed" and the Login button
@@ -503,13 +782,30 @@ static void on_login_poll_timer(lv_timer_t* t) {
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
-        repeater_detail_screen_show(n, false);
+        if (n) repeater_detail_screen_show(n, false);
         free(n);
+    } else if (st == LOGIN_STATUS_NONE) {
+        free(ctx->name);
+        delete ctx;
+        lv_timer_del(t);
+        if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
+    } else if (st == LOGIN_STATUS_PENDING) {
+        ctx->pending_polls++;
+        if (login_poll_timed_out(ctx->pending_polls)) {
+            char* n = strdup(ctx->name);
+            if (n) sigurdos::mesh::forceLoginState(n, LOGIN_STATUS_FAILED, 0);
+            free(ctx->name);
+            delete ctx;
+            lv_timer_del(t);
+            if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
+            if (n) repeater_detail_screen_show(n, false);
+            free(n);
+        }
     }
-    // LOGIN_PENDING or LOGIN_NONE → keep polling
+    // LOGIN_PENDING before timeout -> keep polling
 }
 
-static void start_login_poll_timer(const char* name) {
+static void start_login_poll_timer(const char* name, bool auto_open_room) {
     if (!name) return;
     // Cancel any existing timer first
     if (g_login_poll_timer) {
@@ -520,9 +816,22 @@ static void start_login_poll_timer(const char* name) {
     }
 
     g_login_poll_gen++;
-    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act(), g_login_poll_gen};
+    LoginPollCtx* ctx = new(std::nothrow) LoginPollCtx{
+        strdup(name), current_screen(), auto_open_room, 0, g_login_poll_gen};
+    if (!ctx || !ctx->name) {
+        if (ctx) {
+            free(ctx->name);
+            delete ctx;
+        }
+        return;
+    }
 
-    g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
+    g_login_poll_timer = lv_timer_create(on_login_poll_timer,
+                                         REPEATER_LOGIN_POLL_INTERVAL_MS, ctx);
+    if (!g_login_poll_timer) {
+        free(ctx->name);
+        delete ctx;
+    }
 }
 
 // ── Admin command dialog ──────────────────────────
@@ -577,7 +886,7 @@ void show_admin_cmd_dialog(const char* contact_name)
     lv_obj_center(x_lbl);
     lv_obj_set_style_text_color(x_lbl, lv_color_hex(0xffffff), 0);
     lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
         lv_obj_t* top = lv_obj_get_parent(btn);
         lv_obj_t* dlg = lv_obj_get_parent(top);
         lv_obj_del_async(dlg);
@@ -645,7 +954,14 @@ void show_admin_cmd_dialog(const char* contact_name)
     // Store contact name + widget handles
     char* cmd_name = strdup(contact_name);
     struct TermData { char* name; lv_obj_t* ta; lv_obj_t* out; lv_timer_t* timer; bool deleted; };
-    TermData* td = new TermData{cmd_name, ta, out, nullptr, false};
+    TermData* td = cmd_name
+        ? new(std::nothrow) TermData{cmd_name, ta, out, nullptr, false}
+        : nullptr;
+    if (!td) {
+        free(cmd_name);
+        lv_obj_del_async(dlg);
+        return;
+    }
     lv_obj_set_user_data(dlg, td);
 
     // ── Send button ──────────────────────────────
@@ -660,7 +976,7 @@ void show_admin_cmd_dialog(const char* contact_name)
     lv_obj_set_style_text_color(sb, lv_color_hex(BG_PRIMARY), 0);
     lv_obj_set_user_data(send_btn, td);
     lv_obj_add_event_cb(send_btn, [](lv_event_t* e) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
         TermData* d = (TermData*)lv_obj_get_user_data(btn);
         if (d) {
             auto send = [](TermData* dd) {
@@ -730,7 +1046,10 @@ void show_admin_cmd_dialog(const char* contact_name)
 
     // ── Cleanup ──────────────────────────────────
     lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        TermData* d = (TermData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
+        lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+        if (lv_event_get_target(de) != obj) return;
+        TermData* d = (TermData*)lv_obj_get_user_data(obj);
+        lv_obj_set_user_data(obj, nullptr);
         if (d) {
             d->deleted = true;  // prevent timer callback from using members
             if (d->timer) lv_timer_del(d->timer);
@@ -746,127 +1065,18 @@ void admin_cmd_show(const char* contact_name) {
     show_admin_cmd_dialog(contact_name);
 }
 
-// ── Room message fetch dialog (Phase 4.6) ──────────
-// Shows a modal dialog for entering a channel name to fetch messages from.
+// ── Room message fetch compatibility placeholder ──────────
+// Stock MeshCore room servers do not currently expose a compatible history
+// fetch/read request. Keep this hook fail-closed for older call sites.
 void show_fetch_msgs_dialog(const char* contact_name)
 {
     if (!contact_name) return;
-
-    lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
-    auto dlg_sz = dialog_size(260, 124);
-    lv_obj_t* dlg = lv_obj_create(scr);
-    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
-    lv_obj_center(dlg);
-    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
-    lv_obj_set_style_radius(dlg, 0, 0);
-    lv_obj_set_style_border_width(dlg, 0, 0);
-    lv_obj_set_style_pad_all(dlg, 8, 0);
-
-    // Title
-    lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Fetch room messages");
-    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
-
-    // Hint
-    lv_obj_t* hint = lv_label_create(dlg);
-    lv_label_set_text(hint, "Enter channel name (e.g. #general)");
-    lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(hint, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 24);
-
-    // Channel name textarea
-    lv_obj_t* ta = lv_textarea_create(dlg);
-    lv_obj_set_size(ta, dlg_sz.w - 16, 28);
-    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 38);
-    lv_textarea_set_placeholder_text(ta, "#channel");
-    lv_textarea_set_one_line(ta, true);
-    lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_radius(ta, 0, 0);
-    lv_obj_set_style_border_color(ta, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_border_width(ta, 2, 0);
-    lv_group_t* g = lv_group_get_default();
-    if (g) lv_group_focus_obj(ta);
-
-    // Cancel button
-    lv_obj_t* cancel_btn = lv_btn_create(dlg);
-    lv_obj_set_size(cancel_btn, 80, 24);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_radius(cancel_btn, 0, 0);
-    lv_obj_t* cl = lv_label_create(cancel_btn);
-    lv_label_set_text(cl, "Cancel");
-    lv_obj_center(cl);
-    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Fetch button
-    struct FetchDialogData { char* name; lv_obj_t* ta; };
-    char* fm_name = strdup(contact_name);
-    FetchDialogData* fd = new FetchDialogData{fm_name, ta};
-    lv_obj_t* fetch_btn = lv_btn_create(dlg);
-    lv_obj_set_size(fetch_btn, 80, 24);
-    lv_obj_align(fetch_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
-    lv_obj_set_style_bg_color(fetch_btn, lv_color_hex(0x0088cc), 0);
-    lv_obj_set_style_radius(fetch_btn, 0, 0);
-    lv_obj_t* fb = lv_label_create(fetch_btn);
-    lv_label_set_text(fb, "Fetch");
-    lv_obj_center(fb);
-    lv_obj_set_style_text_color(fb, lv_color_hex(0xffffff), 0);
-    lv_obj_set_user_data(fetch_btn, fd);
-
-    lv_obj_add_event_cb(fetch_btn, [](lv_event_t* le) {
-        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        if (d && d->name) {
-            const char* channel = lv_textarea_get_text(d->ta);
-            if (channel && channel[0]) {
-                sigurdos::mesh::sendRoomMsgFetchRequest(d->name, channel);
-                char confirm[64];
-                snprintf(confirm, sizeof(confirm), "Fetching msgs from %s channel %s",
-                         d->name, channel);
-                sigurdos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
-                // Navigate to Chat screen so user sees incoming messages
-                sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
-            }
-        }
-        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
-        lv_obj_del_async(dlg);
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Enter-key handler on textarea
-    lv_obj_add_event_cb(ta, [](lv_event_t* te) {
-        lv_obj_t* t = (lv_obj_t*)lv_event_get_target(te);
-        uint32_t key = lv_event_get_key(te);
-        if (key == LV_KEY_ENTER) {
-            lv_obj_t* parent = lv_obj_get_parent(t);
-            if (parent) {
-                uint32_t c = lv_obj_get_child_cnt(parent);
-                for (uint32_t i = 0; i < c; i++) {
-                    lv_obj_t* child = lv_obj_get_child(parent, i);
-                    if (child && lv_obj_check_type(child, &lv_button_class)) {
-                        FetchDialogData* data = (FetchDialogData*)lv_obj_get_user_data(child);
-                        if (data) {
-                            lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }, LV_EVENT_KEY, nullptr);
-
-    // Cleanup
-    lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
-        if (d) {
-            free(d->name);
-            delete d;
-        }
-    }, LV_EVENT_DELETE, nullptr);
-    lv_obj_set_user_data(dlg, fd);
+    sigurdos::mesh::mesh_v2_queue_push(
+        "System",
+        "",
+        "! Room fetch unsupported by stock MeshCore room servers",
+        0,
+        0.0f);
 }
 
 // ════════════════════════════════════════════════════════
@@ -1010,13 +1220,15 @@ void contact_detail_screen_show(const char* contact_name)
         add_row("Location", loc_buf, ACCENT_GREEN);
     } else {
         add_row("Location", "Not shared", TEXT_SECONDARY);
+    }
+
     // ── Login status row (repeater/room only) ─────────
     if (target->type == ADV_TYPE_REPEATER || target->type == ADV_TYPE_ROOM) {
         uint8_t st = sigurdos::mesh::getLoginStatus(contact_name);
         const char* login_text = "Not logged in";
         uint32_t login_color = TEXT_SECONDARY;
         switch (st) {
-            case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
+            case LOGIN_STATUS_PENDING: login_text = "Pending; auto-fail"; login_color = ACCENT; break;
             case LOGIN_STATUS_OK:      login_text = "Logged in";        login_color = ACCENT_GREEN; break;
             case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
         }
@@ -1037,8 +1249,6 @@ void contact_detail_screen_show(const char* contact_name)
             }
             add_row("Permission", perm_buf, ACCENT);
         }
-    }
-
     }
 
     // ── Local ACL display ──────────────────────────
@@ -1190,8 +1400,13 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
-                sigurdos::mesh::requestStatus(name);
-                sigurdos::ui::navigate_to(sigurdos::ui::Screen::NodeStatus);
+                if (sigurdos::mesh::requestStatus(name)) {
+                    sigurdos::ui::node_status_request_started(name);
+                    sigurdos::ui::navigate_to(sigurdos::ui::Screen::NodeStatus);
+                } else {
+                    sigurdos::mesh::mesh_v2_queue_push(
+                        "System", "", "! Status request failed", 0, 0.0f);
+                }
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(st_btn, [](lv_event_t* e) {
@@ -1223,8 +1438,13 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
-                sigurdos::mesh::requestTelemetry(name);
-                sigurdos::ui::navigate_to(sigurdos::ui::Screen::Telemetry);
+                if (sigurdos::mesh::requestTelemetry(name)) {
+                    sigurdos::ui::telemetry_request_started(name);
+                    sigurdos::ui::navigate_to(sigurdos::ui::Screen::Telemetry);
+                } else {
+                    sigurdos::mesh::mesh_v2_queue_push(
+                        "System", "", "! Telemetry request failed", 0, 0.0f);
+                }
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(tm_btn, [](lv_event_t* e) {
@@ -1339,10 +1559,15 @@ void contact_detail_screen_show(const char* contact_name)
             lv_label_set_text(cl, "Cancel");
             lv_obj_center(cl);
             lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce)));
             }, LV_EVENT_CLICKED, nullptr);
 
             char* cn = strdup(name);
+            if (!cn) {
+                lv_obj_del_async(dlg);
+                return;
+            }
+            lv_obj_set_user_data(dlg, cn);
             lv_obj_t* confirm_btn = lv_btn_create(dlg);
             lv_obj_set_size(confirm_btn, 64, 24);
             lv_obj_align(confirm_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
@@ -1351,19 +1576,25 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* cfl_lb = lv_label_create(confirm_btn);
             lv_label_set_text(cfl_lb, "Remove");
             lv_obj_center(cfl_lb);
-            lv_obj_set_user_data(confirm_btn, cn);
             lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
-                const char* cn = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce));
-                sigurdos::mesh::removeContact(cn);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(ce);
+                lv_obj_t* dlg = lv_obj_get_parent(btn);
+                const char* cn = (const char*)lv_obj_get_user_data(dlg);
+                if (!cn) return;
+                char safe_name[32];
+                snprintf(safe_name, sizeof(safe_name), "%s", cn);
+                sigurdos::mesh::removeContact(safe_name);
                 go_back();
             }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_set_user_data(dlg, cn);
             lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
+                lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+                if (lv_event_get_target(de) != obj) return;
+                free(lv_obj_get_user_data(obj));
+                lv_obj_set_user_data(obj, nullptr);
             }, LV_EVENT_DELETE, nullptr);
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(remove_btn, [](lv_event_t* e) {
-            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
         }, LV_EVENT_DELETE, nullptr);
     }
 
@@ -1453,12 +1684,12 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_set_style_text_color(ac_lbl, lv_color_hex(BG_PRIMARY), 0);
             lv_obj_set_user_data(ac_btn, ac_name);
             lv_obj_add_event_cb(ac_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                 const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (name) show_admin_cmd_dialog(name);
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(ac_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
             }, LV_EVENT_DELETE, nullptr);
 
             // ── Logout button ──
@@ -1473,8 +1704,8 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_set_style_text_color(lo_lbl, lv_color_hex(0xffffff), 0);
             lv_obj_set_user_data(lo_btn, lo_name);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
-                lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(target);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (name) {
                     sigurdos::mesh::sendLogout(name);
                     lv_timer_create([](lv_timer_t* t) {
@@ -1484,61 +1715,79 @@ void contact_detail_screen_show(const char* contact_name)
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-
-            // ── Fetch Msgs row (second row of buttons) ──
-            lv_obj_t* fetch_row = lv_obj_create(scr);
-            lv_obj_set_size(fetch_row, CONTENT_W, 30);
-            lv_obj_align(fetch_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 68));
-            lv_obj_set_style_bg_opa(fetch_row, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(fetch_row, 0, 0);
-            lv_obj_set_flex_flow(fetch_row, LV_FLEX_FLOW_ROW);
-            lv_obj_set_flex_align(fetch_row, LV_FLEX_ALIGN_SPACE_EVENLY,
-                                  LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-            // ── Fetch Msgs button ──
-            char* fm_name = strdup(contact_name);
-            lv_obj_t* fm_btn = lv_btn_create(fetch_row);
-            lv_obj_set_size(fm_btn, 180, 24);
-            lv_obj_set_style_bg_color(fm_btn, lv_color_hex(0x0088cc), 0);
-            lv_obj_set_style_radius(fm_btn, 0, 0);
-            lv_obj_t* fm_lbl = lv_label_create(fm_btn);
-            lv_label_set_text(fm_lbl, LV_SYMBOL_LIST " Fetch Msgs");
-            lv_obj_center(fm_lbl);
-            lv_obj_set_style_text_color(fm_lbl, lv_color_hex(0xffffff), 0);
-            lv_obj_set_user_data(fm_btn, fm_name);
-            lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(btn);
-                if (name) {
-                    show_fetch_msgs_dialog(name);
-                }
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
             }, LV_EVENT_DELETE, nullptr);
 
         } else {
-            // ── Login button ──
+            // ── Login/open button ──
             char* li_name = strdup(contact_name);
-            lv_obj_t* li_btn = lv_btn_create(login_row);
-            lv_obj_set_size(li_btn, 150, 24);
-            lv_obj_set_style_bg_color(li_btn, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_radius(li_btn, 0, 0);
-            lv_obj_t* li_lbl = lv_label_create(li_btn);
-            lv_label_set_text(li_lbl, LV_SYMBOL_DIRECTORY " Login");
-            lv_obj_center(li_lbl);
-            lv_obj_set_style_text_color(li_lbl, lv_color_hex(BG_PRIMARY), 0);
-            lv_obj_set_user_data(li_btn, li_name);
-            lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(btn);
-                if (name) show_login_password_dialog(name);
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
+            ContactActionCtx* li_ctx = li_name
+                ? new(std::nothrow) ContactActionCtx{li_name, target->type}
+                : nullptr;
+            if (!li_ctx) free(li_name);
+            if (li_ctx) {
+                lv_obj_t* li_btn = lv_btn_create(login_row);
+                lv_obj_set_size(li_btn, target->type == ADV_TYPE_ROOM ? 130 : 150, 24);
+                lv_obj_set_style_bg_color(li_btn, lv_color_hex(ACCENT), 0);
+                lv_obj_set_style_radius(li_btn, 0, 0);
+                lv_obj_t* li_lbl = lv_label_create(li_btn);
+                lv_label_set_text(li_lbl,
+                    target->type == ADV_TYPE_ROOM
+                        ? LV_SYMBOL_ENVELOPE " Open"
+                        : LV_SYMBOL_DIRECTORY " Login");
+                lv_obj_center(li_lbl);
+                lv_obj_set_style_text_color(li_lbl, lv_color_hex(BG_PRIMARY), 0);
+                lv_obj_set_user_data(li_btn, li_ctx);
+                lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                    auto* ctx = (ContactActionCtx*)lv_obj_get_user_data(btn);
+                    if (!ctx || !ctx->name) return;
+                    char safe_name[32];
+                    snprintf(safe_name, sizeof(safe_name), "%s", ctx->name);
+                    if (login_contact_type_is_room(ctx->contact_type)) {
+                        repeater_detail_close_state();
+                        sigurdos::mesh::clearLoginState(safe_name);
+                        chat_screen_open_room(safe_name);
+                    } else {
+                        show_login_password_dialog(safe_name, ctx->contact_type);
+                    }
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
+                    auto* ctx = (ContactActionCtx*)lv_obj_get_user_data(
+                        (lv_obj_t*)lv_event_get_current_target(e));
+                    if (ctx) {
+                        free(ctx->name);
+                        delete ctx;
+                    }
+                }, LV_EVENT_DELETE, nullptr);
+            }
+
+            if (target->type == ADV_TYPE_ROOM && login_st == LOGIN_STATUS_NONE) {
+                char* admin_name = strdup(contact_name);
+                if (admin_name) {
+                    lv_obj_t* admin_btn = lv_btn_create(login_row);
+                    lv_obj_set_size(admin_btn, 118, 24);
+                    lv_obj_set_style_bg_color(admin_btn, lv_color_hex(BG_TERTIARY), 0);
+                    lv_obj_set_style_radius(admin_btn, 0, 0);
+                    lv_obj_t* admin_lbl = lv_label_create(admin_btn);
+                    lv_label_set_text(admin_lbl, LV_SYMBOL_SETTINGS " Admin");
+                    lv_obj_center(admin_lbl);
+                    lv_obj_set_style_text_color(admin_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+                    lv_obj_set_user_data(admin_btn, admin_name);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                        const char* name = (const char*)lv_obj_get_user_data(btn);
+                        if (name) {
+                            char safe_name[32];
+                            snprintf(safe_name, sizeof(safe_name), "%s", name);
+                            fail_room_admin_login_visible(safe_name);
+                        }
+                    }, LV_EVENT_CLICKED, nullptr);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                    }, LV_EVENT_DELETE, nullptr);
+                }
+            }
 
             // When login pending or failed, show Cancel button
             if (login_st == LOGIN_STATUS_PENDING || login_st == LOGIN_STATUS_FAILED) {
@@ -1553,15 +1802,19 @@ void contact_detail_screen_show(const char* contact_name)
                 lv_obj_set_style_text_color(cx_lbl, lv_color_hex(TEXT_SECONDARY), 0);
                 lv_obj_set_user_data(cx_btn, cx_name);
                 lv_obj_add_event_cb(cx_btn, [](lv_event_t* ce) {
-                    lv_obj_t* t = (lv_obj_t*)lv_event_get_target(ce);
-                    const char* n = (const char*)lv_obj_get_user_data(t);
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(ce);
+                    const char* n = (const char*)lv_obj_get_user_data(btn);
                     if (n) {
-                        sigurdos::mesh::sendLogout(n); // clears pending/failed state
-                        go_back();
+                        char safe_name[32];
+                        snprintf(safe_name, sizeof(safe_name), "%s", n);
+                        cancel_login_poll_for(safe_name);
+                        sigurdos::mesh::sendLogout(safe_name);
+                        sigurdos::mesh::clearLoginState(safe_name);
+                        repeater_detail_screen_show(safe_name, false);
                     }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(cx_btn, [](lv_event_t* ce) {
-                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce)));
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(ce)));
                 }, LV_EVENT_DELETE, nullptr);
             }
         }

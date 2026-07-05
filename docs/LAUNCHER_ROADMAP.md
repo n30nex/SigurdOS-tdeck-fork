@@ -270,7 +270,7 @@ Non-negotiables and how each is protected:
 | Settings (NVS) | Namespace `"sigurdos"` unchanged; geometry difference documented (C7) | Low; one-time reset when switching modes |
 | Display/touch/trackball/keyboard | C6 changes are idempotent on cold boot and land only after bench root-cause with physical-hardware testing (per `CLAUDE.md`, remote-test cannot cover this) | Medium — keyboard init is the touchiest path; covered by `test_keyboard` native tests + physical validation before merge |
 | Self-OTA (WiFi AP, GitHub) | Fully functional standalone; disabled-with-explanation only when Launcher detected (C4). Detection false-positive is structurally impossible on `default_16MB.csv` (no `test` app partition exists) | Low; native test for the detection helper + manual standalone OTA check in Phase 5 |
-| GPS, SD/maps, BLE companion, buzzer, battery | Untouched | Low |
+| GPS, SD/maps, BLE companion, notification audio, battery | Untouched | Low |
 | Onboarding / TX gating | Untouched; NVS reset on mode switch re-runs onboarding, which is the designed safe state | Low |
 | Web flasher / esptool / PlatformIO install paths | Artifacts and manifest unchanged (C1 adds a file) | Low |
 

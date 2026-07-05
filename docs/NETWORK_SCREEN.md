@@ -29,7 +29,7 @@ The Network screen (internally called **Finder**) is SigurdOS's node discovery a
 │ ◎ NodeDelta  78s ago -105dBm     │
 │ ...                              │
 ├──────────────────────────────────┤
-│ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar
+│ SigurdOS T-Deck              72%  │  ← bottom bar
 └──────────────────────────────────┘
 ```
 

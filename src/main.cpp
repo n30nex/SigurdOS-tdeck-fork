@@ -12,11 +12,13 @@
 #include "hal/wifi_ota.h"
 #include "hal/github_ota.h"
 #include "hal/prefs.h"
+#include "hal/time_sync_policy.h"
 #include "hal/launcher_env.h"
 #include "hal/buzzer.h"
 #include "app/map_renderer.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
+#include "ui/screens_common.h"
 #include "ui/theme.h"
 #include "diagnostics/debug_cfg.h"
 #if SIGURDOS_DEBUG_DIAG
@@ -28,6 +30,7 @@
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
 #include "test/test_controller.h"
 #endif
+#include <time.h>
 
 static sigurdos::TDeckBoard board;
 
@@ -39,6 +42,49 @@ static void boot_log(const char* msg)
 #else
 static void boot_log(const char*) {}
 #endif
+
+static void sync_time_from_wifi_if_ready()
+{
+#if defined(ARDUINO_ARCH_ESP32)
+    static bool ntp_started = false;
+    static bool was_connected = false;
+    static uint32_t last_ntp_start_ms = 0;
+    static uint32_t last_sync_ms = 0;
+
+    const bool connected = sigurdos::wifi_sta::isConnected();
+    if (!connected) {
+        was_connected = false;
+        return;
+    }
+
+    const uint32_t now_ms = millis();
+    if (!was_connected) {
+        was_connected = true;
+        ntp_started = false;
+        last_ntp_start_ms = 0;
+    }
+
+    const bool current_time_valid =
+        sigurdos::time_epoch_is_sane(sigurdos::mesh::getCurrentTime());
+    if (current_time_valid && !sigurdos::ntp_resync_due(now_ms, last_sync_ms)) {
+        return;
+    }
+
+    if (sigurdos::ntp_retry_due(ntp_started, now_ms, last_ntp_start_ms)) {
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+        ntp_started = true;
+        last_ntp_start_ms = now_ms;
+    }
+
+    time_t ntp_epoch = time(nullptr);
+    if (sigurdos::time_epoch_is_sane((uint32_t)ntp_epoch)) {
+        if (sigurdos::mesh::setSystemTime((uint32_t)ntp_epoch)) {
+            sigurdos::time_source_mark(sigurdos::TimeSource::WifiNtp);
+            last_sync_ms = now_ms;
+        }
+    }
+#endif
+}
 
 static void boot_status(const char* status)
 {
@@ -170,7 +216,7 @@ void setup()
     // Auto-connect WiFi if credentials are saved
     {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        if (p.wifi_ssid[0]) {
+        if (sigurdos::wifi_sta::hasSavedCredentials(p)) {
             sigurdos::wifi_sta::beginConnect(p.wifi_ssid, p.wifi_password);
         }
     }
@@ -203,17 +249,22 @@ void loop()
     sigurdos::ota::loop();         // WiFi OTA web server
     sigurdos::github_ota::loop();  // GitHub OTA downloader
     sigurdos::wifi_sta::loop();    // WiFi STA maintenance
+    sync_time_from_wifi_if_ready();
     {   // WiFi icon refresh — 1 Hz is plenty for an RSSI readout
         static uint32_t last_wifi_ui = 0;
         if (millis() - last_wifi_ui >= 1000) {
             last_wifi_ui = millis();
             sigurdos::ui::update_wifi_status();  // bottom bar WiFi icon
+            sigurdos::ui::update_topbar_status();
         }
     }
     {   // GPS enabled + interval gate
         static uint32_t last_gps_poll = 0;
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
         if (gp.gps_enabled) {
+            if (!sigurdos_gps_initialized()) {
+                sigurdos_gps_init();
+            }
             uint32_t now = millis();
             uint32_t interval_ms = (uint32_t)gp.gps_interval * 1000;
             if (interval_ms == 0 || (now - last_gps_poll >= interval_ms)) {

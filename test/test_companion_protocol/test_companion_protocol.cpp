@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "comms/companion_bridge.h"
@@ -58,7 +59,8 @@ public:
 
     uint8_t path_hash_mode = 0;
 
-    uint32_t blePin() const override { return 123456; }
+    uint32_t ble_pin = 123456;
+    uint32_t blePin() const override { return ble_pin; }
     uint8_t clientRepeat() const override { return 0; }
     uint8_t pathHashMode() const override { return path_hash_mode; }
     void selfInfo(sigurdos::comms::CompanionSelfInfo& out) const override {
@@ -197,7 +199,11 @@ public:
         last_airtime = tx_delay_factor_x1000;
         return rx_delay_base_x1000 <= 20000 && tx_delay_factor_x1000 <= 2000;
     }
-    bool setBlePin(uint32_t) override { return true; }
+    bool setBlePin(uint32_t pin) override {
+        if (pin != 0 && (pin < 100000 || pin > 999999)) return false;
+        ble_pin = pin;
+        return true;
+    }
     bool exportPrivateKey(uint8_t* out64) const override {
         std::memset(out64, 0x42, 64);
         return true;
@@ -222,6 +228,7 @@ public:
     bool     scope_is_set = false;
     char     last_scope_name[32]{};
     bool     scope_unscoped = false, scope_cleared = false;
+    bool     scope_override_set = false, scope_reset_to_default = false;
     bool     last_send_ok = true;
     uint32_t last_trace_tag = 0; uint8_t last_trace_path_len = 0;
     int      sign_len_seen = -1;
@@ -284,7 +291,9 @@ public:
         else std::strncpy(last_scope_name, name, sizeof(last_scope_name) - 1);
     }
     void setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
-        scope_unscoped = unscoped; scope_cleared = (!unscoped && !key);
+        scope_unscoped = unscoped;
+        scope_reset_to_default = (!unscoped && !key);
+        scope_override_set = (!unscoped && key);
     }
     sigurdos::comms::CompanionSendResult sendLogin(const uint8_t*, const char*) override {
         return {last_send_ok, true, 0x11223344u, 5000};
@@ -301,8 +310,22 @@ public:
         return {last_send_ok, false, tag, 4000};
     }
     void selfTelemetry(uint8_t*, size_t* out_len) const override { if (out_len) *out_len = 0; }
-    int getCustomVars(char*, size_t) const override { return 0; }  // empty by default
-    bool setCustomVar(const char*, const char*) override { return false; }  // fail by default
+    const char* custom_vars = "";
+    char last_custom_name[32]{};
+    char last_custom_value[32]{};
+    int getCustomVars(char* out, size_t out_cap) const override {
+        if (!out || out_cap == 0 || !custom_vars || !custom_vars[0]) return 0;
+        int n = std::snprintf(out, out_cap, "%s", custom_vars);
+        return (n > 0 && (size_t)n < out_cap) ? n : 0;
+    }
+    bool setCustomVar(const char* name, const char* value) override {
+        if (!name || !value || !name[0] || !value[0]) return false;
+        std::strncpy(last_custom_name, name, sizeof(last_custom_name) - 1);
+        last_custom_name[sizeof(last_custom_name) - 1] = '\0';
+        std::strncpy(last_custom_value, value, sizeof(last_custom_value) - 1);
+        last_custom_value[sizeof(last_custom_value) - 1] = '\0';
+        return std::strcmp(name, "gps") == 0 || std::strcmp(name, "gps_interval") == 0;
+    }
     int signData(const uint8_t*, size_t len, uint8_t* sig_out) override {
         sign_len_seen = (int)len;
         std::memset(sig_out, 0xAB, 64);
@@ -311,8 +334,21 @@ public:
     sigurdos::comms::CompanionSendResult sendPathDiscovery(const uint8_t*) override {
         return {false, false, 0, 0};  // not found by default
     }
-    uint8_t getAdvertPath(const uint8_t*, uint8_t*, uint8_t,
-                          uint32_t*) const override { return 0; }
+    bool advert_path_found = false;
+    uint8_t advert_path[8]{};
+    uint8_t advert_path_len = 0;
+    uint32_t advert_path_timestamp = 0;
+    uint8_t getAdvertPath(const uint8_t*, uint8_t* path_out, uint8_t max_path,
+                          uint32_t* timestamp_out) const override {
+        if (!advert_path_found) return 0;
+        uint8_t plen = advert_path_len;
+        if (path_out && max_path > 0) {
+            uint8_t copy_len = plen < max_path ? plen : max_path;
+            std::memcpy(path_out, advert_path, copy_len);
+        }
+        if (timestamp_out) *timestamp_out = advert_path_timestamp;
+        return plen;
+    }
 };
 
 class CompanionProtocolTest : public ::testing::Test {
@@ -339,6 +375,67 @@ protected:
     }
 };
 
+TEST_F(CompanionProtocolTest, CompanionCodeValuesMatchPinnedMeshCore) {
+    namespace cc = sigurdos::comms;
+    struct CodeCheck {
+        const char* name;
+        uint8_t actual;
+        uint8_t expected;
+    };
+    const CodeCheck checks[] = {
+        {"RESP_CODE_OK", cc::RESP_CODE_OK, 0},
+        {"RESP_CODE_ERR", cc::RESP_CODE_ERR, 1},
+        {"RESP_CODE_CONTACTS_START", cc::RESP_CODE_CONTACTS_START, 2},
+        {"RESP_CODE_CONTACT", cc::RESP_CODE_CONTACT, 3},
+        {"RESP_CODE_END_OF_CONTACTS", cc::RESP_CODE_END_OF_CONTACTS, 4},
+        {"RESP_CODE_SELF_INFO", cc::RESP_CODE_SELF_INFO, 5},
+        {"RESP_CODE_SENT", cc::RESP_CODE_SENT, 6},
+        {"RESP_CODE_CONTACT_MSG_RECV", cc::RESP_CODE_CONTACT_MSG_RECV, 7},
+        {"RESP_CODE_CHANNEL_MSG_RECV", cc::RESP_CODE_CHANNEL_MSG_RECV, 8},
+        {"RESP_CODE_CURR_TIME", cc::RESP_CODE_CURR_TIME, 9},
+        {"RESP_CODE_NO_MORE_MESSAGES", cc::RESP_CODE_NO_MORE_MESSAGES, 10},
+        {"RESP_CODE_EXPORT_CONTACT", cc::RESP_CODE_EXPORT_CONTACT, 11},
+        {"RESP_CODE_BATT_AND_STORAGE", cc::RESP_CODE_BATT_AND_STORAGE, 12},
+        {"RESP_CODE_DEVICE_INFO", cc::RESP_CODE_DEVICE_INFO, 13},
+        {"RESP_CODE_PRIVATE_KEY", cc::RESP_CODE_PRIVATE_KEY, 14},
+        {"RESP_CODE_DISABLED", cc::RESP_CODE_DISABLED, 15},
+        {"RESP_CODE_CONTACT_MSG_RECV_V3", cc::RESP_CODE_CONTACT_MSG_RECV_V3, 16},
+        {"RESP_CODE_CHANNEL_MSG_RECV_V3", cc::RESP_CODE_CHANNEL_MSG_RECV_V3, 17},
+        {"RESP_CODE_CHANNEL_INFO", cc::RESP_CODE_CHANNEL_INFO, 18},
+        {"RESP_CODE_SIGN_START", cc::RESP_CODE_SIGN_START, 19},
+        {"RESP_CODE_SIGNATURE", cc::RESP_CODE_SIGNATURE, 20},
+        {"RESP_CODE_CUSTOM_VARS", cc::RESP_CODE_CUSTOM_VARS, 21},
+        {"RESP_CODE_ADVERT_PATH", cc::RESP_CODE_ADVERT_PATH, 22},
+        {"RESP_CODE_TUNING_PARAMS", cc::RESP_CODE_TUNING_PARAMS, 23},
+        {"RESP_CODE_STATS", cc::RESP_CODE_STATS, 24},
+        {"RESP_CODE_AUTOADD_CONFIG", cc::RESP_CODE_AUTOADD_CONFIG, 25},
+        {"RESP_ALLOWED_REPEAT_FREQ", cc::RESP_ALLOWED_REPEAT_FREQ, 26},
+        {"RESP_CODE_CHANNEL_DATA_RECV", cc::RESP_CODE_CHANNEL_DATA_RECV, 27},
+        {"RESP_CODE_DEFAULT_FLOOD_SCOPE", cc::RESP_CODE_DEFAULT_FLOOD_SCOPE, 28},
+        {"PUSH_CODE_ADVERT", cc::PUSH_CODE_ADVERT, 0x80},
+        {"PUSH_CODE_PATH_UPDATED", cc::PUSH_CODE_PATH_UPDATED, 0x81},
+        {"PUSH_CODE_SEND_CONFIRMED", cc::PUSH_CODE_SEND_CONFIRMED, 0x82},
+        {"PUSH_CODE_MSG_WAITING", cc::PUSH_CODE_MSG_WAITING, 0x83},
+        {"PUSH_CODE_RAW_DATA", cc::PUSH_CODE_RAW_DATA, 0x84},
+        {"PUSH_CODE_LOGIN_SUCCESS", cc::PUSH_CODE_LOGIN_SUCCESS, 0x85},
+        {"PUSH_CODE_LOGIN_FAIL", cc::PUSH_CODE_LOGIN_FAIL, 0x86},
+        {"PUSH_CODE_STATUS_RESPONSE", cc::PUSH_CODE_STATUS_RESPONSE, 0x87},
+        {"PUSH_CODE_LOG_RX_DATA", cc::PUSH_CODE_LOG_RX_DATA, 0x88},
+        {"PUSH_CODE_TRACE_DATA", cc::PUSH_CODE_TRACE_DATA, 0x89},
+        {"PUSH_CODE_NEW_ADVERT", cc::PUSH_CODE_NEW_ADVERT, 0x8A},
+        {"PUSH_CODE_TELEMETRY_RESPONSE", cc::PUSH_CODE_TELEMETRY_RESPONSE, 0x8B},
+        {"PUSH_CODE_BINARY_RESPONSE", cc::PUSH_CODE_BINARY_RESPONSE, 0x8C},
+        {"PUSH_CODE_PATH_DISCOVERY_RESPONSE", cc::PUSH_CODE_PATH_DISCOVERY_RESPONSE, 0x8D},
+        {"PUSH_CODE_CONTROL_DATA", cc::PUSH_CODE_CONTROL_DATA, 0x8E},
+        {"PUSH_CODE_CONTACT_DELETED", cc::PUSH_CODE_CONTACT_DELETED, 0x8F},
+        {"PUSH_CODE_CONTACTS_FULL", cc::PUSH_CODE_CONTACTS_FULL, 0x90},
+    };
+
+    for (const auto& check : checks) {
+        EXPECT_EQ(check.actual, check.expected) << check.name;
+    }
+}
+
 TEST_F(CompanionProtocolTest, DeviceQueryFrameMatchesOfficialShape) {
     uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
     ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
@@ -361,6 +458,18 @@ TEST_F(CompanionProtocolTest, DeviceQueryFrameMatchesOfficialShape) {
     EXPECT_EQ(out[81], host.pathHashMode());
 }
 
+TEST_F(CompanionProtocolTest, DeviceQueryAdvertisesV12UntilV13AnonParity) {
+    uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 13};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 82u);
+    EXPECT_EQ(sigurdos::comms::SIGURDOS_COMPANION_PINNED_MESHCORE_VER_CODE, 13);
+    EXPECT_FALSE(sigurdos::comms::SIGURDOS_COMPANION_SUPPORTS_V13_ANON_REQ);
+    EXPECT_EQ(out[1], 12);
+    EXPECT_EQ(out[1], sigurdos::comms::SIGURDOS_COMPANION_FIRMWARE_VER_CODE);
+}
+
 TEST_F(CompanionProtocolTest, DeviceQueryReportsConfiguredPathHashMode) {
     host.path_hash_mode = 2;  // 3-byte path hash
     uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
@@ -369,6 +478,37 @@ TEST_F(CompanionProtocolTest, DeviceQueryReportsConfiguredPathHashMode) {
     const auto& out = serial.writes[0];
     ASSERT_EQ(out.size(), 82u);
     EXPECT_EQ(out[81], 2);
+}
+
+TEST_F(CompanionProtocolTest, SetDevicePinUpdatesBlePinReportedByDeviceQuery) {
+    uint32_t new_pin = 654321;
+    uint8_t set[5] = {sigurdos::comms::CMD_SET_DEVICE_PIN};
+    std::memcpy(&set[1], &new_pin, 4);
+    ASSERT_TRUE(bridge.handleFrame(set, sizeof(set)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+
+    serial.writes.clear();
+    uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    uint32_t reported_pin = 0;
+    std::memcpy(&reported_pin, &out[4], 4);
+    EXPECT_EQ(reported_pin, new_pin);
+}
+
+TEST_F(CompanionProtocolTest, SetDevicePinRejectsInvalidPinAndKeepsOldValue) {
+    uint32_t old_pin = host.blePin();
+    uint32_t bad_pin = 1000000;
+    uint8_t set[5] = {sigurdos::comms::CMD_SET_DEVICE_PIN};
+    std::memcpy(&set[1], &bad_pin, 4);
+    ASSERT_TRUE(bridge.handleFrame(set, sizeof(set)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    ASSERT_GE(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+    EXPECT_EQ(host.blePin(), old_pin);
 }
 
 TEST_F(CompanionProtocolTest, SetPathHashModeAcceptsValidModes) {
@@ -425,6 +565,36 @@ TEST_F(CompanionProtocolTest, AppStartSeedsPersistedMessagesForSync) {
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
     ASSERT_EQ(serial.writes.size(), 3u);
     EXPECT_EQ(serial.writes[2][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+
+    sigurdos::mesh::StoredMessage verify[2]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(verify, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_TRUE(verify[0].companion_sent);
+}
+
+TEST_F(CompanionProtocolTest, AppStartSeedsPersistedCliDataWithTxtType) {
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Repeater", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Repeater", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "uptime: 123", sizeof(msg.text) - 1);
+    msg.timestamp = 1234;
+    msg.is_channel = false;
+    msg.txt_type = sigurdos::comms::COMPANION_TXT_CLI_DATA;
+    for (int i = 0; i < 6; i++) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    ASSERT_EQ(serial.writes.size(), 2u);
+    EXPECT_EQ(serial.writes[1][0], sigurdos::comms::PUSH_CODE_MSG_WAITING);
+
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 3u);
+    const auto& out = serial.writes[2];
+    ASSERT_GE(out.size(), 16u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    EXPECT_EQ(out[11], sigurdos::comms::COMPANION_TXT_CLI_DATA);
 }
 
 TEST_F(CompanionProtocolTest, AppStartDoesNotEchoSelfSentMessages) {
@@ -806,6 +976,34 @@ TEST_F(CompanionProtocolTest, DefaultFloodScopeGetSet) {
     EXPECT_TRUE(host.scope_cleared);
 }
 
+TEST_F(CompanionProtocolTest, ExplicitlyDeclinesUnsupportedV13RequestCommands) {
+    const uint8_t commands[] = {
+        cc::CMD_SEND_BINARY_REQ,
+        cc::CMD_SEND_CONTROL_DATA,
+        cc::CMD_SEND_ANON_REQ,
+    };
+
+    for (uint8_t cmd : commands) {
+        serial.writes.clear();
+        std::vector<uint8_t> frame(1 + 32 + 4, 0);
+        frame[0] = cmd;
+        ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size())) << "cmd=" << (int)cmd;
+        ASSERT_EQ(serial.writes.size(), 1u) << "cmd=" << (int)cmd;
+        EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR) << "cmd=" << (int)cmd;
+        ASSERT_GE(serial.writes[0].size(), 2u) << "cmd=" << (int)cmd;
+        EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_UNSUPPORTED_CMD) << "cmd=" << (int)cmd;
+    }
+}
+
+TEST_F(CompanionProtocolTest, ShortAnonRequestIsUnsupportedNotMalformed) {
+    uint8_t frame[] = {cc::CMD_SEND_ANON_REQ};
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    ASSERT_GE(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_UNSUPPORTED_CMD);
+}
+
 TEST_F(CompanionProtocolTest, FloodScopeKeyOverride) {
     uint8_t unscoped[2] = { cc::CMD_SET_FLOOD_SCOPE_KEY, 1 };
     ASSERT_TRUE(bridge.handleFrame(unscoped, sizeof(unscoped)));
@@ -816,6 +1014,16 @@ TEST_F(CompanionProtocolTest, FloodScopeKeyOverride) {
     uint8_t setkey[2 + 16] = { cc::CMD_SET_FLOOD_SCOPE_KEY, 0 };
     ASSERT_TRUE(bridge.handleFrame(setkey, sizeof(setkey)));
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_TRUE(host.scope_override_set);
+    EXPECT_FALSE(host.scope_unscoped);
+
+    serial.writes.clear();
+    host.scope_override_set = true;
+    uint8_t reset_to_default[2] = { cc::CMD_SET_FLOOD_SCOPE_KEY, 0 };
+    ASSERT_TRUE(bridge.handleFrame(reset_to_default, sizeof(reset_to_default)));
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_TRUE(host.scope_reset_to_default);
+    EXPECT_FALSE(host.scope_unscoped);
 }
 
 TEST_F(CompanionProtocolTest, SignFlow) {
@@ -893,6 +1101,64 @@ TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     EXPECT_EQ(serial.writes[0][0], cc::RESP_ALLOWED_REPEAT_FREQ);
 }
 
+TEST_F(CompanionProtocolTest, CustomVarsUseMeshCoreColonWireFormat) {
+    host.custom_vars = "gps:1,gps_interval:30";
+    uint8_t get[1] = { cc::CMD_GET_CUSTOM_VARS };
+    ASSERT_TRUE(bridge.handleFrame(get, sizeof(get)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out[0], cc::RESP_CODE_CUSTOM_VARS);
+    std::string payload((const char*)&out[1], out.size() - 1);
+    EXPECT_EQ(payload, "gps:1,gps_interval:30");
+
+    serial.writes.clear();
+    const char set_payload[] = "gps_interval:60";
+    std::vector<uint8_t> set(1 + sizeof(set_payload) - 1);
+    set[0] = cc::CMD_SET_CUSTOM_VAR;
+    std::memcpy(&set[1], set_payload, sizeof(set_payload) - 1);
+    ASSERT_TRUE(bridge.handleFrame(set.data(), set.size()));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_STREQ(host.last_custom_name, "gps_interval");
+    EXPECT_STREQ(host.last_custom_value, "60");
+}
+
+TEST_F(CompanionProtocolTest, CustomVarSetRejectsMissingColon) {
+    const char set_payload[] = "gps_interval";
+    std::vector<uint8_t> set(1 + sizeof(set_payload) - 1);
+    set[0] = cc::CMD_SET_CUSTOM_VAR;
+    std::memcpy(&set[1], set_payload, sizeof(set_payload) - 1);
+    ASSERT_TRUE(bridge.handleFrame(set.data(), set.size()));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    ASSERT_GE(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, GetAdvertPathMatchesMeshCoreFrameLayout) {
+    host.advert_path_found = true;
+    host.advert_path_timestamp = 0x01020304;
+    host.advert_path_len = 3;
+    host.advert_path[0] = 0xAA;
+    host.advert_path[1] = 0xBB;
+    host.advert_path[2] = 0xCC;
+
+    std::vector<uint8_t> frame(2 + sigurdos::comms::SIGURDOS_COMPANION_PUB_KEY_SIZE, 0);
+    frame[0] = cc::CMD_GET_ADVERT_PATH;
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 1u + 4u + 1u + 3u);
+    EXPECT_EQ(out[0], cc::RESP_CODE_ADVERT_PATH);
+    uint32_t timestamp = 0;
+    std::memcpy(&timestamp, &out[1], 4);
+    EXPECT_EQ(timestamp, 0x01020304u);
+    EXPECT_EQ(out[5], 3);
+    EXPECT_EQ(out[6], 0xAA);
+    EXPECT_EQ(out[7], 0xBB);
+    EXPECT_EQ(out[8], 0xCC);
+}
+
 // ── Live / async pushes ───────────────────────────────────────
 TEST_F(CompanionProtocolTest, PushAdvertNewVsUpdate) {
     cc::CompanionContact c{};
@@ -929,6 +1195,7 @@ TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     EXPECT_TRUE(bridge.pushLoginResult(prefix, true, 3, false));
     EXPECT_EQ(serial.writes[0][0], cc::PUSH_CODE_LOGIN_SUCCESS);
     EXPECT_EQ(serial.writes[0][1], 3);
+    EXPECT_EQ(serial.writes[0].size(), 8u);
 
     serial.writes.clear();
     EXPECT_TRUE(bridge.pushLoginResult(prefix, false, 0, false));
@@ -955,6 +1222,27 @@ TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     // [4..7] tag, [8..11] auth, [12..13] hashes, [14..15] snrs, [16] final snr
     ASSERT_EQ(t.size(), 17u);
     EXPECT_EQ((int8_t)t[16], -8);
+}
+
+TEST_F(CompanionProtocolTest, ExtendedLoginPushMatchesUpstreamFrameShape) {
+    uint8_t prefix[6] = { 1, 2, 3, 4, 5, 6 };
+    uint32_t server_tag = 0xAABBCCDDu;
+
+    EXPECT_TRUE(bridge.pushLoginResult(prefix, true, 2, false,
+                                       server_tag, 0x03, 0x12,
+                                       true));
+
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 14u);
+    EXPECT_EQ(out[0], cc::PUSH_CODE_LOGIN_SUCCESS);
+    EXPECT_EQ(out[1], 2);
+    EXPECT_EQ(std::memcmp(&out[2], prefix, sizeof(prefix)), 0);
+    uint32_t got_tag = 0;
+    std::memcpy(&got_tag, &out[8], 4);
+    EXPECT_EQ(got_tag, server_tag);
+    EXPECT_EQ(out[12], 0x03);
+    EXPECT_EQ(out[13], 0x12);
 }
 
 TEST_F(CompanionProtocolTest, SendChannelDataFloodDispatchesToHostAndReturnsOk) {
@@ -1291,11 +1579,11 @@ TEST_F(CompanionProtocolTest, SyncDrainMarksPerRecordNotAll) {
     sigurdos::mesh::StoredMessage stored[4]{};
     int n = sigurdos::mesh::messageStoreLoadAll(stored, 4);
     ASSERT_EQ(n, 2);
-    ASSERT_EQ(stored[0].store_id, 0u);
-    ASSERT_EQ(stored[1].store_id, 1u);
+    ASSERT_EQ(stored[0].store_id, 1u);
+    ASSERT_EQ(stored[1].store_id, 2u);
 
     // Mark only the first via the store API — verify it works standalone
-    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(0));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(1));
 
     sigurdos::mesh::StoredMessage verify[4]{};
     n = sigurdos::mesh::messageStoreLoadAll(verify, 4);

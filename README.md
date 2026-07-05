@@ -262,7 +262,7 @@ After cloning, these files must exist or the build will fail:
 
 | File | Purpose |
 |------|---------|
-| `boards/t-deck.json` | Board definition (16 MB flash, QIO, ESP32-S3) |
+| `boards/t-deck.json` | Board definition (16 MB flash, ESP32-S3); `platformio.ini` sets DIO flash mode for T-Deck boot compatibility |
 | `lib/meshcore/src/Mesh.h` | MeshCore submodule (must not be empty) |
 | `platformio.ini` | Build configuration |
 
@@ -274,7 +274,7 @@ Pre-built merged binaries are in [`firmware/`](firmware/). Flash directly with e
 pip install esptool
 esptool.py --chip esp32s3 --port COM21 --baud 921600 \
   --before default_reset --after hard_reset write_flash \
-  --flash_mode qio --flash_freq 80m --flash_size 16MB \
+  --flash_mode dio --flash_freq 80m --flash_size 16MB \
   0x0 firmware/sigurdos-tdeck-merged.bin
 ```
 

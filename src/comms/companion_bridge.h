@@ -12,7 +12,13 @@
 namespace sigurdos {
 namespace comms {
 
+// Pinned MeshCore companion_radio currently advertises v13, but v13 adds
+// anonymous request behavior for non-contact pubkeys that SigurdOS does not
+// implement yet. Advertise v12 until CMD_SEND_ANON_REQ/BINARY/CONTROL parity
+// is implemented so official clients keep v13-only expectations disabled.
+static constexpr uint8_t SIGURDOS_COMPANION_PINNED_MESHCORE_VER_CODE = 13;
 static constexpr uint8_t SIGURDOS_COMPANION_FIRMWARE_VER_CODE = 12;
+static constexpr bool SIGURDOS_COMPANION_SUPPORTS_V13_ANON_REQ = false;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_SIZE = 32;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE = 6;
 static constexpr size_t  SIGURDOS_COMPANION_PATH_SIZE = 64;
@@ -127,13 +133,13 @@ enum CompanionPush : uint8_t {
     PUSH_CODE_LOGIN_SUCCESS = 0x85,
     PUSH_CODE_LOGIN_FAIL = 0x86,
     PUSH_CODE_STATUS_RESPONSE = 0x87,
-    PUSH_CODE_BINARY_RESPONSE = 0x88,
+    PUSH_CODE_LOG_RX_DATA = 0x88,
     PUSH_CODE_TRACE_DATA = 0x89,
     PUSH_CODE_NEW_ADVERT = 0x8A,
     PUSH_CODE_TELEMETRY_RESPONSE = 0x8B,
-    PUSH_CODE_PATH_DISCOVERY_RESPONSE = 0x8C,
-    PUSH_CODE_CONTROL_DATA = 0x8D,
-    PUSH_CODE_LOG_RX_DATA = 0x8E,
+    PUSH_CODE_BINARY_RESPONSE = 0x8C,
+    PUSH_CODE_PATH_DISCOVERY_RESPONSE = 0x8D,
+    PUSH_CODE_CONTROL_DATA = 0x8E,
     PUSH_CODE_CONTACT_DELETED = 0x8F,
     PUSH_CODE_CONTACTS_FULL = 0x90,
 };
@@ -384,7 +390,11 @@ public:
     bool pushContactDeleted(const uint8_t* pub_key);
     bool pushContactsFull();
     bool pushLoginResult(const uint8_t* pubkey_prefix, bool success,
-                         uint8_t permission, bool is_admin);
+                         uint8_t permission, bool is_admin,
+                         uint32_t server_tag = 0,
+                         uint8_t acl = 0,
+                         uint8_t firmware_level = 0,
+                         bool include_extended = false);
     bool pushStatusResponse(const uint8_t* pubkey_prefix,
                             const uint8_t* blob, size_t blob_len);
     bool pushTelemetryResponse(const uint8_t* pubkey_prefix,

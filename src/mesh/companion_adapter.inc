@@ -59,7 +59,8 @@ static void generate_random_ble_pin() {
 }
 
 static void queue_push_outgoing(const char* conversation, const char* sender,
-                                const char* text, uint32_t timestamp)
+                                const char* text, uint32_t timestamp,
+                                uint8_t txt_type = sigurdos::comms::COMPANION_TXT_PLAIN)
 {
     if (!conversation || !sender || !text) return;
     if (msg_count >= MAX_QUEUED) {
@@ -74,6 +75,7 @@ static void queue_push_outgoing(const char* conversation, const char* sender,
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
+    m.txt_type = txt_type;
     m.is_self = true;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
@@ -86,7 +88,7 @@ static void fillStoredPrefixForName(const char* name, uint8_t* out)
     if (!g_mesh || !name) return;
     ::ContactInfo tmp;
     for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+        if (g_mesh->getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
             memcpy(out, tmp.id.pub_key, sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
             return;
         }
@@ -159,7 +161,8 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
 }
 
 static void storeOutgoingMessageForCompanion(const char* conversation, const char* text,
-                                             uint32_t timestamp, bool is_channel)
+                                             uint32_t timestamp, bool is_channel,
+                                             uint8_t txt_type = sigurdos::comms::COMPANION_TXT_PLAIN)
 {
     sigurdos::mesh::StoredMessage msg{};
     strncpy(msg.conversation, conversation ? conversation : "", sizeof(msg.conversation) - 1);
@@ -172,6 +175,7 @@ static void storeOutgoingMessageForCompanion(const char* conversation, const cha
     msg.rssi = 0;
     msg.snr_quarters = 0;
     msg.path_len = 0xFF;  // self-sent; never mirrored to the app, value unused
+    msg.txt_type = txt_type;
     if (g_mesh) memcpy(msg.sender_prefix, g_mesh->self_id.pub_key,
                        sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
     sigurdos::mesh::messageStoreAppend(msg);
@@ -244,7 +248,7 @@ public:
     bool getContact(int index, CompanionContact& out) const override {
         if (!g_mesh) return false;
         ::ContactInfo c{};
-        if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+        if (!g_mesh->getContactByPublicIndex((uint32_t)index, c)) return false;
         companionContactFromInfo(c, out);
         return true;
     }
@@ -315,8 +319,8 @@ public:
 
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), contact->name);
-        storeOutgoingMessageForCompanion(conversation, text, ts, false);
-        queue_push_outgoing(conversation, own_name, text, ts);
+        storeOutgoingMessageForCompanion(conversation, text, ts, false, txt_type);
+        queue_push_outgoing(conversation, own_name, text, ts, txt_type);
         sigurdos::mesh::pushPacketLog(own_name, 0, 0.0f, "TX_DM");
 
         result.ok = true;
@@ -482,7 +486,7 @@ public:
     bool setBlePin(uint32_t pin) override {
         if (pin != 0 && (pin < 100000 || pin > 999999)) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-        p.device_pin = pin;
+        p.ble_pin = pin;
         sigurdos::prefs_set(p);
         return true;
     }
@@ -727,9 +731,14 @@ public:
     }
     void setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
         if (!g_mesh) return;
-        if (unscoped) g_mesh->clearActiveScope();
+        if (unscoped) g_mesh->setSendUnscopedOnce(true);
         else if (key) g_mesh->setActiveScope(key);
-        else g_mesh->clearActiveScope();
+        else {
+            char name[31];
+            uint8_t default_key[16];
+            if (getDefaultFloodScope(name, default_key)) g_mesh->setActiveScope(default_key);
+            else g_mesh->clearActiveScope();
+        }
     }
 
     // ── Async requests ───────────────────────────────────────
@@ -798,7 +807,7 @@ public:
     }
     int getCustomVars(char* out, size_t out_cap) const override {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        int n = snprintf(out, out_cap, "gps=%d,gps_interval=%d",
+        int n = snprintf(out, out_cap, "gps:%d,gps_interval:%d",
                          p.gps_enabled ? 1 : 0, (int)p.gps_interval);
         return (n > 0 && (size_t)n < out_cap) ? n : 0;
     }
@@ -910,10 +919,16 @@ void sigurdos::mesh::mesh_v2_companion_contacts_full_push()
 }
 
 void sigurdos::mesh::mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,
-                                                  uint8_t permission, bool is_admin)
+                                                  uint8_t permission, bool is_admin,
+                                                  uint32_t server_tag,
+                                                  uint8_t acl,
+                                                  uint8_t firmware_level,
+                                                  bool include_extended)
 {
     if (g_companion_bridge_ptr)
-        g_companion_bridge_ptr->pushLoginResult(pub_key, success, permission, is_admin);
+        g_companion_bridge_ptr->pushLoginResult(pub_key, success, permission, is_admin,
+                                                server_tag, acl, firmware_level,
+                                                include_extended);
 }
 
 void sigurdos::mesh::mesh_v2_companion_status_push(const uint8_t* pub_key,

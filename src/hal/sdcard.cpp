@@ -75,13 +75,18 @@ static void sdcard_reset_diagnostics()
     sdcard_diag.last_backoff_ms = 0;
 }
 
-static void sdcard_record_success()
+static void sdcard_refresh_usage()
 {
     uint64_t total = (uint64_t)SD.totalBytes();
     uint64_t used = (uint64_t)SD.usedBytes();
 
     capacity_bytes = total;
     free_bytes = used <= total ? (total - used) : 0;
+}
+
+static void sdcard_record_success()
+{
+    sdcard_refresh_usage();
     mounted = true;
     sdcard_diag.mounted = true;
     sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_NONE;
@@ -194,11 +199,13 @@ const char* sigurdos_sdcard_mount_error_name(SigurdosSdMountError error)
 
 uint64_t sigurdos_sdcard_capacity_bytes()
 {
+    if (mounted) sdcard_refresh_usage();
     return capacity_bytes;
 }
 
 uint64_t sigurdos_sdcard_free_bytes()
 {
+    if (mounted) sdcard_refresh_usage();
     return free_bytes;
 }
 
@@ -244,20 +251,50 @@ bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
     if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
     if (len > 0 && !data) return false;  // data required only for non-empty writes
 
-    // SD.begin() with FILE_WRITE opens for append — remove first so we replace the file
-    if (SD.exists(path)) {
-        SD.remove(path);
+    char tmp_path[SIGURDOS_SD_MAX_PATH_LEN + 5] = {0};
+    char bak_path[SIGURDOS_SD_MAX_PATH_LEN + 5] = {0};
+    int tmp_len = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    int bak_len = snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+    if (tmp_len <= 0 || bak_len <= 0 ||
+        (size_t)tmp_len >= sizeof(tmp_path) ||
+        (size_t)bak_len >= sizeof(bak_path)) {
+        return false;
     }
 
-    File f = SD.open(path, FILE_WRITE);
+    SD.remove(tmp_path);
+    File f = SD.open(tmp_path, FILE_WRITE);
     if (!f) return false;
 
+    bool ok = true;
     if (len > 0) {
         size_t written = f.write(data, len);
-        f.close();
-        return written == len;
+        ok = written == len;
     }
-    // Zero-length write — create/truncate an empty file
     f.close();
+
+    if (!ok) {
+        SD.remove(tmp_path);
+        return false;
+    }
+
+    SD.remove(bak_path);
+    bool backed_up = false;
+    if (SD.exists(path)) {
+        if (!SD.rename(path, bak_path)) {
+            SD.remove(tmp_path);
+            return false;
+        }
+        backed_up = true;
+    }
+
+    if (!SD.rename(tmp_path, path)) {
+        SD.remove(path);
+        if (backed_up) SD.rename(bak_path, path);
+        SD.remove(tmp_path);
+        return false;
+    }
+
+    SD.remove(bak_path);
+    sdcard_refresh_usage();
     return true;
 }

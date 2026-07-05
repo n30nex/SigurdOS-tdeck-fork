@@ -22,6 +22,7 @@ struct RadioProfile {
     uint8_t sf;
     uint8_t cr;
     int8_t tx_power_dbm;
+    uint8_t path_hash_mode;
 };
 
 size_t radio_profile_count();

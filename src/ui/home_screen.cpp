@@ -48,7 +48,6 @@ static lv_obj_t* grid          = nullptr;
 static lv_obj_t* time_label    = nullptr;
 static lv_obj_t* batt_label    = nullptr;
 static lv_obj_t* hashtag_label = nullptr;
-static lv_obj_t* badge_obj     = nullptr;  // CHATS unread badge container
 
 using namespace responsive;
 static constexpr int GRID_PAD   = 3;
@@ -63,10 +62,10 @@ struct IconDef {
 
 static const IconDef icons[] = {
     {"CHATS",     LV_SYMBOL_ENVELOPE,   true,  Screen::Chat},
-    {"DMs",       LV_SYMBOL_FILE,       false, Screen::Chat},
+    {"DMs",       LV_SYMBOL_FILE,       true,  Screen::Chat},
     {"ROOMS",     LV_SYMBOL_DIRECTORY,  false, Screen::Contacts},
-    {"CONTACTS",  LV_SYMBOL_CALL,       false, Screen::Contacts},
-    {"REPEATERS", LV_SYMBOL_WIFI,       false, Screen::Repeaters},
+    {"CONTACTS",  LV_SYMBOL_CALL,       true,  Screen::Contacts},
+    {"REPEATERS", LV_SYMBOL_WIFI,       true,  Screen::Repeaters},
     {"ADVERTISE", LV_SYMBOL_BELL,       false, Screen::Advertise},
     {"MAP",       LV_SYMBOL_GPS,        false, Screen::Map},
     {"TERMINAL",  LV_SYMBOL_KEYBOARD,   false, Screen::Terminal},
@@ -78,6 +77,7 @@ static const IconDef icons[] = {
 
 static constexpr int ICON_COUNT = sizeof(icons) / sizeof(icons[0]);
 static lv_obj_t* icon_tiles[ICON_COUNT] = {};
+static lv_obj_t* badge_objs[ICON_COUNT] = {};
 static int tile_x[ICON_COUNT] = {};
 static int tile_y[ICON_COUNT] = {};
 static int tile_w[ICON_COUNT] = {};
@@ -175,25 +175,37 @@ static void apply_selection(int old_idx = -1)
 #endif
 }
 
-static void on_icon_click(lv_event_t* e)
+static void open_icon(int idx)
 {
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
     if (idx >= 0 && idx < ICON_COUNT) {
-        // Reset filters to defaults
+        // Reset filters to the home defaults.
         chat_screen_set_filter(0);
         contacts_screen_set_filter(-1);
 
         // Apply filter based on which icon was clicked
         if (strcmp(icons[idx].label, "DMs") == 0) {
+            sigurdos::mesh::clearActiveRoomServer();
             chat_screen_set_filter(2);       // DMs only
+            sigurdos::mesh::resetUnreadDmMessageCount();
         } else if (strcmp(icons[idx].label, "CHATS") == 0) {
+            sigurdos::mesh::clearActiveRoomServer();
             chat_screen_set_filter(1);       // channels only
+            sigurdos::mesh::resetUnreadChannelMessageCount();
         } else if (strcmp(icons[idx].label, "ROOMS") == 0) {
             contacts_screen_set_filter(ADV_TYPE_ROOM);  // room servers only
+        } else if (strcmp(icons[idx].label, "CONTACTS") == 0) {
+            sigurdos::mesh::resetUnreadContactCount();
+        } else if (strcmp(icons[idx].label, "REPEATERS") == 0) {
+            sigurdos::mesh::resetUnreadRepeaterCount();
         }
         // CONTACTS: default filter (CHAT + ROOM) — start DM from here
         navigate_to(icons[idx].target);
     }
+}
+
+static void on_icon_click(lv_event_t* e)
+{
+    open_icon((int)(intptr_t)lv_event_get_user_data(e));
 }
 
 // ── Top bar ─────────────────────────────────────────────
@@ -233,11 +245,7 @@ static void create_top_bar()
     lv_obj_set_style_text_font(time_label, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(time_label, LV_ALIGN_RIGHT_MID, -4, 0);
 
-    // Signal dots (iOS-style, left of time)
-    {
-        lv_obj_t* sig = create_signal_dots(top_bar, sigurdos::mesh::getLastRSSI());
-        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
-    }
+    add_topbar_status_indicators(top_bar);
 
     // Divider
     lv_obj_t* div = lv_obj_create(scr);
@@ -313,19 +321,18 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 12);
 
     if (icon.badge) {
-        // Badge: container with count label, hidden by default, shown when
-        // sigurdos::mesh::pendingMessageCount() > 0 via home_screen_update_badges()
-        badge_obj = lv_obj_create(tile);
-        lv_obj_set_size(badge_obj, 18, 12);
-        lv_obj_set_style_bg_color(badge_obj, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_bg_opa(badge_obj, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(badge_obj, 0, 0);
-        lv_obj_set_style_border_width(badge_obj, 0, 0);
-        lv_obj_align(badge_obj, LV_ALIGN_TOP_RIGHT, -2, 4);
-        lv_obj_clear_flag(badge_obj, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-        lv_obj_add_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
+        badge_objs[idx] = lv_obj_create(tile);
+        lv_obj_set_size(badge_objs[idx], 18, 12);
+        lv_obj_set_style_bg_color(badge_objs[idx], lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_bg_opa(badge_objs[idx], LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(badge_objs[idx], 0, 0);
+        lv_obj_set_style_border_width(badge_objs[idx], 0, 0);
+        lv_obj_align(badge_objs[idx], LV_ALIGN_TOP_RIGHT, -2, 4);
+        lv_obj_clear_flag(badge_objs[idx],
+                          (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+        lv_obj_add_flag(badge_objs[idx], LV_OBJ_FLAG_HIDDEN);
 
-        lv_obj_t* cnt_lbl = lv_label_create(badge_obj);
+        lv_obj_t* cnt_lbl = lv_label_create(badge_objs[idx]);
         lv_label_set_text(cnt_lbl, "0");
         lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(cnt_lbl, emoji_wrapped_montserrat_10, 0);
@@ -382,12 +389,12 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
 {
     // Reset dangling pointers before rebuilding
     hashtag_label = nullptr;
-    badge_obj     = nullptr;
     screens_clear_back_btn();
     screens_clear_wifi_icon();
     time_label    = nullptr;
     batt_label    = nullptr;
     for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
+    for (int i = 0; i < ICON_COUNT; i++) badge_objs[i] = nullptr;
 
     scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
@@ -398,8 +405,9 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     // replacement screen when this delayed delete callback runs.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         scr = top_bar = bottom_bar = grid = nullptr;
-        time_label = batt_label = hashtag_label = badge_obj = nullptr;
+        time_label = batt_label = hashtag_label = nullptr;
         for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
+        for (int i = 0; i < ICON_COUNT; i++) badge_objs[i] = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
     create_top_bar();
@@ -471,9 +479,7 @@ void home_screen_handle_trackball(SigurdOSTrackballEvent event)
         break;
     }
     case SigurdOSTrackballEvent::Click:
-        if (selected_icon >= 0 && selected_icon < ICON_COUNT) {
-            navigate_to(icons[selected_icon].target);
-        }
+        open_icon(selected_icon);
         break;
     case SigurdOSTrackballEvent::None:
     default:
@@ -508,18 +514,32 @@ void home_screen_update_channels()
 
 void home_screen_update_badges()
 {
-    if (!badge_obj) return;
-    int n = sigurdos::mesh::getUnreadMessageCount();
-    if (n > 0) {
-        lv_obj_clear_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_t* lbl = lv_obj_get_child(badge_obj, 0);
-        if (lbl) {
-            char buf[8];
-            snprintf(buf, sizeof(buf), "%d", n > 99 ? 99 : n);
-            lv_label_set_text(lbl, buf);
+    for (int i = 0; i < ICON_COUNT; i++) {
+        lv_obj_t* badge = badge_objs[i];
+        if (!badge) continue;
+
+        int n = 0;
+        if (strcmp(icons[i].label, "CHATS") == 0) {
+            n = sigurdos::mesh::getUnreadChannelMessageCount();
+        } else if (strcmp(icons[i].label, "DMs") == 0) {
+            n = sigurdos::mesh::getUnreadDmMessageCount();
+        } else if (strcmp(icons[i].label, "CONTACTS") == 0) {
+            n = sigurdos::mesh::getUnreadContactCount();
+        } else if (strcmp(icons[i].label, "REPEATERS") == 0) {
+            n = sigurdos::mesh::getUnreadRepeaterCount();
         }
-    } else {
-        lv_obj_add_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
+
+        if (n > 0) {
+            lv_obj_clear_flag(badge, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_t* lbl = lv_obj_get_child(badge, 0);
+            if (lbl) {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "%d", n > 99 ? 99 : n);
+                lv_label_set_text(lbl, buf);
+            }
+        } else {
+            lv_obj_add_flag(badge, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 }
 

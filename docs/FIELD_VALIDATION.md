@@ -4,6 +4,101 @@ Use this checklist when testing a GitHub Actions firmware artifact on a physical
 
 Before opening the serial port, recheck that the T-Deck Plus enumerates as `COM8` and use `scripts/validation/safe_serial_monitor.py` or the workflow in [`WINDOWS_COM8_SERIAL.md`](WINDOWS_COM8_SERIAL.md). Do not use generic terminal defaults that assert DTR/RTS.
 
+## Fast GitHub Artifact Loop
+
+For normal release-firmware validation, use the manual `Build Validation Matrix`
+workflow and download only the `firmware-SigurdOS_TDeck` artifact. This is the
+fastest current path that still preserves the rule that flashable firmware comes
+from GitHub Actions.
+
+```powershell
+gh workflow run build-validation-matrix.yml `
+  --repo n30nex/SigurdOS-tdeck-fork `
+  --ref codex/fix-tdeck-radio-keyboard-validation
+
+gh run watch <run-id> `
+  --repo n30nex/SigurdOS-tdeck-fork `
+  --exit-status `
+  --interval 15
+
+gh run download <run-id> `
+  --repo n30nex/SigurdOS-tdeck-fork `
+  --name firmware-SigurdOS_TDeck `
+  --dir F:\SIGUI\artifacts\cloud-builds\<timestamp>-canada-<sha>
+```
+
+Validate the downloaded `firmware-merged.bin` before flashing:
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+python scripts\audit_launcher_artifact.py `
+  F:\SIGUI\artifacts\cloud-builds\<timestamp>-canada-<sha>\firmware-merged.bin
+```
+
+## UI Crash Monitor
+
+For manual touch/trackball crash reproduction, keep a passive crash monitor open
+while the tester performs the UI actions. This does not send input, reset the
+device, or switch to remote-test firmware:
+
+```powershell
+python scripts\validation\ui_crash_monitor.py `
+  --port COM8 `
+  --duration 180 `
+  --label public-chat-and-repeater-login `
+  --output .pio\serial-captures\public-chat-and-repeater-login.raw.log `
+  --json-report .pio\serial-captures\public-chat-and-repeater-login.report.json `
+  --expect-no-reset
+```
+
+The JSON report records `ESP-ROM`, reset, panic, assert, and backtrace
+signatures with timestamps. A non-zero exit with `--expect-no-reset` means the
+manual flow produced reset/crash evidence that should be attached to the issue.
+
+## Guided Release-Firmware UI Journey
+
+For repeatable issue evidence on the normal release firmware, use the guided
+journey harness. It still requires a human to perform the physical touch,
+trackball, and keyboard actions, but it records one raw serial log per step and
+writes a summary JSON that fails on reset/crash signatures:
+
+```powershell
+python scripts\validation\hardware_ui_journey.py `
+  --port COM8 `
+  --profile chat-public-login `
+  --forbid-port COM11 `
+  --forbid-port COM12 `
+  --forbid-port COM16 `
+  --forbid-port COM29 `
+  --out-dir .pio\hardware-ui-journeys\pr21-chat-public-login
+```
+
+Useful built-in profiles:
+
+- `chat-public-login` covers Chat, Public touch/trackball entry, Krabs Lagoon
+  login, local repeater login, and repeater detail back navigation.
+- `core-navigation` covers the main Home tiles and the Map/GPS/Settings path.
+
+By default the harness is passive after opening the serial port. It does not
+inject UI input, does not reset the board, and does not switch to remote-test
+firmware. It also refuses `COM11`, `COM12`, `COM16`, and `COM29` by default so
+the known non-target devices are not opened accidentally. Screenshot capture is
+optional because release builds normally keep serial commands disabled. Only
+enable screenshot attempts when the flashed firmware is known to support
+`SCREENSHOT`:
+
+```powershell
+python scripts\validation\hardware_ui_journey.py `
+  --port COM8 `
+  --profile core-navigation `
+  --screenshot-mode attempt `
+  --out-dir .pio\hardware-ui-journeys\core-navigation-screens
+```
+
+Use `--screenshot-mode require` only for a build where screenshot support is a
+required part of the test. If screenshot support is unavailable, the raw logs
+and summary JSON are still valid crash/no-crash evidence.
+
 ## Setup And Radio Input
 
 Evidence to capture:

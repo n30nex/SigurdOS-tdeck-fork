@@ -25,6 +25,9 @@
 namespace sigurdos {
 namespace mesh {
 
+static_assert(detail::CONTACT_PUBLIC_INDEX_OFFSET == MAX_ANON_CONTACTS,
+              "SigurdOS contact index mapping must match MeshCore anon slots");
+
 // RSSI/SNR side-channel — BaseChatMesh::ContactInfo doesn't carry signal data
 struct SignalSample {
     uint8_t key[4];
@@ -188,8 +191,9 @@ public:
 
     // ════════════════════════════════════════════════════
     // Room message fetch request type (Phase 4.6)
-    // NOTE: 0x03 is REQ_TYPE_GET_TELEMETRY_DATA in room server firmware,
-    // so we use 0x06 to avoid conflict.
+    // NOTE: This is reserved for a SigurdOS-compatible room fetch extension.
+    // Stock MeshCore room servers do not implement it, and repeaters use 0x06
+    // for a different request, so wrapper/UI code fails closed by default.
     static constexpr uint8_t REQ_TYPE_GET_ROOM_MSGS = 0x06;
     static constexpr uint8_t REQ_TYPE_GET_TELEMETRY_DATA = 0x03;
 
@@ -197,6 +201,10 @@ public:
     // ════════════════════════════════════════════════════
 
     static constexpr int MAX_PENDING_REQUESTS = 8;
+    static constexpr uint32_t PENDING_REQUEST_TTL_MS = sigurdos::mesh::PENDING_REQUEST_TTL_MS;
+    static bool pendingRequestExpired(uint32_t sent_at_ms, uint32_t now_ms) {
+        return sigurdos::mesh::pendingRequestExpired(sent_at_ms, now_ms);
+    }
     struct PendingRequest {
         uint32_t tag;
         char     dest_name[32];
@@ -206,6 +214,7 @@ public:
         bool     in_use = false;
     };
     PendingRequest _pending_reqs[MAX_PENDING_REQUESTS];
+    int allocatePendingRequestSlot();
 
     static constexpr int MAX_RESPONSES = 8;
     static constexpr int MAX_RESPONSE_DATA = 128;
@@ -222,10 +231,13 @@ public:
     // Send a typed REQ to a contact by name. Returns true if sent.
     // The response arrives via onContactResponse() and is stored in _responses[].
     bool sendRequest(const char* name, uint8_t req_type);
+    bool sendRequestTracked(const char* name, uint8_t req_type, uint32_t* out_tag);
 
 
     // Send a custom-data REQ to a contact by name.
     bool sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len);
+    bool sendRequestWithDataTracked(const char* name, const uint8_t* data,
+                                    uint8_t data_len, uint32_t* out_tag);
 
 
     // Polling API for received responses
@@ -248,8 +260,8 @@ public:
     RoomMsgFetchEntry _room_fetch_buf[MAX_ROOM_MSG_FETCH];
     int _n_room_fetched = 0;
 
-    // Send a request to fetch recent messages from a room server.
-    // Sends a REQ with REQ_TYPE_GET_ROOM_MSGS, data = channel_name.
+    // Compatibility placeholder for future room servers that support fetch/read.
+    // Stock MeshCore room servers do not handle REQ_TYPE_GET_ROOM_MSGS.
     // Responses populate _room_fetch_buf and are also pushed to mesh_v2_queue.
     bool sendRoomMsgFetchRequest(const char* name, const char* channel_name);
 
@@ -378,7 +390,7 @@ public:
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+            if (getContactByPublicIndex((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 return tmp.out_path_len;
             }
         }
@@ -402,9 +414,12 @@ public:
     bool isAutoAddEnabled() const override { return true; }
     bool shouldAutoAddContactType(uint8_t type) const override;
 
-    bool shouldOverwriteWhenFull() const override { return true; }
+    bool shouldOverwriteWhenFull() const override {
+        return sigurdos::mesh::autoAddConfigAllowsOverwriteOldest(
+            sigurdos::prefs_get().autoadd_config);
+    }
     uint8_t getAutoAddMaxHops() const override {
-        return sigurdos::prefs_get().flood_max_hops;
+        return sigurdos::prefs_get().autoadd_max_hops;
     }
     void onContactsFull() override {
         sigurdos::mesh::mesh_v2_companion_contacts_full_push();
@@ -431,13 +446,21 @@ public:
 
     struct LoginEntry {
         char     contact_name[32];
-        uint8_t  permission;        // server permission byte (0=guest, 1=admin, etc.)
+        uint8_t  pub_key[PUB_KEY_SIZE];
+        uint8_t  permission;        // legacy server admin flag (0=non-admin, 1=admin)
         uint8_t  acl_permissions;   // v7+ ACL byte
         uint8_t  status;            // LoginStatus
         uint32_t started_at_ms;     // when login was initiated (for timeout)
         bool     in_use = false;
     };
     LoginEntry _login_entries[MAX_LOGIN_ENTRIES];
+
+    static bool loginEntryHasPubKey(const LoginEntry& entry) {
+        for (int i = 0; i < PUB_KEY_SIZE; i++) {
+            if (entry.pub_key[i] != 0) return true;
+        }
+        return false;
+    }
 
     int findLoginEntry(const char* name) const {
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
@@ -448,7 +471,20 @@ public:
         return -1;
     }
 
-    int addLoginEntry(const char* name);
+    int findLoginEntryForContact(const ::ContactInfo& contact) const {
+        for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
+            if (_login_entries[i].in_use &&
+                loginEntryHasPubKey(_login_entries[i]) &&
+                memcmp(_login_entries[i].pub_key, contact.id.pub_key, PUB_KEY_SIZE) == 0)
+                return i;
+        }
+        return findLoginEntry(contact.name);
+    }
+
+    int addLoginEntry(const char* name, const uint8_t* pub_key = nullptr);
+    int addLoginEntry(const ::ContactInfo& contact) {
+        return addLoginEntry(contact.name, contact.id.pub_key);
+    }
 
 
     void removeLoginEntry(const char* name) {
@@ -466,19 +502,25 @@ public:
 
     uint8_t getLoginPermission(const char* name) const {
         int idx = findLoginEntry(name);
-        return idx >= 0 ? _login_entries[idx].permission : 0;
+        if (idx < 0) return PERM_ACL_GUEST;
+        return sigurdos::mesh::effectiveLoginPermission(
+            _login_entries[idx].permission, _login_entries[idx].acl_permissions);
     }
 
-    uint8_t getLoginStatus(const char* name) const {
+    uint8_t getLoginStatus(const char* name) {
         int idx = findLoginEntry(name);
-        return idx >= 0 ? static_cast<uint8_t>(_login_entries[idx].status)
-                        : static_cast<uint8_t>(LOGIN_NONE);
+        if (idx < 0) return static_cast<uint8_t>(LOGIN_NONE);
+        if (_login_entries[idx].status == LOGIN_PENDING &&
+            loginPendingTimedOut((uint32_t)millis(), _login_entries[idx].started_at_ms)) {
+            _login_entries[idx].status = LOGIN_FAILED;
+        }
+        return static_cast<uint8_t>(_login_entries[idx].status);
     }
 
     // Send a login request to a repeater or room server contact.
     // Uses BaseChatMesh::sendLogin() which sends as PAYLOAD_TYPE_ANON_REQ.
     // The response arrives in onContactResponse() with RESP_SERVER_LOGIN_OK at data[4].
-    void sendLoginTo(const ::ContactInfo& contact, const char* password);
+    bool sendLoginTo(const ::ContactInfo& contact, const char* password);
 
 
     // Logout: stop the keep-alive connection and clear the session.
@@ -516,7 +558,9 @@ public:
     }
 
     ::ContactInfo _contact_cache;
+    bool getContactByPublicIndex(uint32_t idx, ::ContactInfo& contact);
     const ::ContactInfo* getContact(int idx);
+    void markContactsPersistedBaseline();
 
 
     bool removeContact(int idx);

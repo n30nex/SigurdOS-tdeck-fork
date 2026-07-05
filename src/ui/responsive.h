@@ -65,9 +65,9 @@ constexpr int contact_bottom_reserved(bool is_room_type, bool room_logged_in) {
 }
 
 // ── Hashtag label width — available space in top bar ─────
-// Leaves room for hamburger icon (left) and time label (right).
+// Leaves room for hamburger icon (left), GPS/WiFi/BLE state, and time.
 inline int HASHTAG_LABEL_W() {
-    return DISPLAY_W - 60;  // hamburger(20) + time(32) + margins(8)
+    return std::max(80, DISPLAY_W - 150);
 }
 
 // ── Grid layout — adaptive columns ───────────────────────
