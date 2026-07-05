@@ -115,49 +115,46 @@ struct RepeaterActionCtx {
     uint8_t contact_type;
 };
 
-struct RoomAdminFailCtx {
-    char* name;
-};
-
 static void fail_room_admin_login_visible(const char* name)
 {
     if (!name || !name[0]) return;
-    char* safe_name = strdup(name);
-    if (!safe_name) {
-        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
-        sigurdos::mesh::mesh_v2_queue_push(
-            "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
-        return;
-    }
-    auto* ctx = new(std::nothrow) RoomAdminFailCtx{safe_name};
-    if (!ctx) {
-        free(safe_name);
-        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
-        sigurdos::mesh::mesh_v2_queue_push(
-            "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
-        return;
-    }
-    lv_timer_t* timer = lv_timer_create([](lv_timer_t* t) {
-        auto* c = static_cast<RoomAdminFailCtx*>(lv_timer_get_user_data(t));
-        if (c && c->name) {
-            sigurdos::mesh::forceLoginState(c->name, LOGIN_STATUS_FAILED, 0);
-            sigurdos::mesh::mesh_v2_queue_push(
-                "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
-            repeater_detail_screen_show(c->name, false);
-        }
-        if (c) {
-            free(c->name);
-            delete c;
-        }
-        lv_timer_del(t);
-    }, 1, ctx);
-    if (!timer) {
-        free(ctx->name);
-        delete ctx;
-        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
-        sigurdos::mesh::mesh_v2_queue_push(
-            "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
-    }
+    sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+    sigurdos::mesh::mesh_v2_queue_push(
+        "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+
+    lv_obj_t* parent = lv_scr_act();
+    if (!parent) return;
+    auto dsz = dialog_size(236, 90);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    if (!dlg) return;
+    lv_obj_set_size(dlg, dsz.w, dsz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT_ORANGE), 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* msg = lv_label_create(dlg);
+    lv_label_set_text(msg, "Room admin login unsupported");
+    lv_obj_set_width(msg, dsz.w - 16);
+    lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 6);
+
+    lv_obj_t* ok = lv_btn_create(dlg);
+    lv_obj_set_size(ok, 86, 26);
+    lv_obj_align(ok, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_bg_color(ok, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(ok, 0, 0);
+    lv_obj_t* ok_lbl = lv_label_create(ok);
+    lv_label_set_text(ok_lbl, "OK");
+    lv_obj_set_style_text_color(ok_lbl, lv_color_hex(BG_PRIMARY), 0);
+    lv_obj_center(ok_lbl);
+    lv_obj_add_event_cb(ok, [](lv_event_t* e) {
+        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
+        if (dlg) lv_obj_del_async(dlg);
+    }, LV_EVENT_CLICKED, nullptr);
 }
 
 static RepeaterListSignature get_repeater_signature()
@@ -1166,7 +1163,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
                     char saved_pw[16] = {0};
                     if (sigurdos::loadRepeaterPassword(c->name, saved_pw, sizeof(saved_pw))) {
-                        if (login_submit_room_admin_fails_closed(ADV_TYPE_ROOM, saved_pw)) {
+                        if (!saved_pw[0] ||
+                            !login_submit_sends_network_login(ADV_TYPE_ROOM, saved_pw)) {
                             fail_room_admin_login_visible(c->name);
                             return;
                         }
@@ -1225,6 +1223,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // the ACL role byte; legacy responses fall back to an admin flag.
         const uint8_t login_perm = sigurdos::mesh::getLoginPermission(contact_name);
         bool is_admin = (login_perm >= PERM_ACL_ADMIN);
+        bool show_low_risk_management_rows =
+            repeater_show_low_risk_management_rows(login_st == LOGIN_STATUS_OK);
         bool show_admin_management_rows = repeater_show_admin_management_rows(is_admin);
         bool show_admin_radio_rows = repeater_show_admin_radio_rows(is_admin);
         bool show_admin_password_rows = repeater_show_admin_password_rows(is_admin);
@@ -1238,6 +1238,14 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     "tempradio ", false);
         }
 
+        // ── Section: Session Actions ─────────────────────
+        if (show_low_risk_management_rows) {
+            sec_header("  Session Actions");
+            add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
+            add_act(LV_SYMBOL_REFRESH "  Advert (flood)", "advert", "Sent: flood advert");
+            add_act(LV_SYMBOL_LIST "  Version", "ver", "Sent: ver");
+        }
+
         // ── Section: Management ──────────────────────────
         if (show_admin_management_rows) {
             sec_header("  Management");
@@ -1245,14 +1253,12 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     "set advert.interval ", false);
             add_set(LV_SYMBOL_REFRESH "  Flood Advert", "Flood Advert", "Hours 3-168 or 0",
                     "set flood.advert.interval ", false);
-            add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
             if (show_admin_password_rows) {
                 add_set(LV_SYMBOL_CLOSE "  Admin Password", "Admin Password",
                         "New admin password", "password ", true);
                 add_set(LV_SYMBOL_CLOSE "  Guest Password", "Guest Password",
                         "New guest password", "set guest.password ", false);
             }
-            add_act(LV_SYMBOL_LIST "  Version", "ver", "Sent: ver");
         }
 
         // ── Section: Network ─────────────────────────────
@@ -1261,7 +1267,6 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             add_act(LV_SYMBOL_LIST "  Regions", "region", "Sent: region");
             add_act(LV_SYMBOL_REFRESH "  Repeat On", "set repeat on", "Sent: repeat on");
             add_act(LV_SYMBOL_REFRESH "  Repeat Off", "set repeat off", "Sent: repeat off");
-            add_act(LV_SYMBOL_REFRESH "  Advert (flood)", "advert", "Sent: flood advert");
             add_act(LV_SYMBOL_EDIT "  Public Key", "get public.key", "Sent: get public.key");
         }
 

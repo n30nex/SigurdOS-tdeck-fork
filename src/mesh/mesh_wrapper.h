@@ -353,6 +353,11 @@ int  getAckCounter();   // incremented each time registerAckedMessage is called
 
 // ── Room message fetch (Phase 4.6) ────────────────
 inline bool roomMessageFetchSupported() { return false; }
+
+inline bool roomMessageTargetAllowsSend(uint8_t contact_type)
+{
+    return contact_type == ADV_TYPE_ROOM;
+}
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name);
 int  getRoomMsgFetchCount();
 bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,

@@ -182,6 +182,7 @@ TEST(LoginPollPolicy, TimeoutDurationMatchesIntervalAndPollLimit)
     EXPECT_EQ(sigurdos::ui::login_poll_timeout_ms(),
               sigurdos::ui::REPEATER_LOGIN_POLL_INTERVAL_MS *
               static_cast<uint32_t>(sigurdos::ui::REPEATER_LOGIN_POLL_MAX_PENDING_POLLS));
+    EXPECT_LE(sigurdos::ui::login_poll_timeout_ms(), 10000u);
 }
 
 TEST(RepeaterManagementWaitPolicy, UsesExistingMeshRequestTtl)
@@ -211,6 +212,12 @@ TEST(RepeaterAdminPolicy, ShowsManagementRowsOnlyForAdmins)
 {
     EXPECT_TRUE(sigurdos::ui::repeater_show_admin_management_rows(true));
     EXPECT_FALSE(sigurdos::ui::repeater_show_admin_management_rows(false));
+}
+
+TEST(RepeaterAdminPolicy, ShowsLowRiskActionsForAnyLoggedInSession)
+{
+    EXPECT_TRUE(sigurdos::ui::repeater_show_low_risk_management_rows(true));
+    EXPECT_FALSE(sigurdos::ui::repeater_show_low_risk_management_rows(false));
 }
 
 TEST(RepeaterAdminPolicy, KeepsHighRiskRowsHidden)

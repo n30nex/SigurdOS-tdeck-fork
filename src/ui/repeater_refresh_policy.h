@@ -8,7 +8,7 @@
 namespace sigurdos::ui {
 
 static constexpr uint32_t REPEATER_LOGIN_POLL_INTERVAL_MS = 2000;
-static constexpr uint16_t REPEATER_LOGIN_POLL_MAX_PENDING_POLLS = 8;
+static constexpr uint16_t REPEATER_LOGIN_POLL_MAX_PENDING_POLLS = 5;
 static constexpr uint32_t REPEATER_MANAGEMENT_REQUEST_POLL_MS = 1000;
 static constexpr uint32_t REPEATER_MANAGEMENT_REQUEST_TIMEOUT_MS = 120000;
 
@@ -148,6 +148,11 @@ inline uint32_t repeater_management_request_remaining_secs(uint32_t now_ms,
 inline bool repeater_show_admin_management_rows(bool is_admin)
 {
     return is_admin;
+}
+
+inline bool repeater_show_low_risk_management_rows(bool logged_in)
+{
+    return logged_in;
 }
 
 inline bool repeater_show_admin_radio_rows(bool /*is_admin*/)

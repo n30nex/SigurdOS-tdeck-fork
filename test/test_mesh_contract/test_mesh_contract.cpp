@@ -307,6 +307,13 @@ TEST(MeshContractTest, UnsupportedRoomFetchFailsClosedAtWrapper) {
     EXPECT_FALSE(sigurdos::mesh::roomMessageFetchSupported());
 }
 
+TEST(MeshContractTest, RoomMessageSendRequiresRoomContactType) {
+    EXPECT_TRUE(sigurdos::mesh::roomMessageTargetAllowsSend(ADV_TYPE_ROOM));
+    EXPECT_FALSE(sigurdos::mesh::roomMessageTargetAllowsSend(ADV_TYPE_REPEATER));
+    EXPECT_FALSE(sigurdos::mesh::roomMessageTargetAllowsSend(ADV_TYPE_CHAT));
+    EXPECT_FALSE(sigurdos::mesh::roomMessageTargetAllowsSend(ADV_TYPE_NONE));
+}
+
 TEST(MeshContractTest, ActiveRoomServerContextCanBeSetAndCleared) {
     sigurdos::mesh::clearActiveRoomServer();
     EXPECT_STREQ(sigurdos::mesh::getActiveRoomServer(), "");

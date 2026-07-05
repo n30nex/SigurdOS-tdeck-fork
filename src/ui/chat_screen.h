@@ -106,6 +106,15 @@ inline bool chat_screen_room_open_can_show_transcript(bool active_room_context_s
     return target_ready;
 }
 
+inline bool chat_screen_synthetic_slot_reclaimable(const char* name,
+                                                   int unread,
+                                                   uint16_t message_count,
+                                                   bool active)
+{
+    return !active && unread <= 0 && message_count == 0 &&
+           (chat_screen_is_dm_name(name) || chat_screen_is_room_name(name));
+}
+
 inline int chat_screen_emoji_page_count(int emoji_count)
 {
     if (emoji_count <= 0) return 0;

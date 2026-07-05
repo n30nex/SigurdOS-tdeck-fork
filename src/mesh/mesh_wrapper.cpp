@@ -610,6 +610,16 @@ const char* getActiveRoomServer() {
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
     if (!radioTxAllowed()) return 0;
     if (!g_mesh || !contact_name || !channel_name || !text) return 0;
+    bool found_room = false;
+    for (int i = 0; i < g_mesh->getContactCount(); i++) {
+        auto* c = g_mesh->getContact(i);
+        if (c && strcmp(c->name, contact_name) == 0 &&
+            roomMessageTargetAllowsSend(c->type)) {
+            found_room = true;
+            break;
+        }
+    }
+    if (!found_room) return 0;
     // Format: "[channel_name] text" — embeds the channel name in the message text
     // so the room server can identify which channel the message is for.
     char buf[160];

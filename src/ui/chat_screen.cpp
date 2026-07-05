@@ -838,6 +838,61 @@ static int find_channel_idx(const char* channel)
     return -1;
 }
 
+static void clear_private_scope_for_conversation(const char* conversation)
+{
+    if (!conversation || !conversation[0]) return;
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (strcmp(ch_private_scopes[i].conversation, conversation) == 0) {
+            memset(&ch_private_scopes[i], 0, sizeof(ch_private_scopes[i]));
+            return;
+        }
+    }
+}
+
+static void clear_channel_slot(int idx)
+{
+    if (idx < 0 || idx >= MAX_CHANNELS) return;
+    char old_name[CHANNEL_NAME_CAP];
+    strncpy(old_name, dyn_channels[idx], sizeof(old_name) - 1);
+    old_name[sizeof(old_name) - 1] = '\0';
+    if (ch_msgs[idx]) {
+        heap_caps_free(ch_msgs[idx]);
+        ch_msgs[idx] = nullptr;
+    }
+    ch_msg_capacity[idx] = 0;
+    ch_msg_count[idx] = 0;
+    memset(&ch_meta[idx], 0, sizeof(ch_meta[idx]));
+    dyn_channels[idx][0] = '\0';
+    clear_private_scope_for_conversation(old_name);
+}
+
+static int ensure_synthetic_channel_slot(const char* conversation)
+{
+    int idx = find_channel_idx(conversation);
+    if (idx >= 0) return idx;
+    if (!chat_conversation_visible_for_current_filter(conversation)) return -1;
+    if (dyn_count < MAX_CHANNELS) {
+        idx = dyn_count++;
+        clear_channel_slot(idx);
+        strncpy(dyn_channels[idx], conversation, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
+        return idx;
+    }
+    for (int i = 0; i < dyn_count && i < MAX_CHANNELS; i++) {
+        if (!chat_screen_synthetic_slot_reclaimable(dyn_channels[i],
+                                                    ch_meta[i].unread,
+                                                    ch_msg_count[i],
+                                                    i == active_channel)) {
+            continue;
+        }
+        clear_channel_slot(i);
+        strncpy(dyn_channels[i], conversation, sizeof(dyn_channels[i]) - 1);
+        dyn_channels[i][sizeof(dyn_channels[i]) - 1] = '\0';
+        return i;
+    }
+    return -1;
+}
+
 static void channel_list_timer_cb(lv_timer_t* timer)
 {
     if (timer) lv_timer_del(timer);
@@ -3042,13 +3097,7 @@ void chat_screen_open_dm(const char* contact_name)
     char dm_name[CHANNEL_NAME_CAP];
     snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_copy);
 
-    int idx = find_channel_idx(dm_name);
-    if (idx < 0 && dyn_count < MAX_CHANNELS) {
-        idx = dyn_count;
-        strncpy(dyn_channels[idx], dm_name, sizeof(dyn_channels[idx]) - 1);
-        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
-        dyn_count++;
-    }
+    int idx = ensure_synthetic_channel_slot(dm_name);
 
     const bool target_ready = (idx >= 0 && idx < MAX_CHANNELS);
     // Signal chat_screen_show() to skip the channel-list screen only when
@@ -3128,14 +3177,7 @@ void chat_screen_open_room(const char* room_name)
         return;
     }
 
-    int idx = find_channel_idx(room_channel);
-    if (idx < 0 && dyn_count < MAX_CHANNELS &&
-        chat_conversation_visible_for_current_filter(room_channel)) {
-        idx = dyn_count;
-        strncpy(dyn_channels[idx], room_channel, sizeof(dyn_channels[idx]) - 1);
-        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
-        dyn_count++;
-    }
+    int idx = ensure_synthetic_channel_slot(room_channel);
 
     const bool target_ready = (idx >= 0 && idx < MAX_CHANNELS);
     g_skip_channel_list =
