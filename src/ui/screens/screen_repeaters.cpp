@@ -1151,7 +1151,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         lv_obj_center(yl);
                         lv_obj_set_style_text_color(yl, lv_color_hex(0xffffff), 0);
                         lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
-                            lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
+                            lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce));
                             const char* cn = (const char*)lv_obj_get_user_data(dlg);
 
                             if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
@@ -1167,7 +1167,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         lv_label_set_text(nl, "Cancel");
                         lv_obj_center(nl);
                         lv_obj_add_event_cb(nb, [](lv_event_t* ce) {
-                            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+                            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce)));
                         }, LV_EVENT_CLICKED, nullptr);
                         lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
                             lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);

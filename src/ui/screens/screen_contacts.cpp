@@ -555,7 +555,7 @@ void show_login_password_dialog(const char* contact_name)
                 if (d->save_cb && lv_obj_is_valid(d->save_cb)) {
                     lv_obj_clear_state(d->save_cb, LV_STATE_CHECKED);
                 }
-                lv_obj_add_state((lv_obj_t*)lv_event_get_target(fe), LV_STATE_DISABLED);
+                lv_obj_add_state((lv_obj_t*)lv_event_get_current_target(fe), LV_STATE_DISABLED);
             }, LV_EVENT_CLICKED, fd);
             lv_obj_add_event_cb(forget_btn, [](lv_event_t* fe) {
                 auto* d = (ForgetPwData*)lv_event_get_user_data(fe);
@@ -577,7 +577,7 @@ void show_login_password_dialog(const char* contact_name)
     lv_label_set_text(cl, "Cancel");
     lv_obj_center(cl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce)));
     }, LV_EVENT_CLICKED, nullptr);
 
     // Login button
@@ -606,7 +606,7 @@ void show_login_password_dialog(const char* contact_name)
     lv_obj_set_user_data(login_btn, dd);
 
     lv_obj_add_event_cb(login_btn, [](lv_event_t* le) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(le);
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(le);
         PwDialogData* d = (PwDialogData*)lv_obj_get_user_data(btn);
         if (d && !d->submitted) {
             lv_obj_add_state(btn, LV_STATE_DISABLED);
@@ -843,7 +843,7 @@ void show_admin_cmd_dialog(const char* contact_name)
     lv_obj_center(x_lbl);
     lv_obj_set_style_text_color(x_lbl, lv_color_hex(0xffffff), 0);
     lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
         lv_obj_t* top = lv_obj_get_parent(btn);
         lv_obj_t* dlg = lv_obj_get_parent(top);
         lv_obj_del_async(dlg);
@@ -933,7 +933,7 @@ void show_admin_cmd_dialog(const char* contact_name)
     lv_obj_set_style_text_color(sb, lv_color_hex(BG_PRIMARY), 0);
     lv_obj_set_user_data(send_btn, td);
     lv_obj_add_event_cb(send_btn, [](lv_event_t* e) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
         TermData* d = (TermData*)lv_obj_get_user_data(btn);
         if (d) {
             auto send = [](TermData* dd) {
@@ -1514,10 +1514,15 @@ void contact_detail_screen_show(const char* contact_name)
             lv_label_set_text(cl, "Cancel");
             lv_obj_center(cl);
             lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(ce)));
             }, LV_EVENT_CLICKED, nullptr);
 
             char* cn = strdup(name);
+            if (!cn) {
+                lv_obj_del_async(dlg);
+                return;
+            }
+            lv_obj_set_user_data(dlg, cn);
             lv_obj_t* confirm_btn = lv_btn_create(dlg);
             lv_obj_set_size(confirm_btn, 64, 24);
             lv_obj_align(confirm_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
@@ -1526,19 +1531,25 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* cfl_lb = lv_label_create(confirm_btn);
             lv_label_set_text(cfl_lb, "Remove");
             lv_obj_center(cfl_lb);
-            lv_obj_set_user_data(confirm_btn, cn);
             lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
-                const char* cn = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce));
-                sigurdos::mesh::removeContact(cn);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(ce);
+                lv_obj_t* dlg = lv_obj_get_parent(btn);
+                const char* cn = (const char*)lv_obj_get_user_data(dlg);
+                if (!cn) return;
+                char safe_name[32];
+                snprintf(safe_name, sizeof(safe_name), "%s", cn);
+                sigurdos::mesh::removeContact(safe_name);
                 go_back();
             }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_set_user_data(dlg, cn);
             lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
+                lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+                if (lv_event_get_target(de) != obj) return;
+                free(lv_obj_get_user_data(obj));
+                lv_obj_set_user_data(obj, nullptr);
             }, LV_EVENT_DELETE, nullptr);
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(remove_btn, [](lv_event_t* e) {
-            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
         }, LV_EVENT_DELETE, nullptr);
     }
 
@@ -1628,12 +1639,12 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_set_style_text_color(ac_lbl, lv_color_hex(BG_PRIMARY), 0);
             lv_obj_set_user_data(ac_btn, ac_name);
             lv_obj_add_event_cb(ac_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                 const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (name) show_admin_cmd_dialog(name);
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(ac_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
             }, LV_EVENT_DELETE, nullptr);
 
             // ── Logout button ──
@@ -1648,8 +1659,8 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_set_style_text_color(lo_lbl, lv_color_hex(0xffffff), 0);
             lv_obj_set_user_data(lo_btn, lo_name);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
-                lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(target);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (name) {
                     sigurdos::mesh::sendLogout(name);
                     lv_timer_create([](lv_timer_t* t) {
@@ -1659,7 +1670,7 @@ void contact_detail_screen_show(const char* contact_name)
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
             }, LV_EVENT_DELETE, nullptr);
 
         } else {
@@ -1675,12 +1686,12 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_set_style_text_color(li_lbl, lv_color_hex(BG_PRIMARY), 0);
             lv_obj_set_user_data(li_btn, li_name);
             lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                 const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (name) show_login_password_dialog(name);
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
             }, LV_EVENT_DELETE, nullptr);
 
             // When login pending or failed, show Cancel button
@@ -1696,8 +1707,8 @@ void contact_detail_screen_show(const char* contact_name)
                 lv_obj_set_style_text_color(cx_lbl, lv_color_hex(TEXT_SECONDARY), 0);
                 lv_obj_set_user_data(cx_btn, cx_name);
                 lv_obj_add_event_cb(cx_btn, [](lv_event_t* ce) {
-                    lv_obj_t* t = (lv_obj_t*)lv_event_get_target(ce);
-                    const char* n = (const char*)lv_obj_get_user_data(t);
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(ce);
+                    const char* n = (const char*)lv_obj_get_user_data(btn);
                     if (n) {
                         cancel_login_poll_for(n);
                         sigurdos::mesh::sendLogout(n);
@@ -1706,7 +1717,7 @@ void contact_detail_screen_show(const char* contact_name)
                     }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(cx_btn, [](lv_event_t* ce) {
-                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce)));
+                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(ce)));
                 }, LV_EVENT_DELETE, nullptr);
             }
         }

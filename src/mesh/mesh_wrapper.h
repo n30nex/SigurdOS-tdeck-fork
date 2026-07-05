@@ -167,12 +167,12 @@ inline LoginResponseParseResult parseLoginResponse(const uint8_t* data,
     LoginResponseParseResult result{};
     if (!data || len < 5) return result;
 
-    if (len >= 8 && data[4] == 0) {
+    if (data[4] == 0) {
         result.kind = LoginResponseKind::NewOk;
         std::memcpy(&result.server_tag, data, 4);
-        result.keep_alive_units = data[5];
-        result.permission = data[6];
-        result.acl = data[7];
+        result.keep_alive_units = (len > 5) ? data[5] : 0;
+        result.permission = (len > 6) ? data[6] : 0;
+        result.acl = (len > 7) ? data[7] : 0;
         result.firmware_level = (len > 12) ? data[12] : 0;
         return result;
     }
@@ -521,6 +521,10 @@ static constexpr uint32_t LOGIN_PENDING_TIMEOUT_MS = 30000UL;
 
 inline bool loginStatusNeedsLocalCancel(uint8_t status) {
     return status == LOGIN_STATUS_PENDING || status == LOGIN_STATUS_FAILED;
+}
+
+inline bool loginStatusCanBeReclaimed(uint8_t status) {
+    return status == LOGIN_STATUS_NONE || status == LOGIN_STATUS_FAILED;
 }
 
 inline bool loginPendingTimedOut(uint32_t now_ms, uint32_t started_at_ms) {

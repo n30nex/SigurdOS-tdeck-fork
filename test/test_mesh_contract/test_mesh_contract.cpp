@@ -104,6 +104,11 @@ TEST(MeshContractTest, LoginStatusCancelPolicyMatchesPendingUiStates) {
     EXPECT_TRUE(sigurdos::mesh::loginStatusNeedsLocalCancel(LOGIN_STATUS_PENDING));
     EXPECT_FALSE(sigurdos::mesh::loginStatusNeedsLocalCancel(LOGIN_STATUS_OK));
     EXPECT_TRUE(sigurdos::mesh::loginStatusNeedsLocalCancel(LOGIN_STATUS_FAILED));
+
+    EXPECT_TRUE(sigurdos::mesh::loginStatusCanBeReclaimed(LOGIN_STATUS_NONE));
+    EXPECT_FALSE(sigurdos::mesh::loginStatusCanBeReclaimed(LOGIN_STATUS_PENDING));
+    EXPECT_FALSE(sigurdos::mesh::loginStatusCanBeReclaimed(LOGIN_STATUS_OK));
+    EXPECT_TRUE(sigurdos::mesh::loginStatusCanBeReclaimed(LOGIN_STATUS_FAILED));
 }
 
 TEST(MeshContractTest, LoginPendingTimeoutUsesWrapSafeElapsedTime) {
@@ -121,7 +126,7 @@ TEST(MeshContractTest, LoginKeepAliveUsesDefaultForMeshCoreZeroHint) {
     EXPECT_EQ(sigurdos::mesh::loginKeepAliveSeconds(0, ADV_TYPE_CHAT), 0u);
 }
 
-TEST(MeshContractTest, LoginResponseParserAcceptsNewOkOnlyWithFullPayload) {
+TEST(MeshContractTest, LoginResponseParserAcceptsNewOkWithExtendedPayload) {
     const uint8_t ok[] = {
         0x11, 0x22, 0x33, 0x44,
         0x00, 0x04, 0x02, 0x7f,
@@ -136,9 +141,17 @@ TEST(MeshContractTest, LoginResponseParserAcceptsNewOkOnlyWithFullPayload) {
     EXPECT_EQ(parsed.server_tag, 0x44332211u);
     EXPECT_EQ(parsed.firmware_level, 0x12);
 
-    const uint8_t too_short_ok[] = {0x11, 0x22, 0x33, 0x44, 0x00};
-    parsed = sigurdos::mesh::parseLoginResponse(too_short_ok, sizeof(too_short_ok), true);
-    EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::Ignored);
+}
+
+TEST(MeshContractTest, LoginResponseParserAcceptsShortNewOkWithSafeDefaults) {
+    const uint8_t short_ok[] = {0x11, 0x22, 0x33, 0x44, 0x00};
+    auto parsed = sigurdos::mesh::parseLoginResponse(short_ok, sizeof(short_ok), true);
+    EXPECT_EQ(parsed.kind, sigurdos::mesh::LoginResponseKind::NewOk);
+    EXPECT_EQ(parsed.server_tag, 0x44332211u);
+    EXPECT_EQ(parsed.keep_alive_units, 0u);
+    EXPECT_EQ(parsed.permission, 0u);
+    EXPECT_EQ(parsed.acl, 0u);
+    EXPECT_EQ(parsed.firmware_level, 0u);
 }
 
 TEST(MeshContractTest, LoginResponseParserAcceptsLegacyOk) {

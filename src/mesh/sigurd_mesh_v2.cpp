@@ -916,18 +916,28 @@ namespace mesh {
             _login_entries[idx].started_at_ms = millis();
             return idx;
         }
+        int reusable_failed = -1;
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
             if (!_login_entries[i].in_use) {
-                strncpy(_login_entries[i].contact_name, name,
-                        sizeof(_login_entries[i].contact_name) - 1);
-                _login_entries[i].contact_name[sizeof(_login_entries[i].contact_name) - 1] = '\0';
-                _login_entries[i].status = LOGIN_PENDING;
-                _login_entries[i].permission = 0;
-                _login_entries[i].acl_permissions = 0;
-                _login_entries[i].started_at_ms = millis();
-                _login_entries[i].in_use = true;
-                return i;
+                reusable_failed = i;
+                break;
             }
+            if (reusable_failed < 0 &&
+                sigurdos::mesh::loginStatusCanBeReclaimed(_login_entries[i].status)) {
+                reusable_failed = i;
+            }
+        }
+        if (reusable_failed >= 0) {
+            LoginEntry& entry = _login_entries[reusable_failed];
+            memset(&entry, 0, sizeof(entry));
+            strncpy(entry.contact_name, name, sizeof(entry.contact_name) - 1);
+            entry.contact_name[sizeof(entry.contact_name) - 1] = '\0';
+            entry.status = LOGIN_PENDING;
+            entry.permission = 0;
+            entry.acl_permissions = 0;
+            entry.started_at_ms = millis();
+            entry.in_use = true;
+            return reusable_failed;
         }
         return -1; // table full
     }
