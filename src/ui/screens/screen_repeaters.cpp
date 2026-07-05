@@ -103,6 +103,7 @@ struct RepeaterRefreshState {
 struct RepeaterPendingRefreshState {
     lv_obj_t* screen;
     char name[32];
+    uint16_t pending_polls;
 };
 
 struct RoomSyncCtx {
@@ -202,7 +203,12 @@ static void repeater_pending_refresh_timer_cb(lv_timer_t* timer)
 
     uint8_t status = sigurdos::mesh::getLoginStatus(state->name);
     if (repeater_detail_pending_refresh_should_keep_polling(status)) {
-        return;
+        state->pending_polls++;
+        if (!login_poll_timed_out(state->pending_polls)) {
+            return;
+        }
+        sigurdos::mesh::forceLoginState(state->name, LOGIN_STATUS_FAILED, 0);
+        status = LOGIN_STATUS_FAILED;
     }
 
     char safe_name[32];
@@ -223,6 +229,7 @@ static void arm_repeater_pending_refresh(lv_obj_t* screen, const char* contact_n
     if (!state) return;
     state->screen = screen;
     state->name[0] = '\0';
+    state->pending_polls = 0;
     snprintf(state->name, sizeof(state->name), "%s", contact_name);
     lv_timer_t* timer = lv_timer_create(repeater_pending_refresh_timer_cb,
                                         REPEATER_LOGIN_POLL_INTERVAL_MS,
@@ -878,11 +885,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     snprintf(safe_name, sizeof(safe_name), "%s", ctx->name);
                     if (login_contact_type_is_room(ctx->contact_type)) {
                         repeater_detail_close_state();
+                        sigurdos::mesh::clearLoginState(safe_name);
                         chat_screen_open_room(safe_name);
-                        if (!sigurdos::mesh::sendLoginForContactType(
-                                safe_name, "", ctx->contact_type)) {
-                            sigurdos::mesh::clearLoginState(safe_name);
-                        }
                     } else {
                         show_login_password_dialog(safe_name, ctx->contact_type);
                     }

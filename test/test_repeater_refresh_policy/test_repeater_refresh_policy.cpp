@@ -127,6 +127,13 @@ TEST(LoginRefreshPolicy, BlankRoomGuestIsNavigationFirst)
     EXPECT_FALSE(sigurdos::ui::login_submit_is_blank_room_guest(3, nullptr));
 }
 
+TEST(LoginRefreshPolicy, BlankRoomGuestDoesNotSendNetworkLogin)
+{
+    EXPECT_FALSE(sigurdos::ui::login_submit_sends_network_login(3, ""));
+    EXPECT_TRUE(sigurdos::ui::login_submit_sends_network_login(2, ""));
+    EXPECT_TRUE(sigurdos::ui::login_submit_sends_network_login(2, "admin"));
+}
+
 TEST(LoginRefreshPolicy, RoomAdminSubmitFailsClosedBeforePending)
 {
     EXPECT_TRUE(sigurdos::ui::login_submit_room_admin_fails_closed(3, "admin"));
@@ -134,6 +141,11 @@ TEST(LoginRefreshPolicy, RoomAdminSubmitFailsClosedBeforePending)
     EXPECT_FALSE(sigurdos::ui::login_submit_room_admin_fails_closed(2, "admin"));
     EXPECT_FALSE(sigurdos::ui::login_submit_room_admin_fails_closed(1, "admin"));
     EXPECT_FALSE(sigurdos::ui::login_submit_room_admin_fails_closed(3, nullptr));
+}
+
+TEST(LoginRefreshPolicy, RoomAdminDoesNotSendNetworkLogin)
+{
+    EXPECT_FALSE(sigurdos::ui::login_submit_sends_network_login(3, "admin"));
 }
 
 TEST(LoginRefreshPolicy, AllowsDelayedRefreshOnlyForCurrentOpenDetail)

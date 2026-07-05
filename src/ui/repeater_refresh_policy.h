@@ -98,6 +98,14 @@ inline bool login_submit_room_admin_fails_closed(uint8_t contact_type,
            !room_admin_password_login_supported();
 }
 
+inline bool login_submit_sends_network_login(uint8_t contact_type,
+                                             const char* password)
+{
+    if (login_submit_is_blank_room_guest(contact_type, password)) return false;
+    if (login_submit_room_admin_fails_closed(contact_type, password)) return false;
+    return true;
+}
+
 inline bool login_detail_refresh_allowed(bool detail_open_for_contact,
                                          bool screen_still_current)
 {

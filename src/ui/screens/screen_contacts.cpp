@@ -443,20 +443,17 @@ static void deferred_login_submit_cb(lv_timer_t* t)
             login_submit_is_blank_room_guest(ctx->contact_type, ctx->password);
         bool sent = false;
         if (blank_room_guest_login) {
-            // Guest room entry is a UI navigation action first. The login
-            // packet opportunistically refreshes the room-server session, but
-            // no-response/flood-path failures must not make the button inert.
+            // Guest room entry is just a room-chat navigation action. Sending
+            // an opportunistic blank login here can wedge the UI in pending
+            // state or crash if the room server path is stale.
             repeater_detail_close_state();
+            sigurdos::mesh::clearLoginState(ctx->name);
             chat_screen_open_room(ctx->name);
-            sent = sigurdos::mesh::sendLoginForContactType(
-                ctx->name, ctx->password, ctx->contact_type);
-            if (!sent) {
-                sigurdos::mesh::clearLoginState(ctx->name);
-            }
         } else if (login_submit_room_admin_fails_closed(ctx->contact_type,
                                                         ctx->password)) {
             fail_room_admin_login_visible(ctx->name);
-        } else {
+        } else if (login_submit_sends_network_login(ctx->contact_type,
+                                                    ctx->password)) {
             sent = sigurdos::mesh::sendLoginForContactType(
                 ctx->name, ctx->password, ctx->contact_type);
             if (sent) {
@@ -1749,11 +1746,8 @@ void contact_detail_screen_show(const char* contact_name)
                     snprintf(safe_name, sizeof(safe_name), "%s", ctx->name);
                     if (login_contact_type_is_room(ctx->contact_type)) {
                         repeater_detail_close_state();
+                        sigurdos::mesh::clearLoginState(safe_name);
                         chat_screen_open_room(safe_name);
-                        if (!sigurdos::mesh::sendLoginForContactType(
-                                safe_name, "", ctx->contact_type)) {
-                            sigurdos::mesh::clearLoginState(safe_name);
-                        }
                     } else {
                         show_login_password_dialog(safe_name, ctx->contact_type);
                     }
