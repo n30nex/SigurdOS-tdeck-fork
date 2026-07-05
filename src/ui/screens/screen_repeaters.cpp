@@ -219,8 +219,10 @@ static void repeater_pending_refresh_timer_cb(lv_timer_t* timer)
 static void arm_repeater_pending_refresh(lv_obj_t* screen, const char* contact_name)
 {
     if (!screen || !contact_name || !contact_name[0]) return;
-    auto* state = new(std::nothrow) RepeaterPendingRefreshState{screen, ""};
+    auto* state = new(std::nothrow) RepeaterPendingRefreshState;
     if (!state) return;
+    state->screen = screen;
+    state->name[0] = '\0';
     snprintf(state->name, sizeof(state->name), "%s", contact_name);
     lv_timer_t* timer = lv_timer_create(repeater_pending_refresh_timer_cb,
                                         REPEATER_LOGIN_POLL_INTERVAL_MS,
