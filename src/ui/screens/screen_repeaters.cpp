@@ -109,13 +109,49 @@ struct RepeaterActionCtx {
     uint8_t contact_type;
 };
 
+struct RoomAdminFailCtx {
+    char* name;
+};
+
 static void fail_room_admin_login_visible(const char* name)
 {
     if (!name || !name[0]) return;
-    sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
-    sigurdos::mesh::mesh_v2_queue_push(
-        "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
-    repeater_detail_screen_show(name, false);
+    char* safe_name = strdup(name);
+    if (!safe_name) {
+        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+        sigurdos::mesh::mesh_v2_queue_push(
+            "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+        return;
+    }
+    auto* ctx = new(std::nothrow) RoomAdminFailCtx{safe_name};
+    if (!ctx) {
+        free(safe_name);
+        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+        sigurdos::mesh::mesh_v2_queue_push(
+            "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+        return;
+    }
+    lv_timer_t* timer = lv_timer_create([](lv_timer_t* t) {
+        auto* c = static_cast<RoomAdminFailCtx*>(lv_timer_get_user_data(t));
+        if (c && c->name) {
+            sigurdos::mesh::forceLoginState(c->name, LOGIN_STATUS_FAILED, 0);
+            sigurdos::mesh::mesh_v2_queue_push(
+                "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+            repeater_detail_screen_show(c->name, false);
+        }
+        if (c) {
+            free(c->name);
+            delete c;
+        }
+        lv_timer_del(t);
+    }, 1, ctx);
+    if (!timer) {
+        free(ctx->name);
+        delete ctx;
+        sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+        sigurdos::mesh::mesh_v2_queue_push(
+            "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+    }
 }
 
 static RepeaterListSignature get_repeater_signature()
@@ -1076,6 +1112,10 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
                     char saved_pw[16] = {0};
                     if (sigurdos::loadRepeaterPassword(c->name, saved_pw, sizeof(saved_pw))) {
+                        if (login_submit_room_admin_fails_closed(ADV_TYPE_ROOM, saved_pw)) {
+                            fail_room_admin_login_visible(c->name);
+                            return;
+                        }
                         bool sent = sigurdos::mesh::sendLoginForContactType(
                             c->name, saved_pw, ADV_TYPE_ROOM);
                         sigurdos::mesh::mesh_v2_queue_push(

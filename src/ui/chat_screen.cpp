@@ -3112,10 +3112,10 @@ void chat_screen_open_room(const char* room_name)
     clear_pending_channel_timers();
     chat_screen_set_filter(1);
     sigurdos::mesh::clearActiveRoomServer();
-    if (!sigurdos::mesh::setActiveRoomServer(room_copy)) {
+    const bool active_room_context_set = sigurdos::mesh::setActiveRoomServer(room_copy);
+    if (!active_room_context_set) {
         sigurdos::mesh::mesh_v2_queue_push(
-            "System", "", "! Room open failed: contact is not a room server", 0, 0.0f);
-        return;
+            "System", "", "! Room context stale; opening transcript", 0, 0.0f);
     }
     const bool opened_from_chat = (current_screen() == Screen::Chat);
 
@@ -3143,7 +3143,7 @@ void chat_screen_open_room(const char* room_name)
     g_direct_open_returns_to_previous = g_skip_channel_list;
     if (!opened_from_chat) navigate_to(Screen::Chat);
 
-    if (target_ready) {
+    if (chat_screen_room_open_can_show_transcript(active_room_context_set, target_ready)) {
         request_open_channel_messaging(idx);
     } else {
         sigurdos::mesh::clearActiveRoomServer();

@@ -99,6 +99,13 @@ inline bool chat_screen_direct_open_should_skip_channel_list(bool opened_from_ch
     return target_ready && !opened_from_chat;
 }
 
+inline bool chat_screen_room_open_can_show_transcript(bool active_room_context_set,
+                                                      bool target_ready)
+{
+    (void)active_room_context_set;
+    return target_ready;
+}
+
 inline int chat_screen_emoji_page_count(int emoji_count)
 {
     if (emoji_count <= 0) return 0;

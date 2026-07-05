@@ -514,6 +514,11 @@ void show_login_password_dialog(const char* contact_name, uint8_t contact_type_h
     if (!contact_name) return;
     const uint8_t contact_type = contact_type_for_login(contact_name,
                                                         contact_type_hint);
+    if (login_contact_type_is_room(contact_type) &&
+        !room_admin_password_login_supported()) {
+        fail_room_admin_login_visible(contact_name);
+        return;
+    }
 
     lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
     auto dlg_sz = dialog_size(240, 154);

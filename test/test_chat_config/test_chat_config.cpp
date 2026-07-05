@@ -43,6 +43,7 @@ using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_public_message_actions_available;
 using sigurdos::ui::chat_screen_public_message_dm_available;
 using sigurdos::ui::chat_screen_render_limit_for_channel;
+using sigurdos::ui::chat_screen_room_open_can_show_transcript;
 using sigurdos::ui::chat_screen_room_contact_name;
 using sigurdos::ui::chat_screen_visible_message_start;
 
@@ -207,6 +208,12 @@ TEST(ChatConfig, DirectOpenSkipsListOnlyForReadyExternalTargets) {
     EXPECT_FALSE(chat_screen_direct_open_should_skip_channel_list(true, true));
     EXPECT_FALSE(chat_screen_direct_open_should_skip_channel_list(false, false));
     EXPECT_FALSE(chat_screen_direct_open_should_skip_channel_list(true, false));
+}
+
+TEST(ChatConfig, RoomOpenShowsTranscriptWhenContextIsStaleButTargetIsReady) {
+    EXPECT_TRUE(chat_screen_room_open_can_show_transcript(false, true));
+    EXPECT_TRUE(chat_screen_room_open_can_show_transcript(true, true));
+    EXPECT_FALSE(chat_screen_room_open_can_show_transcript(false, false));
 }
 
 TEST(ChatConfig, PublicMessageActionsOnlyApplyToIncomingPublicMessages) {
