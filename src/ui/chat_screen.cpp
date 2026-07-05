@@ -887,7 +887,9 @@ static void request_open_channel_messaging(int idx)
     if (!g_pending_channel_open_timer) {
         g_pending_channel_open_timer = lv_timer_create(
             channel_open_timer_cb, CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS, nullptr);
-        if (!g_pending_channel_open_timer) g_channel_transition_pending = false;
+        if (!g_pending_channel_open_timer) {
+            channel_open_timer_cb(nullptr);
+        }
     }
 }
 
@@ -3034,13 +3036,13 @@ void chat_screen_open_dm(const char* contact_name)
     sigurdos::mesh::clearActiveRoomServer();
     const bool opened_from_chat = (current_screen() == Screen::Chat);
 
-    // Signal chat_screen_show() to skip the channel-list screen
-    // so we go directly to the messaging view without a wasteful
-    // intermediate lv_scr_load_anim that causes a crash when
-    // open_channel_messaging() triggers a second screen load.
-    g_skip_channel_list = true;
+    // Signal chat_screen_show() to skip the channel-list screen only when
+    // navigation will actually dispatch Chat. navigate_to(Chat) is a no-op
+    // when already on Chat; leaving this flag set there makes a later Chat
+    // entry silently skip its list.
+    g_skip_channel_list = !opened_from_chat;
     g_direct_open_returns_to_previous = !opened_from_chat;
-    navigate_to(Screen::Chat);
+    if (!opened_from_chat) navigate_to(Screen::Chat);
     refresh_channels();
 
     // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
@@ -3075,9 +3077,9 @@ void chat_screen_open_channel(const char* channel_name)
         sigurdos::mesh::joinPublicChannel();
     }
 
-    g_skip_channel_list = true;
+    g_skip_channel_list = !opened_from_chat;
     g_direct_open_returns_to_previous = !opened_from_chat;
-    navigate_to(Screen::Chat);
+    if (!opened_from_chat) navigate_to(Screen::Chat);
     refresh_channels();
 
     int idx = find_channel_idx(channel_copy);
@@ -3104,12 +3106,16 @@ void chat_screen_open_room(const char* room_name)
     clear_pending_channel_timers();
     chat_screen_set_filter(1);
     sigurdos::mesh::clearActiveRoomServer();
-    if (!sigurdos::mesh::setActiveRoomServer(room_copy)) return;
+    if (!sigurdos::mesh::setActiveRoomServer(room_copy)) {
+        sigurdos::mesh::mesh_v2_queue_push(
+            "System", "", "! Room open failed: contact is not a room server", 0, 0.0f);
+        return;
+    }
     const bool opened_from_chat = (current_screen() == Screen::Chat);
 
-    g_skip_channel_list = true;
+    g_skip_channel_list = !opened_from_chat;
     g_direct_open_returns_to_previous = !opened_from_chat;
-    navigate_to(Screen::Chat);
+    if (!opened_from_chat) navigate_to(Screen::Chat);
     refresh_channels();
 
     char room_channel[CHANNEL_NAME_CAP];
@@ -3127,6 +3133,10 @@ void chat_screen_open_room(const char* room_name)
 
     if (idx >= 0 && idx < MAX_CHANNELS) {
         request_open_channel_messaging(idx);
+    } else {
+        sigurdos::mesh::clearActiveRoomServer();
+        sigurdos::mesh::mesh_v2_queue_push(
+            "System", "", "! Room open failed: chat list is full", 0, 0.0f);
     }
 }
 

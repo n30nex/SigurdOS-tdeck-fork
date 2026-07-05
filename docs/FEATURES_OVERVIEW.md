@@ -51,7 +51,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
   - [GPS NMEA Parser](#gps-nmea-parser)
   - [SD Card Storage](#sd-card-storage)
   - [LoRa SX1262 Radio](#lora-sx1262-radio)
-  - [Buzzer](#buzzer)
+  - [Notification Audio](#notification-audio)
   - [Peripheral Power](#peripheral-power)
 - [Offline Map Renderer](#offline-map-renderer)
 
@@ -63,7 +63,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
 |-------|-------------|-------------|
 | **UI** | Discord-inspired dark pixel interface, 12-tile home grid, chat, settings, and diagnostics screens | `src/ui/*` |
 | **Mesh** | Full MeshCore protocol stack — routing, encryption, group channels, direct messages | `src/mesh/*`, `lib/meshcore/` |
-| **HAL** | All T-Deck peripherals — display, touch, keyboard, trackball, GPS, battery, SD, buzzer, LoRa | `src/hal/*` |
+| **HAL** | All T-Deck peripherals — display, touch, keyboard, trackball, GPS, battery, SD, notification audio, LoRa | `src/hal/*` |
 | **Apps** | Offline map renderer with PNG tile decode and LRU PSRAM cache | `src/app/*` |
 | **Boot** | Sequenced startup: board → display → mesh → UI → peripherals | `src/main.cpp` |
 
@@ -370,9 +370,9 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Configurable:** Frequency, bandwidth, spreading factor, coding rate, TX power via Radio Setup screen
 **Sources:** [`src/hal/tdeck_pins.h`](../src/hal/tdeck_pins.h), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`lib/meshcore/`](../lib/meshcore/)
 
-### Buzzer
-- **Pin:** GPIO 46, active-high GPIO output
-- **Non-blocking pattern playback** — notification patterns (short/double beep) are stepped by `buzzer_loop()` from the main loop instead of blocking delays; no LEDC/PWM channel is used
+### Notification Audio
+- **Output:** T-Deck I2S speaker (`WS=5`, `BCK=7`, `DOUT=6`); GPIO 46 is the keyboard interrupt and must not be driven for audio
+- **Non-blocking pattern playback** — notification patterns (short/double beep) are stepped by `buzzer_loop()` from the main loop instead of blocking delays
 - **Quiet mode** — buzzer can be silenced via preferences
 **Sources:** [`src/hal/buzzer.cpp`](../src/hal/buzzer.cpp), [`src/hal/buzzer.h`](../src/hal/buzzer.h)
 

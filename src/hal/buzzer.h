@@ -50,7 +50,7 @@ inline const BuzzerPatternStep* sigurdos_buzzer_pattern(BuzzerPatternKind kind,
     return pattern;
 }
 
-// Initialize buzzer GPIO
+// Initialize notification audio output.
 void buzzer_init();
 
 // Advance non-blocking pattern playback — call once per main loop iteration
@@ -65,6 +65,11 @@ void buzzer_beep_double();
 // Direct diagnostic self-test; intentionally plays even if notification quiet
 // mode is enabled because it is a user-requested hardware test.
 void buzzer_self_test();
+
+#if defined(SIGURDOS_NATIVE_PREFERENCES)
+// Native-test hook for the non-ESP32 playback shim.
+bool buzzer_output_active_for_test();
+#endif
 
 } // namespace hal
 } // namespace sigurdos

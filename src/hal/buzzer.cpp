@@ -4,31 +4,122 @@
 #include "tdeck_pins.h"
 #include <Arduino.h>
 
-#ifndef PLATFORMIO_UNIT_TESTING
+#if defined(ESP32_PLATFORM)
+#include <driver/gpio.h>
+#include <driver/i2s_std.h>
+#include <esp_err.h>
+#include <freertos/FreeRTOS.h>
+#endif
 
 namespace sigurdos {
 namespace hal {
 
 namespace {
 
-// Non-blocking playback state — buzzer_loop() advances through the active
-// pattern. Starting a beep while one is playing replaces it (restart
-// semantics); no call site can trigger overlap today: the only caller is
-// the message-arrival path in ui.cpp.
 const BuzzerPatternStep* s_pattern = nullptr;
 std::size_t s_count = 0;
 std::size_t s_idx = 0;
 uint32_t s_step_started_ms = 0;
 bool s_active = false;
+bool s_output_on = false;
+uint16_t s_frequency_hz = 0;
 
-void buzzer_stop_output() {
-    digitalWrite(PIN_BUZZER, LOW);
+#if defined(ESP32_PLATFORM)
+static constexpr uint32_t I2S_SAMPLE_RATE_HZ = 16000;
+static constexpr size_t I2S_FRAMES_PER_CHUNK = 128;
+static constexpr int16_t I2S_TONE_AMPLITUDE = 9000;
+
+i2s_chan_handle_t s_i2s_tx = nullptr;
+bool s_i2s_ready = false;
+uint32_t s_sample_cursor = 0;
+
+bool speaker_init_i2s()
+{
+    if (s_i2s_ready) return true;
+
+    i2s_chan_config_t chan_cfg =
+        I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    if (i2s_new_channel(&chan_cfg, &s_i2s_tx, nullptr) != ESP_OK || !s_i2s_tx) {
+        s_i2s_tx = nullptr;
+        return false;
+    }
+
+    i2s_std_config_t std_cfg = {};
+    std_cfg.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLE_RATE_HZ);
+    std_cfg.slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                       I2S_SLOT_MODE_STEREO);
+    std_cfg.gpio_cfg.mclk = I2S_GPIO_UNUSED;
+    std_cfg.gpio_cfg.bclk = static_cast<gpio_num_t>(PIN_I2S_BCK);
+    std_cfg.gpio_cfg.ws = static_cast<gpio_num_t>(PIN_I2S_WS);
+    std_cfg.gpio_cfg.dout = static_cast<gpio_num_t>(PIN_I2S_DOUT);
+    std_cfg.gpio_cfg.din = I2S_GPIO_UNUSED;
+    std_cfg.gpio_cfg.invert_flags.mclk_inv = false;
+    std_cfg.gpio_cfg.invert_flags.bclk_inv = false;
+    std_cfg.gpio_cfg.invert_flags.ws_inv = false;
+
+    if (i2s_channel_init_std_mode(s_i2s_tx, &std_cfg) != ESP_OK ||
+        i2s_channel_enable(s_i2s_tx) != ESP_OK) {
+        i2s_del_channel(s_i2s_tx);
+        s_i2s_tx = nullptr;
+        return false;
+    }
+
+    s_i2s_ready = true;
+    return true;
+}
+
+void speaker_write_silence()
+{
+    if (!s_i2s_ready || !s_i2s_tx) return;
+    static int16_t silence[I2S_FRAMES_PER_CHUNK * 2] = {0};
+    size_t written = 0;
+    (void)i2s_channel_write(s_i2s_tx, silence, sizeof(silence), &written, 0);
+}
+
+void speaker_write_tone_chunk()
+{
+    if (!s_output_on || s_frequency_hz == 0) return;
+    if (!speaker_init_i2s()) return;
+
+    int16_t samples[I2S_FRAMES_PER_CHUNK * 2];
+    const uint32_t period =
+        (I2S_SAMPLE_RATE_HZ / s_frequency_hz) > 1
+            ? (I2S_SAMPLE_RATE_HZ / s_frequency_hz)
+            : 2;
+    const uint32_t half_period = period / 2;
+
+    for (size_t frame = 0; frame < I2S_FRAMES_PER_CHUNK; ++frame) {
+        const int16_t v =
+            ((s_sample_cursor % period) < half_period)
+                ? I2S_TONE_AMPLITUDE
+                : static_cast<int16_t>(-I2S_TONE_AMPLITUDE);
+        samples[frame * 2] = v;
+        samples[frame * 2 + 1] = v;
+        s_sample_cursor++;
+    }
+
+    size_t written = 0;
+    (void)i2s_channel_write(s_i2s_tx, samples, sizeof(samples), &written, 0);
+}
+#endif
+
+void buzzer_stop_output()
+{
+    s_output_on = false;
+    s_frequency_hz = 0;
+#if defined(ESP32_PLATFORM)
+    speaker_write_silence();
+#endif
 }
 
 void buzzer_apply_step() {
     const BuzzerPatternStep& step = s_pattern[s_idx];
     if (step.tone_on) {
-        digitalWrite(PIN_BUZZER, HIGH);
+        s_output_on = true;
+        s_frequency_hz = step.frequency_hz;
+#if defined(ESP32_PLATFORM)
+        speaker_write_tone_chunk();
+#endif
     } else {
         buzzer_stop_output();
     }
@@ -43,19 +134,41 @@ void buzzer_apply_step() {
 void buzzer_start_pattern(BuzzerPatternKind kind) {
     s_pattern = sigurdos_buzzer_pattern(kind, &s_count);
     s_idx = 0;
-    s_active = true;
+    s_active = s_pattern && s_count > 0;
+    if (!s_active) {
+        buzzer_stop_output();
+        return;
+    }
     buzzer_apply_step();
 }
 
 } // namespace
 
 void buzzer_init() {
-    pinMode(PIN_BUZZER, OUTPUT);
+    s_pattern = nullptr;
+    s_count = 0;
+    s_idx = 0;
+    s_active = false;
+    s_step_started_ms = millis();
+#if defined(ESP32_PLATFORM)
+    s_sample_cursor = 0;
+#endif
+#if defined(ESP32_PLATFORM)
+    (void)speaker_init_i2s();
+#endif
     buzzer_stop_output();
 }
 
 void buzzer_loop() {
     if (!s_active) return;
+    if (!s_pattern || s_idx >= s_count) {
+        buzzer_stop_output();
+        s_active = false;
+        return;
+    }
+#if defined(ESP32_PLATFORM)
+    speaker_write_tone_chunk();
+#endif
     if (millis() - s_step_started_ms < s_pattern[s_idx].duration_ms) return;
     s_idx++;
     if (s_idx >= s_count) {
@@ -78,19 +191,12 @@ void buzzer_self_test() {
     buzzer_start_pattern(BuzzerPatternKind::Double);
 }
 
-} // namespace hal
-} // namespace sigurdos
-
-#else  // PLATFORMIO_UNIT_TESTING - no-op stubs
-
-namespace sigurdos {
-namespace hal {
-void buzzer_init() {}
-void buzzer_loop() {}
-void buzzer_beep_short() {}
-void buzzer_beep_double() {}
-void buzzer_self_test() {}
-} // namespace hal
-} // namespace sigurdos
-
+#if defined(SIGURDOS_NATIVE_PREFERENCES)
+bool buzzer_output_active_for_test()
+{
+    return s_output_on;
+}
 #endif
+
+} // namespace hal
+} // namespace sigurdos

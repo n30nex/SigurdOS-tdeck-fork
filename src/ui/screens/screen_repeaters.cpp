@@ -748,7 +748,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
         row++;
 
-        // Login button (prominent)
+        // Login/open button (prominent)
         if (login_st != LOGIN_STATUS_PENDING) {
             char* li_name = strdup(contact_name);
             if (li_name) {
@@ -759,19 +759,61 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 lv_obj_set_style_radius(login_btn, 0, 0);
                 lv_obj_set_style_border_width(login_btn, 0, 0);
                 lv_obj_t* login_lbl = lv_label_create(login_btn);
-                lv_label_set_text(login_lbl, LV_SYMBOL_DIRECTORY "  Login");
+                lv_label_set_text(login_lbl,
+                    target->type == ADV_TYPE_ROOM
+                        ? LV_SYMBOL_ENVELOPE "  Open Room"
+                        : LV_SYMBOL_DIRECTORY "  Login");
                 lv_obj_set_style_text_color(login_lbl, lv_color_hex(BG_PRIMARY), 0);
                 lv_obj_center(login_lbl);
                 lv_obj_set_user_data(login_btn, li_name);
                 lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
                     lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                     const char* name = (const char*)lv_obj_get_user_data(btn);
-                    if (name) show_login_password_dialog(name);
+                    if (!name) return;
+                    sigurdos::mesh::ContactInfo info{};
+                    const bool is_room =
+                        sigurdos::mesh::getContactByName(name, &info) &&
+                        info.type == ADV_TYPE_ROOM;
+                    if (is_room) {
+                        if (!sigurdos::mesh::sendLogin(name, "")) {
+                            sigurdos::mesh::clearLoginState(name);
+                        }
+                        repeater_detail_close_state();
+                        chat_screen_open_room(name);
+                    } else {
+                        show_login_password_dialog(name);
+                    }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
                     free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
                 }, LV_EVENT_DELETE, nullptr);
                 row++;
+            }
+
+            if (target->type == ADV_TYPE_ROOM) {
+                char* admin_name = strdup(contact_name);
+                if (admin_name) {
+                    lv_obj_t* admin_btn = lv_btn_create(list);
+                    lv_obj_set_size(admin_btn, LV_PCT(100), 30);
+                    lv_obj_set_style_bg_color(admin_btn, lv_color_hex(BG_TERTIARY), 0);
+                    lv_obj_set_style_bg_opa(admin_btn, LV_OPA_COVER, 0);
+                    lv_obj_set_style_radius(admin_btn, 0, 0);
+                    lv_obj_set_style_border_width(admin_btn, 0, 0);
+                    lv_obj_t* admin_lbl = lv_label_create(admin_btn);
+                    lv_label_set_text(admin_lbl, LV_SYMBOL_SETTINGS "  Admin Login");
+                    lv_obj_set_style_text_color(admin_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+                    lv_obj_center(admin_lbl);
+                    lv_obj_set_user_data(admin_btn, admin_name);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                        const char* name = (const char*)lv_obj_get_user_data(btn);
+                        if (name) show_login_password_dialog(name);
+                    }, LV_EVENT_CLICKED, nullptr);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                    }, LV_EVENT_DELETE, nullptr);
+                    row++;
+                }
             }
         }
 

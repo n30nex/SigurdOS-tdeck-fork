@@ -23,7 +23,7 @@
 - [9. GPS — UART NMEA](#9-gps--uart-nmea)
 - [10. SD Card — SPI + FATFS](#10-sd-card--spi--fatfs)
 - [11. LoRa — SX1262 (RadioLib)](#11-lora--sx1262-radiolib)
-- [12. Buzzer](#12-buzzer)
+- [12. Notification Audio](#12-notification-audio)
 - [13. Peripheral Power](#13-peripheral-power)
 - [14. Deep Sleep & Wake](#14-deep-sleep--wake)
 
@@ -56,7 +56,10 @@
 | 43  | GPS TX              | UART      | Serial1 TX                          |
 | 44  | GPS RX              | UART      | Serial1 RX                          |
 | 45  | LoRa DIO1           | GPIO      | Radio interrupt / wake source       |
-| 46  | Buzzer              | GPIO      | Active-high buzzer output           |
+| 46  | Keyboard INT        | GPIO      | Keyboard MCU interrupt              |
+| 5   | I2S WS              | I2S       | Speaker word select                 |
+| 6   | I2S DOUT            | I2S       | Speaker data output                 |
+| 7   | I2S BCK             | I2S       | Speaker bit clock                   |
 
 ---
 
@@ -613,28 +616,23 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
 ---
 
-## 12. Buzzer
+## 12. Notification Audio
 
 | Property | Value              |
 |----------|--------------------|
-| Pin      | **46**             |
-| Type     | Active-high buzzer (GPIO output - no PWM tone generation) |
-| Default  | LOW (off)          |
+| Pins     | **WS=5, BCK=7, DOUT=6** |
+| Type     | I2S speaker tone output |
+| Default  | Silent             |
 
-> The buzzer is driven as a GPIO output - no PWM tone generation is implemented.
-> **Non-blocking loop-driven playback:** `buzzer_loop()` is called once per
-> main-loop iteration (`main.cpp:189`) and advances through the active pattern's
-> step table (`src/hal/buzzer.h`). Each `BuzzerPatternStep` has a `tone_on`
-> (bool) and `duration_ms` field. Steps with `duration_ms = 0` are terminal
-> markers that apply the level and then idle LOW until the next pattern starts.
-> Starting a new beep while one is playing replaces it immediately (restart
-> semantics — no overlap occurs as only the message-arrival path in `ui.cpp`
-> triggers beeps). A `buzzer_quiet` preference in `NodePrefs` mutes
-> message-arrival beeps.
+> GPIO 46 is the keyboard interrupt on LilyGO T-Deck hardware. Notification
+> audio must not drive it. `buzzer_init()` initializes the I2S speaker path and
+> `buzzer_loop()` keeps short/double notification patterns moving without
+> blocking the main loop. A `buzzer_quiet` preference in `NodePrefs` mutes
+> message-arrival tones.
 
-> **API:** `buzzer_init()` configures the GPIO; `buzzer_beep_short()` triggers
-> a ~100 ms pulse (DM arrival); `buzzer_beep_double()` fires two 60 ms pulses
-> 60 ms apart (channel message arrival); `buzzer_loop()` advances playback.
+> **API:** `buzzer_beep_short()` triggers a short tone (DM arrival);
+> `buzzer_beep_double()` fires two short tones (channel message arrival);
+> `buzzer_self_test()` plays the double tone for Settings -> System.
 
 ---
 
@@ -786,7 +784,11 @@ All hardware pin and configuration defines are in `src/hal/tdeck_pins.h`.
 | `PIN_GPS_RX`          | 44    | GPS UART receive            |
 | `PIN_GPS_TX`          | 43    | GPS UART transmit           |
 | `PIN_SD_CS`           | 39    | SD card chip select         |
-| `PIN_BUZZER`          | 46    | Buzzer output               |
+| `PIN_KEYBOARD_INT`    | 46    | Keyboard interrupt          |
+| `PIN_I2S_WS`          | 5     | I2S speaker word select     |
+| `PIN_I2S_BCK`         | 7     | I2S speaker bit clock       |
+| `PIN_I2S_DOUT`        | 6     | I2S speaker data out        |
+| `PIN_BUZZER`          | -1    | No GPIO buzzer; use I2S     |
 | `TFT_WIDTH`           | 320   | Display width (landscape)   |
 | `TFT_HEIGHT`          | 240   | Display height (landscape)  |
 | `LORA_FREQ`           | 869.618 | Default frequency (MHz)  |

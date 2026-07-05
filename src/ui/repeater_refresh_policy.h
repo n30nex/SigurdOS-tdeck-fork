@@ -8,7 +8,7 @@
 namespace sigurdos::ui {
 
 static constexpr uint32_t REPEATER_LOGIN_POLL_INTERVAL_MS = 2000;
-static constexpr uint16_t REPEATER_LOGIN_POLL_MAX_PENDING_POLLS = 15;
+static constexpr uint16_t REPEATER_LOGIN_POLL_MAX_PENDING_POLLS = 8;
 
 enum class RepeaterManagementRequest : uint8_t {
     Status,

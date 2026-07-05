@@ -417,6 +417,8 @@ static void deferred_login_submit_cb(lv_timer_t* t)
         const bool is_room_server = contact_is_room_server(ctx->name);
         const bool blank_room_guest_login =
             ctx->password[0] == '\0' && is_room_server;
+        const bool room_admin_login =
+            ctx->password[0] != '\0' && is_room_server;
         bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
         if (blank_room_guest_login) {
             // Guest room entry is a UI navigation action first. The login
@@ -429,7 +431,14 @@ static void deferred_login_submit_cb(lv_timer_t* t)
             chat_screen_open_room(ctx->name);
         } else {
             if (sent) {
-                start_login_poll_timer(ctx->name, false);
+                if (!room_admin_login) {
+                    start_login_poll_timer(ctx->name, false);
+                } else {
+                    sigurdos::mesh::mesh_v2_queue_push(
+                        "System", "",
+                        "Room admin login sent; reopen room server for status",
+                        0, 0.0f);
+                }
                 if (ctx->save_password && ctx->password[0]) {
                     sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
                 }
@@ -437,7 +446,8 @@ static void deferred_login_submit_cb(lv_timer_t* t)
                 sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
             }
         }
-        if (login_detail_refresh_after_submit(sent, blank_room_guest_login)) {
+        if ((!room_admin_login || !sent) &&
+            login_detail_refresh_after_submit(sent, blank_room_guest_login)) {
             schedule_login_detail_refresh(ctx->name, false);
         }
     }
@@ -1674,25 +1684,64 @@ void contact_detail_screen_show(const char* contact_name)
             }, LV_EVENT_DELETE, nullptr);
 
         } else {
-            // ── Login button ──
+            // ── Login/open button ──
             char* li_name = strdup(contact_name);
             lv_obj_t* li_btn = lv_btn_create(login_row);
-            lv_obj_set_size(li_btn, 150, 24);
+            lv_obj_set_size(li_btn, target->type == ADV_TYPE_ROOM ? 130 : 150, 24);
             lv_obj_set_style_bg_color(li_btn, lv_color_hex(ACCENT), 0);
             lv_obj_set_style_radius(li_btn, 0, 0);
             lv_obj_t* li_lbl = lv_label_create(li_btn);
-            lv_label_set_text(li_lbl, LV_SYMBOL_DIRECTORY " Login");
+            lv_label_set_text(li_lbl,
+                target->type == ADV_TYPE_ROOM
+                    ? LV_SYMBOL_ENVELOPE " Open"
+                    : LV_SYMBOL_DIRECTORY " Login");
             lv_obj_center(li_lbl);
             lv_obj_set_style_text_color(li_lbl, lv_color_hex(BG_PRIMARY), 0);
             lv_obj_set_user_data(li_btn, li_name);
             lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
                 lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                 const char* name = (const char*)lv_obj_get_user_data(btn);
-                if (name) show_login_password_dialog(name);
+                if (!name) return;
+                sigurdos::mesh::ContactInfo info{};
+                const bool is_room =
+                    sigurdos::mesh::getContactByName(name, &info) &&
+                    info.type == ADV_TYPE_ROOM;
+                if (is_room) {
+                    if (!sigurdos::mesh::sendLogin(name, "")) {
+                        sigurdos::mesh::clearLoginState(name);
+                    }
+                    repeater_detail_close_state();
+                    chat_screen_open_room(name);
+                } else {
+                    show_login_password_dialog(name);
+                }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
                 free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
             }, LV_EVENT_DELETE, nullptr);
+
+            if (target->type == ADV_TYPE_ROOM && login_st == LOGIN_STATUS_NONE) {
+                char* admin_name = strdup(contact_name);
+                if (admin_name) {
+                    lv_obj_t* admin_btn = lv_btn_create(login_row);
+                    lv_obj_set_size(admin_btn, 118, 24);
+                    lv_obj_set_style_bg_color(admin_btn, lv_color_hex(BG_TERTIARY), 0);
+                    lv_obj_set_style_radius(admin_btn, 0, 0);
+                    lv_obj_t* admin_lbl = lv_label_create(admin_btn);
+                    lv_label_set_text(admin_lbl, LV_SYMBOL_SETTINGS " Admin");
+                    lv_obj_center(admin_lbl);
+                    lv_obj_set_style_text_color(admin_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+                    lv_obj_set_user_data(admin_btn, admin_name);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                        const char* name = (const char*)lv_obj_get_user_data(btn);
+                        if (name) show_login_password_dialog(name);
+                    }, LV_EVENT_CLICKED, nullptr);
+                    lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
+                        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                    }, LV_EVENT_DELETE, nullptr);
+                }
+            }
 
             // When login pending or failed, show Cancel button
             if (login_st == LOGIN_STATUS_PENDING || login_st == LOGIN_STATUS_FAILED) {
