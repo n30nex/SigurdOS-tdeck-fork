@@ -60,6 +60,16 @@ inline bool login_submit_starts_poll_timer(bool sent,
     return sent && !blank_room_guest_login;
 }
 
+inline bool room_admin_password_login_supported()
+{
+    return false;
+}
+
+inline const char* room_admin_password_login_unsupported_message()
+{
+    return "! Room admin login is not supported yet";
+}
+
 inline bool login_detail_refresh_allowed(bool detail_open_for_contact,
                                          bool screen_still_current)
 {

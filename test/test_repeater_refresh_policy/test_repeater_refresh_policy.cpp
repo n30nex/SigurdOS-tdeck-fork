@@ -98,6 +98,13 @@ TEST(LoginRefreshPolicy, DoesNotPollForBlankRoomGuestOpen)
     EXPECT_FALSE(sigurdos::ui::login_submit_starts_poll_timer(false, true));
 }
 
+TEST(LoginRefreshPolicy, RoomAdminPasswordLoginFailsClosed)
+{
+    EXPECT_FALSE(sigurdos::ui::room_admin_password_login_supported());
+    EXPECT_STREQ(sigurdos::ui::room_admin_password_login_unsupported_message(),
+                 "! Room admin login is not supported yet");
+}
+
 TEST(LoginRefreshPolicy, AllowsDelayedRefreshOnlyForCurrentOpenDetail)
 {
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_allowed(true, true));

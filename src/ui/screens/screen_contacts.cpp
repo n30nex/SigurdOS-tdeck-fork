@@ -417,17 +417,23 @@ static void deferred_login_submit_cb(lv_timer_t* t)
         const bool is_room_server = contact_is_room_server(ctx->name);
         const bool blank_room_guest_login =
             ctx->password[0] == '\0' && is_room_server;
-        bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
+        bool sent = false;
         if (blank_room_guest_login) {
             // Guest room entry is a UI navigation action first. The login
             // packet opportunistically refreshes the room-server session, but
             // no-response/flood-path failures must not make the button inert.
+            repeater_detail_close_state();
+            chat_screen_open_room(ctx->name);
+            sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
             if (!sent) {
                 sigurdos::mesh::clearLoginState(ctx->name);
             }
-            repeater_detail_close_state();
-            chat_screen_open_room(ctx->name);
+        } else if (is_room_server && !room_admin_password_login_supported()) {
+            sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
+            sigurdos::mesh::mesh_v2_queue_push(
+                "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
         } else {
+            sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
             if (sent) {
                 if (login_submit_starts_poll_timer(sent, blank_room_guest_login)) {
                     start_login_poll_timer(ctx->name, false);
@@ -1187,7 +1193,7 @@ void contact_detail_screen_show(const char* contact_name)
         const char* login_text = "Not logged in";
         uint32_t login_color = TEXT_SECONDARY;
         switch (st) {
-            case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
+            case LOGIN_STATUS_PENDING: login_text = "Pending; auto-fail"; login_color = ACCENT; break;
             case LOGIN_STATUS_OK:      login_text = "Logged in";        login_color = ACCENT_GREEN; break;
             case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
         }
@@ -1703,11 +1709,11 @@ void contact_detail_screen_show(const char* contact_name)
                     sigurdos::mesh::getContactByName(safe_name, &info) &&
                     info.type == ADV_TYPE_ROOM;
                 if (is_room) {
+                    repeater_detail_close_state();
+                    chat_screen_open_room(safe_name);
                     if (!sigurdos::mesh::sendLogin(safe_name, "")) {
                         sigurdos::mesh::clearLoginState(safe_name);
                     }
-                    repeater_detail_close_state();
-                    chat_screen_open_room(safe_name);
                 } else {
                     show_login_password_dialog(safe_name);
                 }

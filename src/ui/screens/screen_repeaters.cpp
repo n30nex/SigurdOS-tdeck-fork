@@ -715,7 +715,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
                 case LOGIN_STATUS_OK:     login_text = "Logged in";      login_color = ACCENT_GREEN; break;
 
-                case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
+                case LOGIN_STATUS_PENDING: login_text = "Pending; auto-fail"; login_color = ACCENT; break;
                 case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
             }
             lv_obj_t* lr = lv_obj_create(list);
@@ -777,11 +777,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         sigurdos::mesh::getContactByName(safe_name, &info) &&
                         info.type == ADV_TYPE_ROOM;
                     if (is_room) {
+                        repeater_detail_close_state();
+                        chat_screen_open_room(safe_name);
                         if (!sigurdos::mesh::sendLogin(safe_name, "")) {
                             sigurdos::mesh::clearLoginState(safe_name);
                         }
-                        repeater_detail_close_state();
-                        chat_screen_open_room(safe_name);
                     } else {
                         show_login_password_dialog(safe_name);
                     }
