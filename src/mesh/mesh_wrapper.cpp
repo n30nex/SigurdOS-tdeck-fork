@@ -2002,17 +2002,30 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
     }
 
     // ── Repeater/room login (Phase 4.5) ──────────────
-    bool sendLogin(const char* name, const char* password) {
+    static bool sendLoginMatchingContact(const char* name,
+                                         const char* password,
+                                         uint8_t contact_type_hint) {
         if (!radioTxAllowed()) return false;
         if (!g_mesh || !name || !password) return false;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
+                if (!loginContactTypeMatchesHint(c->type, contact_type_hint)) continue;
                 if (!loginPasswordAllowedForContactType(c->type, password)) continue;
                 return g_mesh->sendLoginTo(*c, password);
             }
         }
         return false;
+    }
+
+    bool sendLogin(const char* name, const char* password) {
+        return sendLoginMatchingContact(name, password, ADV_TYPE_NONE);
+    }
+
+    bool sendLoginForContactType(const char* name,
+                                 const char* password,
+                                 uint8_t contact_type_hint) {
+        return sendLoginMatchingContact(name, password, contact_type_hint);
     }
 
     void clearLoginState(const char* name) {

@@ -613,6 +613,13 @@ inline bool loginPasswordAllowedForContactType(uint8_t contact_type, const char*
     return contact_type == ADV_TYPE_REPEATER || contact_type == ADV_TYPE_ROOM;
 }
 
+inline bool loginContactTypeMatchesHint(uint8_t contact_type, uint8_t contact_type_hint) {
+    if (contact_type_hint == ADV_TYPE_NONE) {
+        return contact_type == ADV_TYPE_REPEATER || contact_type == ADV_TYPE_ROOM;
+    }
+    return contact_type == contact_type_hint;
+}
+
 inline bool loginShouldForceFloodForContactType(uint8_t contact_type) {
     // Login is the session bootstrap and path repair point for infrastructure
     // contacts. A stale direct path can strand the UI at Login pending, while
@@ -622,6 +629,7 @@ inline bool loginShouldForceFloodForContactType(uint8_t contact_type) {
 }
 
 bool sendLogin(const char* name, const char* password);
+bool sendLoginForContactType(const char* name, const char* password, uint8_t contact_type_hint);
 void sendLogout(const char* name);
 void clearLoginState(const char* name);
 bool sendCommand(const char* name, const char* text);

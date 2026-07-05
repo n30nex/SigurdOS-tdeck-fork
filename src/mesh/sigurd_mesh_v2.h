@@ -446,6 +446,7 @@ public:
 
     struct LoginEntry {
         char     contact_name[32];
+        uint8_t  pub_key[PUB_KEY_SIZE];
         uint8_t  permission;        // legacy server admin flag (0=non-admin, 1=admin)
         uint8_t  acl_permissions;   // v7+ ACL byte
         uint8_t  status;            // LoginStatus
@@ -453,6 +454,13 @@ public:
         bool     in_use = false;
     };
     LoginEntry _login_entries[MAX_LOGIN_ENTRIES];
+
+    static bool loginEntryHasPubKey(const LoginEntry& entry) {
+        for (int i = 0; i < PUB_KEY_SIZE; i++) {
+            if (entry.pub_key[i] != 0) return true;
+        }
+        return false;
+    }
 
     int findLoginEntry(const char* name) const {
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
@@ -463,7 +471,20 @@ public:
         return -1;
     }
 
-    int addLoginEntry(const char* name);
+    int findLoginEntryForContact(const ::ContactInfo& contact) const {
+        for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
+            if (_login_entries[i].in_use &&
+                loginEntryHasPubKey(_login_entries[i]) &&
+                memcmp(_login_entries[i].pub_key, contact.id.pub_key, PUB_KEY_SIZE) == 0)
+                return i;
+        }
+        return findLoginEntry(contact.name);
+    }
+
+    int addLoginEntry(const char* name, const uint8_t* pub_key = nullptr);
+    int addLoginEntry(const ::ContactInfo& contact) {
+        return addLoginEntry(contact.name, contact.id.pub_key);
+    }
 
 
     void removeLoginEntry(const char* name) {

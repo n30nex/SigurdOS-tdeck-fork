@@ -205,6 +205,12 @@ TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_FALSE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_SENSOR, "guest"));
     EXPECT_FALSE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_NONE, ""));
 
+    EXPECT_TRUE(sigurdos::mesh::loginContactTypeMatchesHint(ADV_TYPE_REPEATER, ADV_TYPE_NONE));
+    EXPECT_TRUE(sigurdos::mesh::loginContactTypeMatchesHint(ADV_TYPE_ROOM, ADV_TYPE_NONE));
+    EXPECT_FALSE(sigurdos::mesh::loginContactTypeMatchesHint(ADV_TYPE_CHAT, ADV_TYPE_NONE));
+    EXPECT_TRUE(sigurdos::mesh::loginContactTypeMatchesHint(ADV_TYPE_ROOM, ADV_TYPE_ROOM));
+    EXPECT_FALSE(sigurdos::mesh::loginContactTypeMatchesHint(ADV_TYPE_REPEATER, ADV_TYPE_ROOM));
+
     EXPECT_TRUE(sigurdos::mesh::loginShouldForceFloodForContactType(ADV_TYPE_ROOM));
     EXPECT_TRUE(sigurdos::mesh::loginShouldForceFloodForContactType(ADV_TYPE_REPEATER));
     EXPECT_FALSE(sigurdos::mesh::loginShouldForceFloodForContactType(ADV_TYPE_CHAT));

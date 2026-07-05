@@ -426,6 +426,15 @@ static void submit_login_dialog_once(PwDialogData* d)
     schedule_login_submit(d->name, pw, save_password, d->contact_type);
 }
 
+static void fail_room_admin_login_visible(const char* name)
+{
+    if (!name || !name[0]) return;
+    sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+    sigurdos::mesh::mesh_v2_queue_push(
+        "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+    schedule_login_detail_refresh(name, false);
+}
+
 static void deferred_login_submit_cb(lv_timer_t* t)
 {
     auto* ctx = static_cast<DeferredLoginSubmitCtx*>(lv_timer_get_user_data(t));
@@ -439,17 +448,17 @@ static void deferred_login_submit_cb(lv_timer_t* t)
             // no-response/flood-path failures must not make the button inert.
             repeater_detail_close_state();
             chat_screen_open_room(ctx->name);
-            sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
+            sent = sigurdos::mesh::sendLoginForContactType(
+                ctx->name, ctx->password, ctx->contact_type);
             if (!sent) {
                 sigurdos::mesh::clearLoginState(ctx->name);
             }
         } else if (login_submit_room_admin_fails_closed(ctx->contact_type,
                                                         ctx->password)) {
-            sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
-            sigurdos::mesh::mesh_v2_queue_push(
-                "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+            fail_room_admin_login_visible(ctx->name);
         } else {
-            sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
+            sent = sigurdos::mesh::sendLoginForContactType(
+                ctx->name, ctx->password, ctx->contact_type);
             if (sent) {
                 if (login_submit_starts_poll_timer(sent, blank_room_guest_login)) {
                     start_login_poll_timer(ctx->name, false);
@@ -1736,7 +1745,8 @@ void contact_detail_screen_show(const char* contact_name)
                     if (login_contact_type_is_room(ctx->contact_type)) {
                         repeater_detail_close_state();
                         chat_screen_open_room(safe_name);
-                        if (!sigurdos::mesh::sendLogin(safe_name, "")) {
+                        if (!sigurdos::mesh::sendLoginForContactType(
+                                safe_name, "", ctx->contact_type)) {
                             sigurdos::mesh::clearLoginState(safe_name);
                         }
                     } else {
@@ -1771,7 +1781,7 @@ void contact_detail_screen_show(const char* contact_name)
                         if (name) {
                             char safe_name[32];
                             snprintf(safe_name, sizeof(safe_name), "%s", name);
-                            show_login_password_dialog(safe_name, ADV_TYPE_ROOM);
+                            fail_room_admin_login_visible(safe_name);
                         }
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {

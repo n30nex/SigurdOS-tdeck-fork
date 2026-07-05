@@ -192,6 +192,15 @@ bool sendLogin(const char* name, const char* password) {
     return true;
 }
 
+bool sendLoginForContactType(const char* name, const char* password, uint8_t contact_type_hint) {
+    if (contact_type_hint != ADV_TYPE_NONE &&
+        contact_type_hint != ADV_TYPE_REPEATER &&
+        contact_type_hint != ADV_TYPE_ROOM) {
+        return false;
+    }
+    return sendLogin(name, password);
+}
+
 void sendLogout(const char* name) {
     clearLoginState(name);
 }

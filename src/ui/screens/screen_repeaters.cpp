@@ -109,6 +109,15 @@ struct RepeaterActionCtx {
     uint8_t contact_type;
 };
 
+static void fail_room_admin_login_visible(const char* name)
+{
+    if (!name || !name[0]) return;
+    sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
+    sigurdos::mesh::mesh_v2_queue_push(
+        "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
+    repeater_detail_screen_show(name, false);
+}
+
 static RepeaterListSignature get_repeater_signature()
 {
     RepeaterListSignature sig{0, 0};
@@ -784,7 +793,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     if (login_contact_type_is_room(ctx->contact_type)) {
                         repeater_detail_close_state();
                         chat_screen_open_room(safe_name);
-                        if (!sigurdos::mesh::sendLogin(safe_name, "")) {
+                        if (!sigurdos::mesh::sendLoginForContactType(
+                                safe_name, "", ctx->contact_type)) {
                             sigurdos::mesh::clearLoginState(safe_name);
                         }
                     } else {
@@ -822,7 +832,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         if (name) {
                             char safe_name[32];
                             snprintf(safe_name, sizeof(safe_name), "%s", name);
-                            show_login_password_dialog(safe_name, ADV_TYPE_ROOM);
+                            fail_room_admin_login_visible(safe_name);
                         }
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
@@ -1066,7 +1076,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
                     char saved_pw[16] = {0};
                     if (sigurdos::loadRepeaterPassword(c->name, saved_pw, sizeof(saved_pw))) {
-                        bool sent = sigurdos::mesh::sendLogin(c->name, saved_pw);
+                        bool sent = sigurdos::mesh::sendLoginForContactType(
+                            c->name, saved_pw, ADV_TYPE_ROOM);
                         sigurdos::mesh::mesh_v2_queue_push(
                             "System", "",
                             sent ? "Room resync login sent" : "Room resync login failed",

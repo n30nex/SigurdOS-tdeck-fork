@@ -105,6 +105,12 @@ TEST(LoginRefreshPolicy, RoomAdminPasswordLoginFailsClosed)
                  "! Room admin login is not supported yet");
 }
 
+TEST(LoginRefreshPolicy, RoomAdminButtonShouldNotOpenPasswordPrompt)
+{
+    EXPECT_FALSE(sigurdos::ui::room_admin_password_login_supported());
+    EXPECT_TRUE(sigurdos::ui::login_submit_room_admin_fails_closed(3, "admin"));
+}
+
 TEST(LoginRefreshPolicy, ContactTypeHintOverridesStaleLiveLookup)
 {
     EXPECT_EQ(sigurdos::ui::login_contact_type_from_hint(3, 1), 3);

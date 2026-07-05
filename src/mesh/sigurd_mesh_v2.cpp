@@ -95,7 +95,7 @@ namespace mesh {
         if (!sigurdos::mesh::loginPasswordAllowedForContactType(contact.type, password ? password : "")) {
             return MSG_SEND_FAILED;
         }
-        int login_idx = addLoginEntry(contact.name);
+        int login_idx = addLoginEntry(contact);
         if (login_idx < 0) return MSG_SEND_FAILED;
         ::ContactInfo login_contact = contact;
         if (sigurdos::mesh::loginShouldForceFloodForContactType(contact.type)) {
@@ -715,7 +715,7 @@ namespace mesh {
         //         byte5=keep_alive_secs/16, byte6=permissions, byte7=ACL (v7+)
         // Legacy: bytes 4-5 = "OK" (2 chars)
         // Only check when there is a pending/active login entry for this contact.
-        int login_idx = findLoginEntry(contact.name);
+        int login_idx = findLoginEntryForContact(contact);
         if (login_idx >= 0 && _login_entries[login_idx].in_use) {
             const bool was_pending = _login_entries[login_idx].status == LOGIN_PENDING;
             const sigurdos::mesh::LoginResponseParseResult login_response =
@@ -924,13 +924,25 @@ namespace mesh {
             type, sigurdos::prefs_get().autoadd_config);
     }
 
-    int SigurdMeshV2::addLoginEntry(const char* name) {
-        int idx = findLoginEntry(name);
+    int SigurdMeshV2::addLoginEntry(const char* name, const uint8_t* pub_key) {
+        int idx = -1;
+        if (pub_key) {
+            for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
+                if (_login_entries[i].in_use &&
+                    loginEntryHasPubKey(_login_entries[i]) &&
+                    memcmp(_login_entries[i].pub_key, pub_key, PUB_KEY_SIZE) == 0) {
+                    idx = i;
+                    break;
+                }
+            }
+        }
+        if (idx < 0) idx = findLoginEntry(name);
         if (idx >= 0) {
             _login_entries[idx].status = LOGIN_PENDING;
             _login_entries[idx].permission = 0;
             _login_entries[idx].acl_permissions = 0;
             _login_entries[idx].started_at_ms = millis();
+            if (pub_key) memcpy(_login_entries[idx].pub_key, pub_key, PUB_KEY_SIZE);
             return idx;
         }
         int reusable_failed = -1;
@@ -949,6 +961,7 @@ namespace mesh {
             memset(&entry, 0, sizeof(entry));
             strncpy(entry.contact_name, name, sizeof(entry.contact_name) - 1);
             entry.contact_name[sizeof(entry.contact_name) - 1] = '\0';
+            if (pub_key) memcpy(entry.pub_key, pub_key, PUB_KEY_SIZE);
             entry.status = LOGIN_PENDING;
             entry.permission = 0;
             entry.acl_permissions = 0;
@@ -962,7 +975,7 @@ namespace mesh {
     bool SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {
         if (!password) return false;
         if (!sigurdos::mesh::loginPasswordAllowedForContactType(contact.type, password)) return false;
-        int login_idx = addLoginEntry(contact.name);
+        int login_idx = addLoginEntry(contact);
         if (login_idx < 0) return false;
         uint32_t est_timeout = 0;
         ::ContactInfo login_contact = contact;
