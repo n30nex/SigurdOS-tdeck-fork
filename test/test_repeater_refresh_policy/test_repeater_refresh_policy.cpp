@@ -75,6 +75,27 @@ TEST(LoginRefreshPolicy, RefreshesAfterSentRepeaterLogin)
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(true, false));
 }
 
+TEST(LoginPollPolicy, DoesNotTimeoutBeforeLastPendingPoll)
+{
+    EXPECT_FALSE(sigurdos::ui::login_poll_timed_out(
+        sigurdos::ui::REPEATER_LOGIN_POLL_MAX_PENDING_POLLS - 1));
+}
+
+TEST(LoginPollPolicy, TimesOutAtPendingPollLimit)
+{
+    EXPECT_TRUE(sigurdos::ui::login_poll_timed_out(
+        sigurdos::ui::REPEATER_LOGIN_POLL_MAX_PENDING_POLLS));
+    EXPECT_TRUE(sigurdos::ui::login_poll_timed_out(
+        sigurdos::ui::REPEATER_LOGIN_POLL_MAX_PENDING_POLLS + 1));
+}
+
+TEST(LoginPollPolicy, TimeoutDurationMatchesIntervalAndPollLimit)
+{
+    EXPECT_EQ(sigurdos::ui::login_poll_timeout_ms(),
+              sigurdos::ui::REPEATER_LOGIN_POLL_INTERVAL_MS *
+              static_cast<uint32_t>(sigurdos::ui::REPEATER_LOGIN_POLL_MAX_PENDING_POLLS));
+}
+
 TEST(RepeaterAdminPolicy, ShowsManagementRowsOnlyForAdmins)
 {
     EXPECT_TRUE(sigurdos::ui::repeater_show_admin_management_rows(true));

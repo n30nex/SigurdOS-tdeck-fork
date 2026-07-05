@@ -7,6 +7,9 @@
 
 namespace sigurdos::ui {
 
+static constexpr uint32_t REPEATER_LOGIN_POLL_INTERVAL_MS = 2000;
+static constexpr uint16_t REPEATER_LOGIN_POLL_MAX_PENDING_POLLS = 15;
+
 enum class RepeaterManagementRequest : uint8_t {
     Status,
     Telemetry,
@@ -43,6 +46,17 @@ inline bool login_detail_refresh_after_submit(bool send_attempted,
                                               bool contact_is_room_server)
 {
     return !send_attempted || !contact_is_room_server;
+}
+
+inline bool login_poll_timed_out(uint16_t pending_polls)
+{
+    return pending_polls >= REPEATER_LOGIN_POLL_MAX_PENDING_POLLS;
+}
+
+inline uint32_t login_poll_timeout_ms()
+{
+    return REPEATER_LOGIN_POLL_INTERVAL_MS *
+           static_cast<uint32_t>(REPEATER_LOGIN_POLL_MAX_PENDING_POLLS);
 }
 
 inline bool repeater_show_admin_management_rows(bool is_admin)

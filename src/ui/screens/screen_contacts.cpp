@@ -634,6 +634,7 @@ struct LoginPollCtx {
     char* name;
     Screen origin_screen;
     bool auto_open_room;
+    uint16_t pending_polls;
 
     uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
@@ -712,8 +713,20 @@ static void on_login_poll_timer(lv_timer_t* t) {
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
+    } else if (st == LOGIN_STATUS_PENDING) {
+        ctx->pending_polls++;
+        if (login_poll_timed_out(ctx->pending_polls)) {
+            char* n = strdup(ctx->name);
+            if (n) sigurdos::mesh::forceLoginState(n, LOGIN_STATUS_FAILED, 0);
+            free(ctx->name);
+            delete ctx;
+            lv_timer_del(t);
+            if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
+            if (n) repeater_detail_screen_show(n, false);
+            free(n);
+        }
     }
-    // LOGIN_PENDING -> keep polling
+    // LOGIN_PENDING before timeout -> keep polling
 }
 
 static void start_login_poll_timer(const char* name, bool auto_open_room) {
@@ -727,8 +740,8 @@ static void start_login_poll_timer(const char* name, bool auto_open_room) {
     }
 
     g_login_poll_gen++;
-    LoginPollCtx* ctx =
-        new(std::nothrow) LoginPollCtx{strdup(name), current_screen(), auto_open_room, g_login_poll_gen};
+    LoginPollCtx* ctx = new(std::nothrow) LoginPollCtx{
+        strdup(name), current_screen(), auto_open_room, 0, g_login_poll_gen};
     if (!ctx || !ctx->name) {
         if (ctx) {
             free(ctx->name);
@@ -737,7 +750,8 @@ static void start_login_poll_timer(const char* name, bool auto_open_room) {
         return;
     }
 
-    g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
+    g_login_poll_timer = lv_timer_create(on_login_poll_timer,
+                                         REPEATER_LOGIN_POLL_INTERVAL_MS, ctx);
     if (!g_login_poll_timer) {
         free(ctx->name);
         delete ctx;
