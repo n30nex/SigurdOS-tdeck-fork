@@ -93,6 +93,12 @@ inline bool chat_screen_filter_accepts_channel(int mode, const char* name)
     return name && name[0] && !chat_screen_is_dm_name(name);
 }
 
+inline bool chat_screen_direct_open_should_skip_channel_list(bool opened_from_chat,
+                                                             bool target_ready)
+{
+    return target_ready && !opened_from_chat;
+}
+
 inline int chat_screen_emoji_page_count(int emoji_count)
 {
     if (emoji_count <= 0) return 0;

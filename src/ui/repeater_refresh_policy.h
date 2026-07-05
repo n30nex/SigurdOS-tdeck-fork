@@ -52,6 +52,12 @@ inline bool login_detail_refresh_after_submit(bool send_attempted,
     return !blank_room_guest_login;
 }
 
+inline bool login_submit_starts_poll_timer(bool sent,
+                                           bool blank_room_guest_login)
+{
+    return sent && !blank_room_guest_login;
+}
+
 inline bool login_detail_refresh_allowed(bool detail_open_for_contact,
                                          bool screen_still_current)
 {

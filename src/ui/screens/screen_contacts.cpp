@@ -417,8 +417,6 @@ static void deferred_login_submit_cb(lv_timer_t* t)
         const bool is_room_server = contact_is_room_server(ctx->name);
         const bool blank_room_guest_login =
             ctx->password[0] == '\0' && is_room_server;
-        const bool room_admin_login =
-            ctx->password[0] != '\0' && is_room_server;
         bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
         if (blank_room_guest_login) {
             // Guest room entry is a UI navigation action first. The login
@@ -431,13 +429,8 @@ static void deferred_login_submit_cb(lv_timer_t* t)
             chat_screen_open_room(ctx->name);
         } else {
             if (sent) {
-                if (!room_admin_login) {
+                if (login_submit_starts_poll_timer(sent, blank_room_guest_login)) {
                     start_login_poll_timer(ctx->name, false);
-                } else {
-                    sigurdos::mesh::mesh_v2_queue_push(
-                        "System", "",
-                        "Room admin login sent; reopen room server for status",
-                        0, 0.0f);
                 }
                 if (ctx->save_password && ctx->password[0]) {
                     sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
@@ -446,8 +439,7 @@ static void deferred_login_submit_cb(lv_timer_t* t)
                 sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
             }
         }
-        if ((!room_admin_login || !sent) &&
-            login_detail_refresh_after_submit(sent, blank_room_guest_login)) {
+        if (login_detail_refresh_after_submit(sent, blank_room_guest_login)) {
             schedule_login_detail_refresh(ctx->name, false);
         }
     }
@@ -1759,10 +1751,12 @@ void contact_detail_screen_show(const char* contact_name)
                     lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(ce);
                     const char* n = (const char*)lv_obj_get_user_data(btn);
                     if (n) {
-                        cancel_login_poll_for(n);
-                        sigurdos::mesh::sendLogout(n);
-                        sigurdos::mesh::clearLoginState(n);
-                        go_back();
+                        char safe_name[32];
+                        snprintf(safe_name, sizeof(safe_name), "%s", n);
+                        cancel_login_poll_for(safe_name);
+                        sigurdos::mesh::sendLogout(safe_name);
+                        sigurdos::mesh::clearLoginState(safe_name);
+                        repeater_detail_screen_show(safe_name, false);
                     }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(cx_btn, [](lv_event_t* ce) {

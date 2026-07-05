@@ -86,6 +86,18 @@ TEST(LoginRefreshPolicy, RefreshesAfterSentAdminOrRepeaterLogin)
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(true, false));
 }
 
+TEST(LoginRefreshPolicy, StartsPollForSentAdminOrRepeaterLogin)
+{
+    EXPECT_TRUE(sigurdos::ui::login_submit_starts_poll_timer(true, false));
+    EXPECT_FALSE(sigurdos::ui::login_submit_starts_poll_timer(false, false));
+}
+
+TEST(LoginRefreshPolicy, DoesNotPollForBlankRoomGuestOpen)
+{
+    EXPECT_FALSE(sigurdos::ui::login_submit_starts_poll_timer(true, true));
+    EXPECT_FALSE(sigurdos::ui::login_submit_starts_poll_timer(false, true));
+}
+
 TEST(LoginRefreshPolicy, AllowsDelayedRefreshOnlyForCurrentOpenDetail)
 {
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_allowed(true, true));

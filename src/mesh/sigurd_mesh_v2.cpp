@@ -97,7 +97,11 @@ namespace mesh {
         }
         int login_idx = addLoginEntry(contact.name);
         if (login_idx < 0) return MSG_SEND_FAILED;
-        int r = BaseChatMesh::sendLogin(contact, password ? password : "", est_timeout);
+        ::ContactInfo login_contact = contact;
+        if (sigurdos::mesh::loginShouldForceFloodForContactType(contact.type)) {
+            login_contact.out_path_len = OUT_PATH_UNKNOWN;
+        }
+        int r = BaseChatMesh::sendLogin(login_contact, password ? password : "", est_timeout);
         if (r == MSG_SEND_FAILED) _login_entries[login_idx].status = LOGIN_FAILED;
         return r;
     }
@@ -961,7 +965,11 @@ namespace mesh {
         int login_idx = addLoginEntry(contact.name);
         if (login_idx < 0) return false;
         uint32_t est_timeout = 0;
-        int r = BaseChatMesh::sendLogin(contact, password, est_timeout);
+        ::ContactInfo login_contact = contact;
+        if (sigurdos::mesh::loginShouldForceFloodForContactType(contact.type)) {
+            login_contact.out_path_len = OUT_PATH_UNKNOWN;
+        }
+        int r = BaseChatMesh::sendLogin(login_contact, password, est_timeout);
         if (r != MSG_SEND_FAILED) {
 #if SIGURDOS_DEBUG_MESH
             Serial.printf("[mesh] Login sent to %s (result=%d, timeout=%u)\n",

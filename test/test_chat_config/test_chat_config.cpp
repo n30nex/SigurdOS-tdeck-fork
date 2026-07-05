@@ -33,6 +33,7 @@ using sigurdos::ui::chat_screen_emoji_page_start;
 using sigurdos::ui::chat_screen_filter_accepts_channel;
 using sigurdos::ui::chat_screen_format_public_reply_prefix;
 using sigurdos::ui::chat_screen_format_room_name;
+using sigurdos::ui::chat_screen_direct_open_should_skip_channel_list;
 using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_message_is_command;
 using sigurdos::ui::chat_screen_normalize_text_type;
@@ -199,6 +200,13 @@ TEST(ChatConfig, ChannelOpenUsesDeferredLvglTimers) {
     EXPECT_LE(CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS, 350u);
     EXPECT_GE(CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS, 20u);
     EXPECT_LE(CHAT_SCREEN_CHANNEL_SELECT_DELAY_MS, CHAT_SCREEN_CHANNEL_OPEN_DELAY_MS);
+}
+
+TEST(ChatConfig, DirectOpenSkipsListOnlyForReadyExternalTargets) {
+    EXPECT_TRUE(chat_screen_direct_open_should_skip_channel_list(false, true));
+    EXPECT_FALSE(chat_screen_direct_open_should_skip_channel_list(true, true));
+    EXPECT_FALSE(chat_screen_direct_open_should_skip_channel_list(false, false));
+    EXPECT_FALSE(chat_screen_direct_open_should_skip_channel_list(true, false));
 }
 
 TEST(ChatConfig, PublicMessageActionsOnlyApplyToIncomingPublicMessages) {

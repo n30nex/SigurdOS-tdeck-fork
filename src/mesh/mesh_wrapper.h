@@ -614,6 +614,14 @@ inline bool loginPasswordAllowedForContactType(uint8_t contact_type, const char*
     return true;
 }
 
+inline bool loginShouldForceFloodForContactType(uint8_t contact_type) {
+    // Login is the session bootstrap and path repair point for infrastructure
+    // contacts. A stale direct path can strand the UI at Login pending, while
+    // MeshCore repeaters/rooms deliberately support flood login responses that
+    // return a usable path.
+    return contact_type == ADV_TYPE_REPEATER || contact_type == ADV_TYPE_ROOM;
+}
+
 bool sendLogin(const char* name, const char* password);
 void sendLogout(const char* name);
 void clearLoginState(const char* name);
