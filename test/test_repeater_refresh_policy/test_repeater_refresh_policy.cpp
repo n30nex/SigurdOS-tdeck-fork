@@ -105,6 +105,31 @@ TEST(LoginRefreshPolicy, RoomAdminPasswordLoginFailsClosed)
                  "! Room admin login is not supported yet");
 }
 
+TEST(LoginRefreshPolicy, ContactTypeHintOverridesStaleLiveLookup)
+{
+    EXPECT_EQ(sigurdos::ui::login_contact_type_from_hint(3, 1), 3);
+    EXPECT_EQ(sigurdos::ui::login_contact_type_from_hint(2, 1), 2);
+    EXPECT_EQ(sigurdos::ui::login_contact_type_from_hint(0, 3), 3);
+}
+
+TEST(LoginRefreshPolicy, BlankRoomGuestIsNavigationFirst)
+{
+    EXPECT_TRUE(sigurdos::ui::login_submit_is_blank_room_guest(3, ""));
+    EXPECT_FALSE(sigurdos::ui::login_submit_is_blank_room_guest(3, "admin"));
+    EXPECT_FALSE(sigurdos::ui::login_submit_is_blank_room_guest(2, ""));
+    EXPECT_FALSE(sigurdos::ui::login_submit_is_blank_room_guest(1, ""));
+    EXPECT_FALSE(sigurdos::ui::login_submit_is_blank_room_guest(3, nullptr));
+}
+
+TEST(LoginRefreshPolicy, RoomAdminSubmitFailsClosedBeforePending)
+{
+    EXPECT_TRUE(sigurdos::ui::login_submit_room_admin_fails_closed(3, "admin"));
+    EXPECT_FALSE(sigurdos::ui::login_submit_room_admin_fails_closed(3, ""));
+    EXPECT_FALSE(sigurdos::ui::login_submit_room_admin_fails_closed(2, "admin"));
+    EXPECT_FALSE(sigurdos::ui::login_submit_room_admin_fails_closed(1, "admin"));
+    EXPECT_FALSE(sigurdos::ui::login_submit_room_admin_fails_closed(3, nullptr));
+}
+
 TEST(LoginRefreshPolicy, AllowsDelayedRefreshOnlyForCurrentOpenDetail)
 {
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_allowed(true, true));

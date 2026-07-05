@@ -19,6 +19,7 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <lvgl.h>
+#include <cstdint>
 #include "navigation.h"
 
 namespace sigurdos::ui {
@@ -53,7 +54,8 @@ void add_contact_pager(lv_obj_t* scr, int page, int pages, int total,
 
 // Contact/repeater dialogs shared by the Contact detail and Repeater detail
 // screens (implemented in screens/screen_contacts.cpp).
-void show_login_password_dialog(const char* contact_name);
+void show_login_password_dialog(const char* contact_name,
+                                uint8_t contact_type_hint = 0);
 void show_admin_cmd_dialog(const char* contact_name);
 void show_fetch_msgs_dialog(const char* contact_name);
 

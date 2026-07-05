@@ -577,13 +577,19 @@ static char g_active_room_server[32] = "";
 bool setActiveRoomServer(const char* contact_name) {
     if (!contact_name || !contact_name[0]) return false;
     if (g_mesh) {
+        bool found_same_name = false;
+        bool found_room = false;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, contact_name) == 0) {
-                if (c->type != ADV_TYPE_ROOM) return false;
-                break;
+                found_same_name = true;
+                if (c->type == ADV_TYPE_ROOM) {
+                    found_room = true;
+                    break;
+                }
             }
         }
+        if (found_same_name && !found_room) return false;
         // Allow opening a persisted room transcript even if the room advert has
         // not been re-heard since boot. Sends will still fail closed if the
         // contact truly is absent, but the UI will not silently do nothing.
@@ -2002,7 +2008,7 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
-                if (!loginPasswordAllowedForContactType(c->type, password)) return false;
+                if (!loginPasswordAllowedForContactType(c->type, password)) continue;
                 return g_mesh->sendLoginTo(*c, password);
             }
         }

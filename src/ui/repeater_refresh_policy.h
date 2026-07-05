@@ -70,6 +70,34 @@ inline const char* room_admin_password_login_unsupported_message()
     return "! Room admin login is not supported yet";
 }
 
+inline uint8_t login_contact_type_from_hint(uint8_t contact_type_hint,
+                                            uint8_t live_contact_type)
+{
+    return contact_type_hint != 0 ? contact_type_hint : live_contact_type;
+}
+
+inline bool login_contact_type_is_room(uint8_t contact_type)
+{
+    // MeshCore advert type 3 is room-server. Keep this helper local so the UI
+    // state policy does not need to pull in the full mesh wrapper.
+    return contact_type == 3;
+}
+
+inline bool login_submit_is_blank_room_guest(uint8_t contact_type,
+                                             const char* password)
+{
+    return login_contact_type_is_room(contact_type) && password &&
+           password[0] == '\0';
+}
+
+inline bool login_submit_room_admin_fails_closed(uint8_t contact_type,
+                                                 const char* password)
+{
+    return login_contact_type_is_room(contact_type) && password &&
+           password[0] != '\0' &&
+           !room_admin_password_login_supported();
+}
+
 inline bool login_detail_refresh_allowed(bool detail_open_for_contact,
                                          bool screen_still_current)
 {

@@ -610,8 +610,7 @@ inline bool loginPasswordAllowedForContactType(uint8_t contact_type, const char*
     // ACL/guest session refresh. It may fail remotely if the node is not in the
     // ACL yet, but it must be allowed through so the UI can show real pending
     // and failure state instead of treating guest access as invalid input.
-    (void)contact_type;
-    return true;
+    return contact_type == ADV_TYPE_REPEATER || contact_type == ADV_TYPE_ROOM;
 }
 
 inline bool loginShouldForceFloodForContactType(uint8_t contact_type) {

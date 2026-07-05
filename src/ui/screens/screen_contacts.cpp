@@ -327,7 +327,10 @@ void contacts_screen_show()
 
 // Forward declaration of login-polling timer (defined after dialog functions)
 static void start_login_poll_timer(const char* name, bool auto_open_room = false);
-static void schedule_login_submit(const char* name, const char* password, bool save_password);
+static void schedule_login_submit(const char* name,
+                                  const char* password,
+                                  bool save_password,
+                                  uint8_t contact_type_hint);
 
 static void schedule_chat_navigation()
 {
@@ -338,11 +341,17 @@ static void schedule_chat_navigation()
     if (timer) lv_timer_set_repeat_count(timer, 1);
 }
 
-static bool contact_is_room_server(const char* name)
+static uint8_t contact_type_for_login(const char* name, uint8_t contact_type_hint)
 {
-    if (!name || !name[0]) return false;
+    uint8_t live_contact_type = ADV_TYPE_NONE;
+    if (!name || !name[0]) {
+        return login_contact_type_from_hint(contact_type_hint, live_contact_type);
+    }
     sigurdos::mesh::ContactInfo info{};
-    return sigurdos::mesh::getContactByName(name, &info) && info.type == ADV_TYPE_ROOM;
+    if (sigurdos::mesh::getContactByName(name, &info)) {
+        live_contact_type = info.type;
+    }
+    return login_contact_type_from_hint(contact_type_hint, live_contact_type);
 }
 
 static constexpr uint32_t LOGIN_DETAIL_REFRESH_MS = 150;
@@ -386,6 +395,7 @@ static void schedule_login_detail_refresh(const char* name, bool skip_login)
 struct DeferredLoginSubmitCtx {
     char name[32];
     char password[16];
+    uint8_t contact_type;
     bool save_password;
 };
 
@@ -393,7 +403,13 @@ struct PwDialogData {
     char* name;
     lv_obj_t* ta;
     lv_obj_t* save_cb;
+    uint8_t contact_type;
     bool submitted;
+};
+
+struct ContactActionCtx {
+    char* name;
+    uint8_t contact_type;
 };
 
 static void submit_login_dialog_once(PwDialogData* d)
@@ -407,16 +423,15 @@ static void submit_login_dialog_once(PwDialogData* d)
     const bool save_password =
         d->save_cb && lv_obj_is_valid(d->save_cb) &&
         (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED);
-    schedule_login_submit(d->name, pw, save_password);
+    schedule_login_submit(d->name, pw, save_password, d->contact_type);
 }
 
 static void deferred_login_submit_cb(lv_timer_t* t)
 {
     auto* ctx = static_cast<DeferredLoginSubmitCtx*>(lv_timer_get_user_data(t));
     if (ctx && ctx->name[0]) {
-        const bool is_room_server = contact_is_room_server(ctx->name);
         const bool blank_room_guest_login =
-            ctx->password[0] == '\0' && is_room_server;
+            login_submit_is_blank_room_guest(ctx->contact_type, ctx->password);
         bool sent = false;
         if (blank_room_guest_login) {
             // Guest room entry is a UI navigation action first. The login
@@ -428,7 +443,8 @@ static void deferred_login_submit_cb(lv_timer_t* t)
             if (!sent) {
                 sigurdos::mesh::clearLoginState(ctx->name);
             }
-        } else if (is_room_server && !room_admin_password_login_supported()) {
+        } else if (login_submit_room_admin_fails_closed(ctx->contact_type,
+                                                        ctx->password)) {
             sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
             sigurdos::mesh::mesh_v2_queue_push(
                 "System", "", room_admin_password_login_unsupported_message(), 0, 0.0f);
@@ -453,12 +469,16 @@ static void deferred_login_submit_cb(lv_timer_t* t)
     lv_timer_del(t);
 }
 
-static void schedule_login_submit(const char* name, const char* password, bool save_password)
+static void schedule_login_submit(const char* name,
+                                  const char* password,
+                                  bool save_password,
+                                  uint8_t contact_type_hint)
 {
     if (!name || !name[0] ||
         !sigurdos::mesh::loginPasswordInputSubmittable(password)) {
         return;
     }
+    const uint8_t contact_type = contact_type_for_login(name, contact_type_hint);
     auto* ctx = new(std::nothrow) DeferredLoginSubmitCtx{};
     if (!ctx) {
         sigurdos::mesh::forceLoginState(name, LOGIN_STATUS_FAILED, 0);
@@ -467,6 +487,7 @@ static void schedule_login_submit(const char* name, const char* password, bool s
     }
     snprintf(ctx->name, sizeof(ctx->name), "%s", name);
     snprintf(ctx->password, sizeof(ctx->password), "%s", password);
+    ctx->contact_type = contact_type;
     ctx->save_password = save_password;
     lv_timer_t* timer = lv_timer_create(deferred_login_submit_cb, 20, ctx);
     if (!timer) {
@@ -479,9 +500,11 @@ static void schedule_login_submit(const char* name, const char* password, bool s
 // ── Login password dialog ─────────────────────────
 // Shows a modal dialog for entering a password to log into a repeater/room server.
 // Includes a "Save Password" checkbox that persists the password to NVS.
-void show_login_password_dialog(const char* contact_name)
+void show_login_password_dialog(const char* contact_name, uint8_t contact_type_hint)
 {
     if (!contact_name) return;
+    const uint8_t contact_type = contact_type_for_login(contact_name,
+                                                        contact_type_hint);
 
     lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
     auto dlg_sz = dialog_size(240, 154);
@@ -605,7 +628,8 @@ void show_login_password_dialog(const char* contact_name)
     lv_obj_set_style_text_color(lb, lv_color_hex(BG_PRIMARY), 0);
 
     // Store references for the click handler
-    PwDialogData* dd = new(std::nothrow) PwDialogData{pw_name, ta, save_cb, false};
+    PwDialogData* dd = new(std::nothrow) PwDialogData{
+        pw_name, ta, save_cb, contact_type, false};
     if (!dd) {
         free(pw_name);
         lv_obj_del_async(dlg);
@@ -1686,41 +1710,48 @@ void contact_detail_screen_show(const char* contact_name)
         } else {
             // ── Login/open button ──
             char* li_name = strdup(contact_name);
-            lv_obj_t* li_btn = lv_btn_create(login_row);
-            lv_obj_set_size(li_btn, target->type == ADV_TYPE_ROOM ? 130 : 150, 24);
-            lv_obj_set_style_bg_color(li_btn, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_radius(li_btn, 0, 0);
-            lv_obj_t* li_lbl = lv_label_create(li_btn);
-            lv_label_set_text(li_lbl,
-                target->type == ADV_TYPE_ROOM
-                    ? LV_SYMBOL_ENVELOPE " Open"
-                    : LV_SYMBOL_DIRECTORY " Login");
-            lv_obj_center(li_lbl);
-            lv_obj_set_style_text_color(li_lbl, lv_color_hex(BG_PRIMARY), 0);
-            lv_obj_set_user_data(li_btn, li_name);
-            lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
-                lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
-                const char* name = (const char*)lv_obj_get_user_data(btn);
-                if (!name) return;
-                char safe_name[32];
-                snprintf(safe_name, sizeof(safe_name), "%s", name);
-                sigurdos::mesh::ContactInfo info{};
-                const bool is_room =
-                    sigurdos::mesh::getContactByName(safe_name, &info) &&
-                    info.type == ADV_TYPE_ROOM;
-                if (is_room) {
-                    repeater_detail_close_state();
-                    chat_screen_open_room(safe_name);
-                    if (!sigurdos::mesh::sendLogin(safe_name, "")) {
-                        sigurdos::mesh::clearLoginState(safe_name);
+            ContactActionCtx* li_ctx = li_name
+                ? new(std::nothrow) ContactActionCtx{li_name, target->type}
+                : nullptr;
+            if (!li_ctx) free(li_name);
+            if (li_ctx) {
+                lv_obj_t* li_btn = lv_btn_create(login_row);
+                lv_obj_set_size(li_btn, target->type == ADV_TYPE_ROOM ? 130 : 150, 24);
+                lv_obj_set_style_bg_color(li_btn, lv_color_hex(ACCENT), 0);
+                lv_obj_set_style_radius(li_btn, 0, 0);
+                lv_obj_t* li_lbl = lv_label_create(li_btn);
+                lv_label_set_text(li_lbl,
+                    target->type == ADV_TYPE_ROOM
+                        ? LV_SYMBOL_ENVELOPE " Open"
+                        : LV_SYMBOL_DIRECTORY " Login");
+                lv_obj_center(li_lbl);
+                lv_obj_set_style_text_color(li_lbl, lv_color_hex(BG_PRIMARY), 0);
+                lv_obj_set_user_data(li_btn, li_ctx);
+                lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
+                    lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
+                    auto* ctx = (ContactActionCtx*)lv_obj_get_user_data(btn);
+                    if (!ctx || !ctx->name) return;
+                    char safe_name[32];
+                    snprintf(safe_name, sizeof(safe_name), "%s", ctx->name);
+                    if (login_contact_type_is_room(ctx->contact_type)) {
+                        repeater_detail_close_state();
+                        chat_screen_open_room(safe_name);
+                        if (!sigurdos::mesh::sendLogin(safe_name, "")) {
+                            sigurdos::mesh::clearLoginState(safe_name);
+                        }
+                    } else {
+                        show_login_password_dialog(safe_name, ctx->contact_type);
                     }
-                } else {
-                    show_login_password_dialog(safe_name);
-                }
-            }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
+                }, LV_EVENT_CLICKED, nullptr);
+                lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
+                    auto* ctx = (ContactActionCtx*)lv_obj_get_user_data(
+                        (lv_obj_t*)lv_event_get_current_target(e));
+                    if (ctx) {
+                        free(ctx->name);
+                        delete ctx;
+                    }
+                }, LV_EVENT_DELETE, nullptr);
+            }
 
             if (target->type == ADV_TYPE_ROOM && login_st == LOGIN_STATUS_NONE) {
                 char* admin_name = strdup(contact_name);
@@ -1740,7 +1771,7 @@ void contact_detail_screen_show(const char* contact_name)
                         if (name) {
                             char safe_name[32];
                             snprintf(safe_name, sizeof(safe_name), "%s", name);
-                            show_login_password_dialog(safe_name);
+                            show_login_password_dialog(safe_name, ADV_TYPE_ROOM);
                         }
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {

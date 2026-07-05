@@ -104,6 +104,11 @@ struct RoomSyncCtx {
     char* name;
 };
 
+struct RepeaterActionCtx {
+    char* name;
+    uint8_t contact_type;
+};
+
 static RepeaterListSignature get_repeater_signature()
 {
     RepeaterListSignature sig{0, 0};
@@ -751,7 +756,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // Login/open button (prominent)
         if (login_st != LOGIN_STATUS_PENDING) {
             char* li_name = strdup(contact_name);
-            if (li_name) {
+            RepeaterActionCtx* li_ctx = li_name
+                ? new(std::nothrow) RepeaterActionCtx{li_name, target->type}
+                : nullptr;
+            if (!li_ctx) free(li_name);
+            if (li_ctx) {
                 lv_obj_t* login_btn = lv_btn_create(list);
                 lv_obj_set_size(login_btn, LV_PCT(100), 32);
                 lv_obj_set_style_bg_color(login_btn, lv_color_hex(ACCENT), 0);
@@ -765,29 +774,30 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         : LV_SYMBOL_DIRECTORY "  Login");
                 lv_obj_set_style_text_color(login_lbl, lv_color_hex(BG_PRIMARY), 0);
                 lv_obj_center(login_lbl);
-                lv_obj_set_user_data(login_btn, li_name);
+                lv_obj_set_user_data(login_btn, li_ctx);
                 lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
                     lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
-                    const char* name = (const char*)lv_obj_get_user_data(btn);
-                    if (!name) return;
+                    auto* ctx = (RepeaterActionCtx*)lv_obj_get_user_data(btn);
+                    if (!ctx || !ctx->name) return;
                     char safe_name[32];
-                    snprintf(safe_name, sizeof(safe_name), "%s", name);
-                    sigurdos::mesh::ContactInfo info{};
-                    const bool is_room =
-                        sigurdos::mesh::getContactByName(safe_name, &info) &&
-                        info.type == ADV_TYPE_ROOM;
-                    if (is_room) {
+                    snprintf(safe_name, sizeof(safe_name), "%s", ctx->name);
+                    if (login_contact_type_is_room(ctx->contact_type)) {
                         repeater_detail_close_state();
                         chat_screen_open_room(safe_name);
                         if (!sigurdos::mesh::sendLogin(safe_name, "")) {
                             sigurdos::mesh::clearLoginState(safe_name);
                         }
                     } else {
-                        show_login_password_dialog(safe_name);
+                        show_login_password_dialog(safe_name, ctx->contact_type);
                     }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
-                    free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
+                    auto* ctx = (RepeaterActionCtx*)lv_obj_get_user_data(
+                        (lv_obj_t*)lv_event_get_current_target(e));
+                    if (ctx) {
+                        free(ctx->name);
+                        delete ctx;
+                    }
                 }, LV_EVENT_DELETE, nullptr);
                 row++;
             }
@@ -812,7 +822,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         if (name) {
                             char safe_name[32];
                             snprintf(safe_name, sizeof(safe_name), "%s", name);
-                            show_login_password_dialog(safe_name);
+                            show_login_password_dialog(safe_name, ADV_TYPE_ROOM);
                         }
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
@@ -1062,7 +1072,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                             sent ? "Room resync login sent" : "Room resync login failed",
                             0, 0.0f);
                     } else {
-                        show_login_password_dialog(c->name);
+                        show_login_password_dialog(c->name, ADV_TYPE_ROOM);
                     }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(sync, [](lv_event_t* e) {
