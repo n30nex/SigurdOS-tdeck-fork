@@ -96,6 +96,7 @@ TEST(UIContractTest, TelemetryStatusAndWifiScreenApisStayStable) {
     (void)static_cast<void_fn>(sigurdos::ui::telemetry_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::node_stats_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::node_status_screen_show);
+    (void)static_cast<void_fn>(sigurdos::ui::node_neighbours_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::wifi_networks_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::regions_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::update_wifi_status);

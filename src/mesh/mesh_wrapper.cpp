@@ -25,6 +25,9 @@
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
 #define REQ_TYPE_GET_TELEMETRY_DATA  0x03
 #endif
+#ifndef REQ_TYPE_GET_NEIGHBOURS
+#define REQ_TYPE_GET_NEIGHBOURS  0x06
+#endif
 #include <SPI.h>
 #include <SPIFFS.h>
 #include <Preferences.h>  // for NVS prefs
@@ -365,37 +368,14 @@ static uint32_t _last_status_tag = 0;
 static sigurdos::mesh::NodeStatus _cached_status;
 static bool _has_cached_status = false;
 
-// Parse a 56-byte RepeaterStats blob into NodeStatus struct
-static void parse_status_blob(const uint8_t* data, uint8_t len, sigurdos::mesh::NodeStatus* out) {
-    if (!data || !out) return;
-    memset(out, 0, sizeof(*out));
-    uint8_t avail = len < NODE_STATUS_RESPONSE_SIZE ? len : NODE_STATUS_RESPONSE_SIZE;
-    // data[0..3] = tag, skip that; status blob starts at data[4]
-    const uint8_t* blob = data + 4;
-    uint8_t blen = avail > 4 ? avail - 4 : 0;
-    if (blen < 2) return;  // need at least batt_milli_volts
-    unsigned ofs = 0;
-    auto r16 = [&](int16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
-    auto ru16 = [&](uint16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
-    auto ru32 = [&](uint32_t* dst) { if (ofs + 4 <= blen) { memcpy(dst, blob + ofs, 4); ofs += 4; } };
-    ru16(&out->batt_milli_volts);
-    ru16(&out->curr_tx_queue_len);
-    r16(&out->noise_floor);
-    r16(&out->last_rssi);
-    ru32(&out->n_packets_recv);
-    ru32(&out->n_packets_sent);
-    ru32(&out->total_air_time_secs);
-    ru32(&out->total_up_time_secs);
-    ru32(&out->n_sent_flood);
-    ru32(&out->n_sent_direct);
-    ru32(&out->n_recv_flood);
-    ru32(&out->n_recv_direct);
-    ru16(&out->err_events);
-    r16(&out->last_snr);
-    ru16(&out->n_direct_dups);
-    ru16(&out->n_flood_dups);
-    ru32(&out->total_rx_air_time_secs);
-    ru32(&out->n_recv_errors);
+// ── Neighbours request tracking ───────────────
+static uint32_t _last_neighbours_tag = 0;
+static sigurdos::mesh::NodeNeighboursResult _cached_neighbours;
+static bool _has_cached_neighbours = false;
+
+// Parse a tagged RepeaterStats response into NodeStatus.
+static bool parse_status_blob(const uint8_t* data, uint8_t len, sigurdos::mesh::NodeStatus* out) {
+    return sigurdos::mesh::parseNodeStatusResponse(data, len, out);
 }
 
 // ════════════════════════════════════════════════════
@@ -679,17 +659,11 @@ const char* getLoggedInRoomServerName(int index) {
 bool requestStatus(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS);
-    if (ok) {
-        // Find the tag from the pending request table
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_status_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
-    }
+    _last_status_tag = 0;
+    _has_cached_status = false;
+    memset(&_cached_status, 0, sizeof(_cached_status));
+    bool ok = g_mesh->sendRequestTracked(dest_name, REQ_TYPE_GET_STATUS,
+                                         &_last_status_tag);
     return ok;
 }
 
@@ -699,7 +673,7 @@ bool hasStatusResponse() {
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
         if (re && re->tag == _last_status_tag) {
-            parse_status_blob(re->data, re->len, &_cached_status);
+            if (!parse_status_blob(re->data, re->len, &_cached_status)) return false;
             _has_cached_status = true;
             return true;
         }
@@ -717,16 +691,11 @@ bool getStatusResult(NodeStatus* out) {
 bool requestTelemetry(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_TELEMETRY_DATA);
-    if (ok) {
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_telemetry_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
-    }
+    _last_telemetry_tag = 0;
+    _has_cached_telemetry = false;
+    memset(&_cached_telemetry, 0, sizeof(_cached_telemetry));
+    bool ok = g_mesh->sendRequestTracked(dest_name, REQ_TYPE_GET_TELEMETRY_DATA,
+                                         &_last_telemetry_tag);
     return ok;
 }
 
@@ -815,6 +784,58 @@ bool hasTelemetryResponse() {
 bool getTelemetryResult(TelemetryResult* out) {
     if (!out || !_has_cached_telemetry) return false;
     memcpy(out, &_cached_telemetry, sizeof(*out));
+    return true;
+}
+
+// ── Repeater neighbours query ─────────────────
+bool requestNeighbours(const char* dest_name) {
+    if (!radioTxAllowed()) return false;
+    if (!g_mesh || !dest_name || !dest_name[0]) return false;
+
+    uint8_t req[11];
+    uint32_t nonce = 0;
+    fast_rng.random(reinterpret_cast<uint8_t*>(&nonce), sizeof(nonce));
+    if (!buildNeighboursRequest(req, sizeof(req),
+                                NEIGHBOUR_DEFAULT_COUNT,
+                                0,
+                                NEIGHBOUR_DEFAULT_ORDER_NEWEST,
+                                NEIGHBOUR_PUBKEY_PREFIX_BYTES,
+                                nonce)) {
+        return false;
+    }
+
+    _last_neighbours_tag = 0;
+    _has_cached_neighbours = false;
+    memset(&_cached_neighbours, 0, sizeof(_cached_neighbours));
+
+    bool ok = g_mesh->sendRequestWithDataTracked(dest_name, req, sizeof(req),
+                                                 &_last_neighbours_tag);
+    return ok;
+}
+
+bool hasNeighboursResponse() {
+    if (!g_mesh || _last_neighbours_tag == 0) return false;
+    int n = g_mesh->getResponseCount();
+    for (int i = 0; i < n; i++) {
+        auto* re = g_mesh->getResponse(i);
+        if (re && re->tag == _last_neighbours_tag) {
+            NodeNeighboursResult result;
+            if (!parseNeighboursResponse(re->data, re->len,
+                                         NEIGHBOUR_PUBKEY_PREFIX_BYTES,
+                                         &result)) {
+                return false;
+            }
+            _cached_neighbours = result;
+            _has_cached_neighbours = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool getNeighboursResult(NodeNeighboursResult* out) {
+    if (!out || !_has_cached_neighbours) return false;
+    memcpy(out, &_cached_neighbours, sizeof(*out));
     return true;
 }
 

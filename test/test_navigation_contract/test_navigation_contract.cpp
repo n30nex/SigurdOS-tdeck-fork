@@ -27,7 +27,7 @@ namespace {
 
 using sigurdos::ui::Screen;
 
-constexpr std::array<Screen, 26> kScreens = {
+constexpr std::array<Screen, 27> kScreens = {
     Screen::Home,
     Screen::Chat,
     Screen::Contacts,
@@ -51,6 +51,7 @@ constexpr std::array<Screen, 26> kScreens = {
     Screen::NodeStats,
     Screen::Telemetry,
     Screen::NodeStatus,
+    Screen::NodeNeighbours,
     Screen::WiFiNetworks,
     Screen::Bluetooth,
     Screen::Regions,
@@ -100,9 +101,10 @@ TEST(NavigationContractTest, DiagnosticsAndConnectivityScreensRemainInInventory)
     EXPECT_EQ(static_cast<int>(Screen::NodeStats), 20);
     EXPECT_EQ(static_cast<int>(Screen::Telemetry), 21);
     EXPECT_EQ(static_cast<int>(Screen::NodeStatus), 22);
-    EXPECT_EQ(static_cast<int>(Screen::WiFiNetworks), 23);
-    EXPECT_EQ(static_cast<int>(Screen::Bluetooth), 24);
-    EXPECT_EQ(static_cast<int>(Screen::Regions), 25);
+    EXPECT_EQ(static_cast<int>(Screen::NodeNeighbours), 23);
+    EXPECT_EQ(static_cast<int>(Screen::WiFiNetworks), 24);
+    EXPECT_EQ(static_cast<int>(Screen::Bluetooth), 25);
+    EXPECT_EQ(static_cast<int>(Screen::Regions), 26);
 }
 
 } // namespace

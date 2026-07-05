@@ -13,6 +13,7 @@ static constexpr uint16_t REPEATER_LOGIN_POLL_MAX_PENDING_POLLS = 15;
 enum class RepeaterManagementRequest : uint8_t {
     Status,
     Telemetry,
+    Neighbours,
 };
 
 inline bool repeater_refresh_allowed(bool has_state,
@@ -29,6 +30,7 @@ inline const char* repeater_management_request_label(RepeaterManagementRequest r
     switch (request) {
     case RepeaterManagementRequest::Status:    return "Status";
     case RepeaterManagementRequest::Telemetry: return "Telemetry";
+    case RepeaterManagementRequest::Neighbours: return "Neighbours";
     }
     return "";
 }
@@ -38,6 +40,7 @@ inline const char* repeater_management_request_failed_message(RepeaterManagement
     switch (request) {
     case RepeaterManagementRequest::Status:    return "! Status request failed";
     case RepeaterManagementRequest::Telemetry: return "! Telemetry request failed";
+    case RepeaterManagementRequest::Neighbours: return "! Neighbours request failed";
     }
     return "! Request failed";
 }

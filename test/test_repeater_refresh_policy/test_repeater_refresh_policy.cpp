@@ -48,6 +48,9 @@ TEST(RepeaterManagementPolicy, RequestLabelsStayStable)
     EXPECT_STREQ(sigurdos::ui::repeater_management_request_label(
                     RepeaterManagementRequest::Telemetry),
                 "Telemetry");
+    EXPECT_STREQ(sigurdos::ui::repeater_management_request_label(
+                    RepeaterManagementRequest::Neighbours),
+                "Neighbours");
 }
 
 TEST(RepeaterManagementPolicy, RequestFailureMessagesAreUserVisible)
@@ -58,6 +61,9 @@ TEST(RepeaterManagementPolicy, RequestFailureMessagesAreUserVisible)
     EXPECT_STREQ(sigurdos::ui::repeater_management_request_failed_message(
                     RepeaterManagementRequest::Telemetry),
                 "! Telemetry request failed");
+    EXPECT_STREQ(sigurdos::ui::repeater_management_request_failed_message(
+                    RepeaterManagementRequest::Neighbours),
+                "! Neighbours request failed");
 }
 
 TEST(LoginRefreshPolicy, SkipsImmediateDetailRefreshForSentBlankRoomGuestLogin)

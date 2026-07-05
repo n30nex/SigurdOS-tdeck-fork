@@ -302,6 +302,11 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::sendRequest(const char* name, uint8_t req_type) {
+        return sendRequestTracked(name, req_type, nullptr);
+    }
+
+    bool SigurdMeshV2::sendRequestTracked(const char* name, uint8_t req_type, uint32_t* out_tag) {
+        if (out_tag) *out_tag = 0;
         if (!name || !name[0]) return false;
         int slot = allocatePendingRequestSlot();
         if (slot < 0) return false;
@@ -320,6 +325,7 @@ namespace mesh {
                     _pending_reqs[slot].dest_name[sizeof(_pending_reqs[slot].dest_name) - 1] = '\0';
                     _pending_reqs[slot].sent_at_ms = _ms->getMillis();
                     _pending_reqs[slot].in_use = true;
+                    if (out_tag) *out_tag = tag;
                 }
                 return r != MSG_SEND_FAILED;
             }
@@ -328,6 +334,12 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len) {
+        return sendRequestWithDataTracked(name, data, data_len, nullptr);
+    }
+
+    bool SigurdMeshV2::sendRequestWithDataTracked(const char* name, const uint8_t* data,
+                                                  uint8_t data_len, uint32_t* out_tag) {
+        if (out_tag) *out_tag = 0;
         if (!name || !name[0] || !data || data_len == 0) return false;
         int slot = allocatePendingRequestSlot();
         if (slot < 0) return false;
@@ -339,13 +351,14 @@ namespace mesh {
                 int r = BaseChatMesh::sendRequest(tmp, data, data_len, tag, est_timeout);
                 if (r != MSG_SEND_FAILED) {
                     _pending_reqs[slot].tag = tag;
-                    _pending_reqs[slot].req_type = 0; // custom data
+                    _pending_reqs[slot].req_type = data[0];
                     _pending_reqs[slot].channel_name[0] = '\0';
                     strncpy(_pending_reqs[slot].dest_name, name,
                             sizeof(_pending_reqs[slot].dest_name) - 1);
                     _pending_reqs[slot].dest_name[sizeof(_pending_reqs[slot].dest_name) - 1] = '\0';
                     _pending_reqs[slot].sent_at_ms = _ms->getMillis();
                     _pending_reqs[slot].in_use = true;
+                    if (out_tag) *out_tag = tag;
                 }
                 return r != MSG_SEND_FAILED;
             }

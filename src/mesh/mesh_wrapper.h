@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
 #include "public_channel.h"
@@ -476,6 +477,57 @@ struct NodeStatus {
     uint32_t n_recv_errors;          // receive errors
 };
 
+inline bool parseNodeStatusResponse(const uint8_t* data, uint8_t len, NodeStatus* out)
+{
+    if (!data || !out || len <= 4) return false;
+    std::memset(out, 0, sizeof(*out));
+    // Response data is [4-byte tag][RepeaterStats blob]. The stats blob is
+    // NODE_STATUS_RESPONSE_SIZE bytes on current MeshCore repeaters.
+    const uint8_t* blob = data + 4;
+    uint8_t blen = static_cast<uint8_t>(len - 4);
+    if (blen > NODE_STATUS_RESPONSE_SIZE) blen = NODE_STATUS_RESPONSE_SIZE;
+    if (blen < 2) return false;
+
+    unsigned ofs = 0;
+    auto r16 = [&](int16_t* dst) {
+        if (ofs + 2 <= blen) {
+            std::memcpy(dst, blob + ofs, 2);
+            ofs += 2;
+        }
+    };
+    auto ru16 = [&](uint16_t* dst) {
+        if (ofs + 2 <= blen) {
+            std::memcpy(dst, blob + ofs, 2);
+            ofs += 2;
+        }
+    };
+    auto ru32 = [&](uint32_t* dst) {
+        if (ofs + 4 <= blen) {
+            std::memcpy(dst, blob + ofs, 4);
+            ofs += 4;
+        }
+    };
+    ru16(&out->batt_milli_volts);
+    ru16(&out->curr_tx_queue_len);
+    r16(&out->noise_floor);
+    r16(&out->last_rssi);
+    ru32(&out->n_packets_recv);
+    ru32(&out->n_packets_sent);
+    ru32(&out->total_air_time_secs);
+    ru32(&out->total_up_time_secs);
+    ru32(&out->n_sent_flood);
+    ru32(&out->n_sent_direct);
+    ru32(&out->n_recv_flood);
+    ru32(&out->n_recv_direct);
+    ru16(&out->err_events);
+    r16(&out->last_snr);
+    ru16(&out->n_direct_dups);
+    ru16(&out->n_flood_dups);
+    ru32(&out->total_rx_air_time_secs);
+    ru32(&out->n_recv_errors);
+    return true;
+}
+
 bool requestStatus(const char* dest_name);
 bool hasStatusResponse();
 bool getStatusResult(NodeStatus* out);
@@ -531,6 +583,13 @@ inline bool loginPendingTimedOut(uint32_t now_ms, uint32_t started_at_ms) {
     return (uint32_t)(now_ms - started_at_ms) >= LOGIN_PENDING_TIMEOUT_MS;
 }
 
+inline uint8_t effectiveLoginPermission(uint8_t legacy_permission,
+                                        uint8_t acl_permissions)
+{
+    if (acl_permissions != 0) return acl_permissions & 0x03u;
+    return legacy_permission == 1 ? PERM_ACL_ADMIN : PERM_ACL_GUEST;
+}
+
 static constexpr uint32_t PENDING_REQUEST_TTL_MS = 120000UL;
 
 inline bool pendingRequestExpired(uint32_t sent_at_ms, uint32_t now_ms) {
@@ -547,11 +606,11 @@ inline bool loginPasswordInputSubmittable(const char* password) {
 
 inline bool loginPasswordAllowedForContactType(uint8_t contact_type, const char* password) {
     if (!loginPasswordInputSubmittable(password)) return false;
-    // MeshCore room servers encode sync_since before the password, so a blank
-    // room login is a valid read-only/guest request. Repeaters encode only the
-    // password after the timestamp; a blank repeater login is ACL-only and gives
-    // no useful UI result for field guest access, so fail fast instead.
-    if (contact_type == ADV_TYPE_REPEATER && password[0] == '\0') return false;
+    // MeshCore repeaters and room servers both accept a blank password as an
+    // ACL/guest session refresh. It may fail remotely if the node is not in the
+    // ACL yet, but it must be allowed through so the UI can show real pending
+    // and failure state instead of treating guest access as invalid input.
+    (void)contact_type;
     return true;
 }
 
@@ -563,6 +622,88 @@ bool isLoggedIn(const char* name);
 uint8_t getLoginPermission(const char* name);
 uint8_t getLoginStatus(const char* name);
 void forceLoginState(const char* name, uint8_t status, uint8_t permission);
+
+// ── Repeater neighbours request ─────────────────────
+static constexpr uint8_t REQ_TYPE_GET_NEIGHBOURS = 0x06;
+static constexpr uint8_t NEIGHBOUR_REQUEST_VERSION = 0;
+static constexpr uint8_t NEIGHBOUR_DEFAULT_COUNT = 8;
+static constexpr uint8_t NEIGHBOUR_DEFAULT_ORDER_NEWEST = 0;
+static constexpr uint8_t NEIGHBOUR_PUBKEY_PREFIX_BYTES = 6;
+static constexpr int MAX_NODE_NEIGHBOURS = 8;
+
+struct NodeNeighbourInfo {
+    char pubkey_prefix[(NEIGHBOUR_PUBKEY_PREFIX_BYTES * 2) + 1];
+    uint32_t heard_secs_ago;
+    int8_t snr_quarters;
+};
+
+struct NodeNeighboursResult {
+    uint16_t total;
+    uint16_t returned;
+    int n_items;
+    NodeNeighbourInfo items[MAX_NODE_NEIGHBOURS];
+};
+
+inline bool buildNeighboursRequest(uint8_t* out,
+                                   size_t out_size,
+                                   uint8_t count,
+                                   uint16_t offset,
+                                   uint8_t order_by,
+                                   uint8_t pubkey_prefix_len,
+                                   uint32_t nonce)
+{
+    if (!out || out_size < 11 || pubkey_prefix_len == 0 ||
+        pubkey_prefix_len > 32 || count == 0) {
+        return false;
+    }
+    out[0] = REQ_TYPE_GET_NEIGHBOURS;
+    out[1] = NEIGHBOUR_REQUEST_VERSION;
+    out[2] = count;
+    std::memcpy(&out[3], &offset, 2);
+    out[5] = order_by;
+    out[6] = pubkey_prefix_len;
+    std::memcpy(&out[7], &nonce, 4);
+    return true;
+}
+
+inline bool parseNeighboursResponse(const uint8_t* data,
+                                    uint8_t len,
+                                    uint8_t pubkey_prefix_len,
+                                    NodeNeighboursResult* out)
+{
+    if (!data || !out || pubkey_prefix_len == 0 || pubkey_prefix_len > 32 ||
+        len < 8) {
+        return false;
+    }
+    std::memset(out, 0, sizeof(*out));
+    size_t pos = 4; // response tag
+    std::memcpy(&out->total, &data[pos], 2); pos += 2;
+    std::memcpy(&out->returned, &data[pos], 2); pos += 2;
+
+    const size_t entry_size = static_cast<size_t>(pubkey_prefix_len) + 4u + 1u;
+    int expected = out->returned;
+    if (expected > MAX_NODE_NEIGHBOURS) expected = MAX_NODE_NEIGHBOURS;
+    while (out->n_items < expected && pos + entry_size <= len) {
+        NodeNeighbourInfo& item = out->items[out->n_items++];
+        char* hex = item.pubkey_prefix;
+        size_t hex_pos = 0;
+        for (uint8_t i = 0; i < pubkey_prefix_len &&
+             i < NEIGHBOUR_PUBKEY_PREFIX_BYTES; i++) {
+            std::snprintf(hex + hex_pos, sizeof(item.pubkey_prefix) - hex_pos,
+                          "%02X", data[pos + i]);
+            hex_pos += 2;
+        }
+        hex[sizeof(item.pubkey_prefix) - 1] = '\0';
+        pos += pubkey_prefix_len;
+        std::memcpy(&item.heard_secs_ago, &data[pos], 4); pos += 4;
+        item.snr_quarters = static_cast<int8_t>(data[pos++]);
+    }
+    return true;
+}
+
+bool requestNeighbours(const char* dest_name);
+bool hasNeighboursResponse();
+bool getNeighboursResult(NodeNeighboursResult* out);
 
 
 // ── Command response ring buffer (for terminal UI) ──

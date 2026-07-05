@@ -231,10 +231,13 @@ public:
     // Send a typed REQ to a contact by name. Returns true if sent.
     // The response arrives via onContactResponse() and is stored in _responses[].
     bool sendRequest(const char* name, uint8_t req_type);
+    bool sendRequestTracked(const char* name, uint8_t req_type, uint32_t* out_tag);
 
 
     // Send a custom-data REQ to a contact by name.
     bool sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len);
+    bool sendRequestWithDataTracked(const char* name, const uint8_t* data,
+                                    uint8_t data_len, uint32_t* out_tag);
 
 
     // Polling API for received responses
@@ -479,9 +482,8 @@ public:
     uint8_t getLoginPermission(const char* name) const {
         int idx = findLoginEntry(name);
         if (idx < 0) return PERM_ACL_GUEST;
-        const uint8_t acl_role = _login_entries[idx].acl_permissions & 0x03u;
-        if (_login_entries[idx].acl_permissions != 0) return acl_role;
-        return _login_entries[idx].permission ? PERM_ACL_ADMIN : PERM_ACL_GUEST;
+        return sigurdos::mesh::effectiveLoginPermission(
+            _login_entries[idx].permission, _login_entries[idx].acl_permissions);
     }
 
     uint8_t getLoginStatus(const char* name) {

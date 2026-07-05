@@ -161,6 +161,17 @@ TEST(MeshContractTest, LoginResponseParserAcceptsLegacyOk) {
     EXPECT_EQ(parsed.permission, 1);
 }
 
+TEST(MeshContractTest, EffectiveLoginPermissionDoesNotTreatRoomReadOnlyHintAsAdmin) {
+    EXPECT_EQ(sigurdos::mesh::effectiveLoginPermission(2, 0), PERM_ACL_GUEST);
+    EXPECT_EQ(sigurdos::mesh::effectiveLoginPermission(1, 0), PERM_ACL_ADMIN);
+    EXPECT_EQ(sigurdos::mesh::effectiveLoginPermission(0, PERM_ACL_READ_ONLY),
+              PERM_ACL_READ_ONLY);
+    EXPECT_EQ(sigurdos::mesh::effectiveLoginPermission(1, PERM_ACL_READ_WRITE),
+              PERM_ACL_READ_WRITE);
+    EXPECT_EQ(sigurdos::mesh::effectiveLoginPermission(1, PERM_ACL_ADMIN),
+              PERM_ACL_ADMIN);
+}
+
 TEST(MeshContractTest, LoginResponseParserMarksPendingFailures) {
     const uint8_t failed[] = {0x11, 0x22, 0x33, 0x44, 0x05};
     auto parsed = sigurdos::mesh::parseLoginResponse(failed, sizeof(failed), true);
@@ -188,8 +199,70 @@ TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
 
     EXPECT_TRUE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_ROOM, ""));
     EXPECT_TRUE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_ROOM, "admin"));
-    EXPECT_FALSE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_REPEATER, ""));
+    EXPECT_TRUE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_REPEATER, ""));
     EXPECT_TRUE(sigurdos::mesh::loginPasswordAllowedForContactType(ADV_TYPE_REPEATER, "guest"));
+}
+
+TEST(MeshContractTest, NeighboursRequestMatchesMeshCoreSimpleRepeaterFormat) {
+    uint8_t req[11] = {0};
+    ASSERT_TRUE(sigurdos::mesh::buildNeighboursRequest(
+        req, sizeof(req),
+        sigurdos::mesh::NEIGHBOUR_DEFAULT_COUNT,
+        0x1234,
+        sigurdos::mesh::NEIGHBOUR_DEFAULT_ORDER_NEWEST,
+        sigurdos::mesh::NEIGHBOUR_PUBKEY_PREFIX_BYTES,
+        0xaabbccddu));
+
+    EXPECT_EQ(req[0], sigurdos::mesh::REQ_TYPE_GET_NEIGHBOURS);
+    EXPECT_EQ(req[1], sigurdos::mesh::NEIGHBOUR_REQUEST_VERSION);
+    EXPECT_EQ(req[2], sigurdos::mesh::NEIGHBOUR_DEFAULT_COUNT);
+    EXPECT_EQ(req[3], 0x34);
+    EXPECT_EQ(req[4], 0x12);
+    EXPECT_EQ(req[5], sigurdos::mesh::NEIGHBOUR_DEFAULT_ORDER_NEWEST);
+    EXPECT_EQ(req[6], sigurdos::mesh::NEIGHBOUR_PUBKEY_PREFIX_BYTES);
+    EXPECT_EQ(req[7], 0xdd);
+    EXPECT_EQ(req[8], 0xcc);
+    EXPECT_EQ(req[9], 0xbb);
+    EXPECT_EQ(req[10], 0xaa);
+
+    EXPECT_FALSE(sigurdos::mesh::buildNeighboursRequest(
+        req, 10,
+        sigurdos::mesh::NEIGHBOUR_DEFAULT_COUNT,
+        0,
+        sigurdos::mesh::NEIGHBOUR_DEFAULT_ORDER_NEWEST,
+        sigurdos::mesh::NEIGHBOUR_PUBKEY_PREFIX_BYTES,
+        0));
+}
+
+TEST(MeshContractTest, NeighboursResponseParserReadsPrefixAgeAndSnr) {
+    uint8_t resp[] = {
+        0x78, 0x56, 0x34, 0x12, // tag
+        0x03, 0x00,             // total neighbours
+        0x02, 0x00,             // returned neighbours
+        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x2c, 0x01, 0x00, 0x00, // 300 seconds ago
+        0x18,                   // 6.0 dB
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+        0x05, 0x00, 0x00, 0x00, // 5 seconds ago
+        0xf8                    // -2.0 dB
+    };
+
+    sigurdos::mesh::NodeNeighboursResult out{};
+    ASSERT_TRUE(sigurdos::mesh::parseNeighboursResponse(
+        resp, sizeof(resp), sigurdos::mesh::NEIGHBOUR_PUBKEY_PREFIX_BYTES, &out));
+
+    EXPECT_EQ(out.total, 3);
+    EXPECT_EQ(out.returned, 2);
+    ASSERT_EQ(out.n_items, 2);
+    EXPECT_STREQ(out.items[0].pubkey_prefix, "AABBCCDDEEFF");
+    EXPECT_EQ(out.items[0].heard_secs_ago, 300u);
+    EXPECT_EQ(out.items[0].snr_quarters, 24);
+    EXPECT_STREQ(out.items[1].pubkey_prefix, "010203040506");
+    EXPECT_EQ(out.items[1].heard_secs_ago, 5u);
+    EXPECT_EQ(out.items[1].snr_quarters, -8);
+
+    EXPECT_FALSE(sigurdos::mesh::parseNeighboursResponse(
+        resp, 7, sigurdos::mesh::NEIGHBOUR_PUBKEY_PREFIX_BYTES, &out));
 }
 
 TEST(MeshContractTest, RoomMessageFormattingUsesPlainPublicPost) {
@@ -296,6 +369,64 @@ TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
 TEST(MeshContractTest, NodeStatusWireSizeMatchesDeclaredResponseSize) {
     EXPECT_EQ(NODE_STATUS_RESPONSE_SIZE, 56);
     EXPECT_EQ(sizeof(NodeStatus), static_cast<std::size_t>(NODE_STATUS_RESPONSE_SIZE));
+}
+
+TEST(MeshContractTest, NodeStatusResponseParserReadsFullTaggedRepeaterStatsBlob) {
+    uint8_t resp[4 + NODE_STATUS_RESPONSE_SIZE] = {0};
+    resp[0] = 0x44;
+    resp[1] = 0x33;
+    resp[2] = 0x22;
+    resp[3] = 0x11;
+
+    uint8_t* blob = resp + 4;
+    std::size_t pos = 0;
+    auto w16 = [&](uint16_t value) {
+        std::memcpy(blob + pos, &value, sizeof(value));
+        pos += sizeof(value);
+    };
+    auto wi16 = [&](int16_t value) {
+        std::memcpy(blob + pos, &value, sizeof(value));
+        pos += sizeof(value);
+    };
+    auto w32 = [&](uint32_t value) {
+        std::memcpy(blob + pos, &value, sizeof(value));
+        pos += sizeof(value);
+    };
+
+    w16(4120);        // batt_milli_volts
+    w16(3);           // curr_tx_queue_len
+    wi16(-117);       // noise_floor
+    wi16(-83);        // last_rssi
+    w32(101);         // n_packets_recv
+    w32(202);         // n_packets_sent
+    w32(303);         // total_air_time_secs
+    w32(404);         // total_up_time_secs
+    w32(505);         // n_sent_flood
+    w32(606);         // n_sent_direct
+    w32(707);         // n_recv_flood
+    w32(808);         // n_recv_direct
+    w16(9);           // err_events
+    wi16(28);         // last_snr
+    w16(10);          // n_direct_dups
+    w16(11);          // n_flood_dups
+    w32(909);         // total_rx_air_time_secs
+    w32(1001);        // n_recv_errors
+    ASSERT_EQ(pos, static_cast<std::size_t>(NODE_STATUS_RESPONSE_SIZE));
+
+    NodeStatus out{};
+    ASSERT_TRUE(sigurdos::mesh::parseNodeStatusResponse(resp, sizeof(resp), &out));
+    EXPECT_EQ(out.batt_milli_volts, 4120);
+    EXPECT_EQ(out.curr_tx_queue_len, 3);
+    EXPECT_EQ(out.noise_floor, -117);
+    EXPECT_EQ(out.last_rssi, -83);
+    EXPECT_EQ(out.n_packets_recv, 101u);
+    EXPECT_EQ(out.n_packets_sent, 202u);
+    EXPECT_EQ(out.total_rx_air_time_secs, 909u);
+    EXPECT_EQ(out.n_recv_errors, 1001u);
+
+    EXPECT_FALSE(sigurdos::mesh::parseNodeStatusResponse(resp, 4, &out));
+    EXPECT_FALSE(sigurdos::mesh::parseNodeStatusResponse(nullptr, sizeof(resp), &out));
+    EXPECT_FALSE(sigurdos::mesh::parseNodeStatusResponse(resp, sizeof(resp), nullptr));
 }
 
 TEST(MeshContractTest, TelemetryResultKeepsFixedItemCapacity) {

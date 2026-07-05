@@ -918,6 +918,10 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     sent = sigurdos::mesh::requestTelemetry(c->name);
                     if (sent) navigate_to(Screen::Telemetry);
                     break;
+                case RepeaterManagementRequest::Neighbours:
+                    sent = sigurdos::mesh::requestNeighbours(c->name);
+                    if (sent) navigate_to(Screen::NodeNeighbours);
+                    break;
                 }
                 if (!sent) {
                     sigurdos::mesh::mesh_v2_queue_push(
@@ -972,6 +976,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         sec_header("  Live Requests");
         add_query(LV_SYMBOL_SETTINGS "  Request Status", RepeaterManagementRequest::Status);
         add_query(LV_SYMBOL_WIFI "  Request Telemetry", RepeaterManagementRequest::Telemetry);
+        add_query(LV_SYMBOL_LIST "  Request Neighbours", RepeaterManagementRequest::Neighbours);
         if (target->type == ADV_TYPE_ROOM) {
             lv_obj_t* sync = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Resync Past Posts", ">");
             lv_obj_set_style_bg_color(sync, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
@@ -1079,7 +1084,6 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         // ── Section: Network ─────────────────────────────
         if (show_admin_management_rows) {
             sec_header("  Network");
-            add_act(LV_SYMBOL_LIST "  Neighbours", "neighbors", "Sent: neighbors");
             add_act(LV_SYMBOL_LIST "  Regions", "region", "Sent: region");
             add_act(LV_SYMBOL_REFRESH "  Repeat On", "set repeat on", "Sent: repeat on");
             add_act(LV_SYMBOL_REFRESH "  Repeat Off", "set repeat off", "Sent: repeat off");
