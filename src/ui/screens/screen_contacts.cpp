@@ -1360,6 +1360,7 @@ void contact_detail_screen_show(const char* contact_name)
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
                 if (sigurdos::mesh::requestStatus(name)) {
+                    sigurdos::ui::node_status_request_started(name);
                     sigurdos::ui::navigate_to(sigurdos::ui::Screen::NodeStatus);
                 } else {
                     sigurdos::mesh::mesh_v2_queue_push(
@@ -1397,6 +1398,7 @@ void contact_detail_screen_show(const char* contact_name)
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
                 if (sigurdos::mesh::requestTelemetry(name)) {
+                    sigurdos::ui::telemetry_request_started(name);
                     sigurdos::ui::navigate_to(sigurdos::ui::Screen::Telemetry);
                 } else {
                     sigurdos::mesh::mesh_v2_queue_push(
@@ -1694,18 +1696,20 @@ void contact_detail_screen_show(const char* contact_name)
                 lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                 const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (!name) return;
+                char safe_name[32];
+                snprintf(safe_name, sizeof(safe_name), "%s", name);
                 sigurdos::mesh::ContactInfo info{};
                 const bool is_room =
-                    sigurdos::mesh::getContactByName(name, &info) &&
+                    sigurdos::mesh::getContactByName(safe_name, &info) &&
                     info.type == ADV_TYPE_ROOM;
                 if (is_room) {
-                    if (!sigurdos::mesh::sendLogin(name, "")) {
-                        sigurdos::mesh::clearLoginState(name);
+                    if (!sigurdos::mesh::sendLogin(safe_name, "")) {
+                        sigurdos::mesh::clearLoginState(safe_name);
                     }
                     repeater_detail_close_state();
-                    chat_screen_open_room(name);
+                    chat_screen_open_room(safe_name);
                 } else {
-                    show_login_password_dialog(name);
+                    show_login_password_dialog(safe_name);
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(li_btn, [](lv_event_t* e) {
@@ -1727,7 +1731,11 @@ void contact_detail_screen_show(const char* contact_name)
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
                         lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                         const char* name = (const char*)lv_obj_get_user_data(btn);
-                        if (name) show_login_password_dialog(name);
+                        if (name) {
+                            char safe_name[32];
+                            snprintf(safe_name, sizeof(safe_name), "%s", name);
+                            show_login_password_dialog(safe_name);
+                        }
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
                         free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));

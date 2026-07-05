@@ -126,6 +126,29 @@ TEST(LoginPollPolicy, TimeoutDurationMatchesIntervalAndPollLimit)
               static_cast<uint32_t>(sigurdos::ui::REPEATER_LOGIN_POLL_MAX_PENDING_POLLS));
 }
 
+TEST(RepeaterManagementWaitPolicy, UsesExistingMeshRequestTtl)
+{
+    EXPECT_EQ(sigurdos::ui::REPEATER_MANAGEMENT_REQUEST_POLL_MS, 1000u);
+    EXPECT_EQ(sigurdos::ui::REPEATER_MANAGEMENT_REQUEST_TIMEOUT_MS, 120000u);
+}
+
+TEST(RepeaterManagementWaitPolicy, TimesOutWithWrapSafeElapsedTime)
+{
+    EXPECT_FALSE(sigurdos::ui::repeater_management_request_timed_out(119999u, 0u));
+    EXPECT_TRUE(sigurdos::ui::repeater_management_request_timed_out(120000u, 0u));
+    EXPECT_TRUE(sigurdos::ui::repeater_management_request_timed_out(
+        100u, UINT32_MAX - 119900u));
+}
+
+TEST(RepeaterManagementWaitPolicy, RemainingSecondsAreRoundedUp)
+{
+    EXPECT_EQ(sigurdos::ui::repeater_management_request_remaining_secs(0u, 0u), 120u);
+    EXPECT_EQ(sigurdos::ui::repeater_management_request_remaining_secs(1u, 0u), 120u);
+    EXPECT_EQ(sigurdos::ui::repeater_management_request_remaining_secs(1000u, 0u), 119u);
+    EXPECT_EQ(sigurdos::ui::repeater_management_request_remaining_secs(119001u, 0u), 1u);
+    EXPECT_EQ(sigurdos::ui::repeater_management_request_remaining_secs(120000u, 0u), 0u);
+}
+
 TEST(RepeaterAdminPolicy, ShowsManagementRowsOnlyForAdmins)
 {
     EXPECT_TRUE(sigurdos::ui::repeater_show_admin_management_rows(true));

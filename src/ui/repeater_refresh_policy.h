@@ -9,6 +9,8 @@ namespace sigurdos::ui {
 
 static constexpr uint32_t REPEATER_LOGIN_POLL_INTERVAL_MS = 2000;
 static constexpr uint16_t REPEATER_LOGIN_POLL_MAX_PENDING_POLLS = 8;
+static constexpr uint32_t REPEATER_MANAGEMENT_REQUEST_POLL_MS = 1000;
+static constexpr uint32_t REPEATER_MANAGEMENT_REQUEST_TIMEOUT_MS = 120000;
 
 enum class RepeaterManagementRequest : uint8_t {
     Status,
@@ -73,6 +75,23 @@ inline uint32_t login_poll_timeout_ms()
 {
     return REPEATER_LOGIN_POLL_INTERVAL_MS *
            static_cast<uint32_t>(REPEATER_LOGIN_POLL_MAX_PENDING_POLLS);
+}
+
+inline bool repeater_management_request_timed_out(uint32_t now_ms,
+                                                  uint32_t started_at_ms)
+{
+    return (uint32_t)(now_ms - started_at_ms) >=
+           REPEATER_MANAGEMENT_REQUEST_TIMEOUT_MS;
+}
+
+inline uint32_t repeater_management_request_remaining_secs(uint32_t now_ms,
+                                                           uint32_t started_at_ms)
+{
+    const uint32_t elapsed = now_ms - started_at_ms;
+    if (elapsed >= REPEATER_MANAGEMENT_REQUEST_TIMEOUT_MS) return 0;
+    const uint32_t remaining_ms =
+        REPEATER_MANAGEMENT_REQUEST_TIMEOUT_MS - elapsed;
+    return (remaining_ms + 999u) / 1000u;
 }
 
 inline bool repeater_show_admin_management_rows(bool is_admin)

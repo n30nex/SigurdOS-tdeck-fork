@@ -770,18 +770,20 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                     const char* name = (const char*)lv_obj_get_user_data(btn);
                     if (!name) return;
+                    char safe_name[32];
+                    snprintf(safe_name, sizeof(safe_name), "%s", name);
                     sigurdos::mesh::ContactInfo info{};
                     const bool is_room =
-                        sigurdos::mesh::getContactByName(name, &info) &&
+                        sigurdos::mesh::getContactByName(safe_name, &info) &&
                         info.type == ADV_TYPE_ROOM;
                     if (is_room) {
-                        if (!sigurdos::mesh::sendLogin(name, "")) {
-                            sigurdos::mesh::clearLoginState(name);
+                        if (!sigurdos::mesh::sendLogin(safe_name, "")) {
+                            sigurdos::mesh::clearLoginState(safe_name);
                         }
                         repeater_detail_close_state();
-                        chat_screen_open_room(name);
+                        chat_screen_open_room(safe_name);
                     } else {
-                        show_login_password_dialog(name);
+                        show_login_password_dialog(safe_name);
                     }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(login_btn, [](lv_event_t* e) {
@@ -807,7 +809,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
                         lv_obj_t* btn = (lv_obj_t*)lv_event_get_current_target(e);
                         const char* name = (const char*)lv_obj_get_user_data(btn);
-                        if (name) show_login_password_dialog(name);
+                        if (name) {
+                            char safe_name[32];
+                            snprintf(safe_name, sizeof(safe_name), "%s", name);
+                            show_login_password_dialog(safe_name);
+                        }
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_add_event_cb(admin_btn, [](lv_event_t* e) {
                         free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e)));
@@ -954,15 +960,24 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 switch (c->request) {
                 case RepeaterManagementRequest::Status:
                     sent = sigurdos::mesh::requestStatus(c->name);
-                    if (sent) navigate_to(Screen::NodeStatus);
+                    if (sent) {
+                        node_status_request_started(c->name);
+                        navigate_to(Screen::NodeStatus);
+                    }
                     break;
                 case RepeaterManagementRequest::Telemetry:
                     sent = sigurdos::mesh::requestTelemetry(c->name);
-                    if (sent) navigate_to(Screen::Telemetry);
+                    if (sent) {
+                        telemetry_request_started(c->name);
+                        navigate_to(Screen::Telemetry);
+                    }
                     break;
                 case RepeaterManagementRequest::Neighbours:
                     sent = sigurdos::mesh::requestNeighbours(c->name);
-                    if (sent) navigate_to(Screen::NodeNeighbours);
+                    if (sent) {
+                        node_neighbours_request_started(c->name);
+                        navigate_to(Screen::NodeNeighbours);
+                    }
                     break;
                 }
                 if (!sent) {
@@ -1074,8 +1089,10 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 lv_obj_add_event_cb(r, [](lv_event_t* e) {
                     auto* c = (RoomChatCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
                     if (c && c->name) {
+                        char safe_name[32];
+                        snprintf(safe_name, sizeof(safe_name), "%s", c->name);
                         repeater_detail_close_state();
-                        chat_screen_open_room(c->name);
+                        chat_screen_open_room(safe_name);
                     }
                 }, LV_EVENT_CLICKED, nullptr);
                 lv_obj_add_event_cb(r, [](lv_event_t* e) {
