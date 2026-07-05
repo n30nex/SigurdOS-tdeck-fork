@@ -65,9 +65,14 @@ TEST(LoginRefreshPolicy, SkipsImmediateDetailRefreshForSentBlankRoomGuestLogin)
     EXPECT_FALSE(sigurdos::ui::login_detail_refresh_after_submit(true, true));
 }
 
-TEST(LoginRefreshPolicy, RefreshesAfterFailedLoginSubmit)
+TEST(LoginRefreshPolicy, SkipsDetailRefreshForFailedBlankRoomGuestLogin)
 {
-    EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(false, true));
+    EXPECT_FALSE(sigurdos::ui::login_detail_refresh_after_submit(false, true));
+}
+
+TEST(LoginRefreshPolicy, RefreshesAfterFailedAdminOrRepeaterLoginSubmit)
+{
+    EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(false, false));
 }
 
 TEST(LoginRefreshPolicy, RefreshesAfterSentAdminOrRepeaterLogin)

@@ -597,15 +597,16 @@ static char g_active_room_server[32] = "";
 bool setActiveRoomServer(const char* contact_name) {
     if (!contact_name || !contact_name[0]) return false;
     if (g_mesh) {
-        bool found_room = false;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, contact_name) == 0) {
-                found_room = (c->type == ADV_TYPE_ROOM);
+                if (c->type != ADV_TYPE_ROOM) return false;
                 break;
             }
         }
-        if (!found_room) return false;
+        // Allow opening a persisted room transcript even if the room advert has
+        // not been re-heard since boot. Sends will still fail closed if the
+        // contact truly is absent, but the UI will not silently do nothing.
     }
     strncpy(g_active_room_server, contact_name, sizeof(g_active_room_server) - 1);
     g_active_room_server[sizeof(g_active_room_server) - 1] = '\0';

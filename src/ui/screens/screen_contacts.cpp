@@ -415,21 +415,27 @@ static void deferred_login_submit_cb(lv_timer_t* t)
     auto* ctx = static_cast<DeferredLoginSubmitCtx*>(lv_timer_get_user_data(t));
     if (ctx && ctx->name[0]) {
         const bool is_room_server = contact_is_room_server(ctx->name);
-        bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
         const bool blank_room_guest_login =
-            sent && ctx->password[0] == '\0' && is_room_server;
-        if (sent) {
-            if (blank_room_guest_login) {
-                repeater_detail_close_state();
-                chat_screen_open_room(ctx->name);
-            } else {
-                start_login_poll_timer(ctx->name, false);
+            ctx->password[0] == '\0' && is_room_server;
+        bool sent = sigurdos::mesh::sendLogin(ctx->name, ctx->password);
+        if (blank_room_guest_login) {
+            // Guest room entry is a UI navigation action first. The login
+            // packet opportunistically refreshes the room-server session, but
+            // no-response/flood-path failures must not make the button inert.
+            if (!sent) {
+                sigurdos::mesh::clearLoginState(ctx->name);
             }
-            if (ctx->save_password && ctx->password[0]) {
-                sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
-            }
+            repeater_detail_close_state();
+            chat_screen_open_room(ctx->name);
         } else {
-            sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
+            if (sent) {
+                start_login_poll_timer(ctx->name, false);
+                if (ctx->save_password && ctx->password[0]) {
+                    sigurdos::saveRepeaterPassword(ctx->name, ctx->password);
+                }
+            } else {
+                sigurdos::mesh::forceLoginState(ctx->name, LOGIN_STATUS_FAILED, 0);
+            }
         }
         if (login_detail_refresh_after_submit(sent, blank_room_guest_login)) {
             schedule_login_detail_refresh(ctx->name, false);
@@ -639,7 +645,10 @@ void show_login_password_dialog(const char* contact_name)
 
     // Cleanup on delete
     lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
+        lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+        if (lv_event_get_target(de) != obj) return;
+        PwDialogData* d = (PwDialogData*)lv_obj_get_user_data(obj);
+        lv_obj_set_user_data(obj, nullptr);
         if (d) {
             free(d->name);
             delete d;
@@ -994,7 +1003,10 @@ void show_admin_cmd_dialog(const char* contact_name)
 
     // ── Cleanup ──────────────────────────────────
     lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        TermData* d = (TermData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
+        lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+        if (lv_event_get_target(de) != obj) return;
+        TermData* d = (TermData*)lv_obj_get_user_data(obj);
+        lv_obj_set_user_data(obj, nullptr);
         if (d) {
             d->deleted = true;  // prevent timer callback from using members
             if (d->timer) lv_timer_del(d->timer);

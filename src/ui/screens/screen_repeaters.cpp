@@ -497,7 +497,10 @@ static void repeater_input_dialog(const char* contact_name,
 
     // Cleanup
     lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        RiData* d = (RiData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(de));
+        lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+        if (lv_event_get_target(de) != obj) return;
+        RiData* d = (RiData*)lv_obj_get_user_data(obj);
+        lv_obj_set_user_data(obj, nullptr);
         if (d) {
             free(d->name);
             free(d->prefix);
@@ -1167,7 +1170,10 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                             lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
                         }, LV_EVENT_CLICKED, nullptr);
                         lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-                            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(de)));
+                            lv_obj_t* obj = (lv_obj_t*)lv_event_get_current_target(de);
+                            if (lv_event_get_target(de) != obj) return;
+                            free(lv_obj_get_user_data(obj));
+                            lv_obj_set_user_data(obj, nullptr);
                         }, LV_EVENT_DELETE, nullptr);
                     }
                 }, LV_EVENT_CLICKED, nullptr);
