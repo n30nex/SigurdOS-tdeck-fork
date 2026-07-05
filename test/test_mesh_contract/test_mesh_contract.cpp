@@ -214,6 +214,11 @@ TEST(MeshContractTest, LoginPasswordPolicyMatchesMeshCoreRoomLogin) {
     EXPECT_TRUE(sigurdos::mesh::loginShouldForceFloodForContactType(ADV_TYPE_ROOM));
     EXPECT_TRUE(sigurdos::mesh::loginShouldForceFloodForContactType(ADV_TYPE_REPEATER));
     EXPECT_FALSE(sigurdos::mesh::loginShouldForceFloodForContactType(ADV_TYPE_CHAT));
+
+    EXPECT_TRUE(sigurdos::mesh::loginBootstrapShouldBypassFloodScope(ADV_TYPE_ROOM));
+    EXPECT_TRUE(sigurdos::mesh::loginBootstrapShouldBypassFloodScope(ADV_TYPE_REPEATER));
+    EXPECT_FALSE(sigurdos::mesh::loginBootstrapShouldBypassFloodScope(ADV_TYPE_CHAT));
+    EXPECT_FALSE(sigurdos::mesh::loginBootstrapShouldBypassFloodScope(ADV_TYPE_SENSOR));
 }
 
 TEST(MeshContractTest, NeighboursRequestMatchesMeshCoreSimpleRepeaterFormat) {

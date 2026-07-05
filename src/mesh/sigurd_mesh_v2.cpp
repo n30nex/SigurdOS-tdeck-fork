@@ -101,8 +101,14 @@ namespace mesh {
         if (sigurdos::mesh::loginShouldForceFloodForContactType(contact.type)) {
             login_contact.out_path_len = OUT_PATH_UNKNOWN;
         }
+        if (sigurdos::mesh::loginBootstrapShouldBypassFloodScope(contact.type)) {
+            setSendUnscopedOnce(true);
+        }
         int r = BaseChatMesh::sendLogin(login_contact, password ? password : "", est_timeout);
-        if (r == MSG_SEND_FAILED) _login_entries[login_idx].status = LOGIN_FAILED;
+        if (r == MSG_SEND_FAILED) {
+            setSendUnscopedOnce(false);
+            _login_entries[login_idx].status = LOGIN_FAILED;
+        }
         return r;
     }
 
@@ -982,6 +988,9 @@ namespace mesh {
         if (sigurdos::mesh::loginShouldForceFloodForContactType(contact.type)) {
             login_contact.out_path_len = OUT_PATH_UNKNOWN;
         }
+        if (sigurdos::mesh::loginBootstrapShouldBypassFloodScope(contact.type)) {
+            setSendUnscopedOnce(true);
+        }
         int r = BaseChatMesh::sendLogin(login_contact, password, est_timeout);
         if (r != MSG_SEND_FAILED) {
 #if SIGURDOS_DEBUG_MESH
@@ -990,6 +999,7 @@ namespace mesh {
 #endif
             return true;
         }
+        setSendUnscopedOnce(false);
         _login_entries[login_idx].status = LOGIN_FAILED;
         return false;
     }

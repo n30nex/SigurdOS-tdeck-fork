@@ -109,6 +109,11 @@ inline bool login_poll_timed_out(uint16_t pending_polls)
     return pending_polls >= REPEATER_LOGIN_POLL_MAX_PENDING_POLLS;
 }
 
+inline bool repeater_detail_pending_refresh_should_keep_polling(uint8_t login_status)
+{
+    return login_status == 1;
+}
+
 inline uint32_t login_poll_timeout_ms()
 {
     return REPEATER_LOGIN_POLL_INTERVAL_MS *

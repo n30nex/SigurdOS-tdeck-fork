@@ -628,6 +628,13 @@ inline bool loginShouldForceFloodForContactType(uint8_t contact_type) {
     return contact_type == ADV_TYPE_REPEATER || contact_type == ADV_TYPE_ROOM;
 }
 
+inline bool loginBootstrapShouldBypassFloodScope(uint8_t contact_type) {
+    // Region/private-scope transport codes are for normal mesh traffic. Login is
+    // the bootstrap that discovers a usable repeater/room path, so it must be
+    // an unscoped flood even when the current chat region is scoped.
+    return loginShouldForceFloodForContactType(contact_type);
+}
+
 bool sendLogin(const char* name, const char* password);
 bool sendLoginForContactType(const char* name, const char* password, uint8_t contact_type_hint);
 void sendLogout(const char* name);

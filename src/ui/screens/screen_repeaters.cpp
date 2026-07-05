@@ -100,6 +100,11 @@ struct RepeaterRefreshState {
     RepeaterListSignature signature;
 };
 
+struct RepeaterPendingRefreshState {
+    lv_obj_t* screen;
+    char name[32];
+};
+
 struct RoomSyncCtx {
     char* name;
 };
@@ -181,6 +186,46 @@ static bool repeater_signature_changed(const RepeaterListSignature& a,
                                        const RepeaterListSignature& b)
 {
     return a.count != b.count || a.newest_last_seen != b.newest_last_seen;
+}
+
+static void repeater_pending_refresh_timer_cb(lv_timer_t* timer)
+{
+    auto* state = static_cast<RepeaterPendingRefreshState*>(lv_timer_get_user_data(timer));
+    bool screen_valid = state && state->screen && lv_obj_is_valid(state->screen);
+    bool screen_active = screen_valid && lv_scr_act() == state->screen;
+    if (!state || !state->name[0] || !screen_active ||
+        !repeater_detail_is_open_for(state->name)) {
+        delete state;
+        lv_timer_del(timer);
+        return;
+    }
+
+    uint8_t status = sigurdos::mesh::getLoginStatus(state->name);
+    if (repeater_detail_pending_refresh_should_keep_polling(status)) {
+        return;
+    }
+
+    char safe_name[32];
+    snprintf(safe_name, sizeof(safe_name), "%s", state->name);
+    delete state;
+    lv_timer_del(timer);
+    if (status == LOGIN_STATUS_OK) {
+        repeater_detail_screen_show(safe_name, true);
+    } else {
+        repeater_detail_screen_show(safe_name, false);
+    }
+}
+
+static void arm_repeater_pending_refresh(lv_obj_t* screen, const char* contact_name)
+{
+    if (!screen || !contact_name || !contact_name[0]) return;
+    auto* state = new(std::nothrow) RepeaterPendingRefreshState{screen, ""};
+    if (!state) return;
+    snprintf(state->name, sizeof(state->name), "%s", contact_name);
+    lv_timer_t* timer = lv_timer_create(repeater_pending_refresh_timer_cb,
+                                        REPEATER_LOGIN_POLL_INTERVAL_MS,
+                                        state);
+    if (!timer) delete state;
 }
 
 static void repeaters_refresh_timer_cb(lv_timer_t* timer)
@@ -787,6 +832,9 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_set_style_text_font(login_v, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(login_v, LV_ALIGN_RIGHT_MID, -4, 0);
             row++;
+        }
+        if (login_st == LOGIN_STATUS_PENDING) {
+            arm_repeater_pending_refresh(scr, contact_name);
         }
 
         // Spacer (flex grow — fills remaining space)

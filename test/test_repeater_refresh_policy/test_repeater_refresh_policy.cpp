@@ -157,6 +157,14 @@ TEST(LoginPollPolicy, TimesOutAtPendingPollLimit)
         sigurdos::ui::REPEATER_LOGIN_POLL_MAX_PENDING_POLLS + 1));
 }
 
+TEST(LoginPollPolicy, DetailPendingRefreshOnlyContinuesForPending)
+{
+    EXPECT_FALSE(sigurdos::ui::repeater_detail_pending_refresh_should_keep_polling(0));
+    EXPECT_TRUE(sigurdos::ui::repeater_detail_pending_refresh_should_keep_polling(1));
+    EXPECT_FALSE(sigurdos::ui::repeater_detail_pending_refresh_should_keep_polling(2));
+    EXPECT_FALSE(sigurdos::ui::repeater_detail_pending_refresh_should_keep_polling(3));
+}
+
 TEST(LoginPollPolicy, TimeoutDurationMatchesIntervalAndPollLimit)
 {
     EXPECT_EQ(sigurdos::ui::login_poll_timeout_ms(),
