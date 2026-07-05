@@ -60,19 +60,26 @@ TEST(RepeaterManagementPolicy, RequestFailureMessagesAreUserVisible)
                 "! Telemetry request failed");
 }
 
-TEST(LoginRefreshPolicy, SkipsImmediateDetailRefreshForSentRoomLogin)
+TEST(LoginRefreshPolicy, SkipsImmediateDetailRefreshForSentBlankRoomGuestLogin)
 {
     EXPECT_FALSE(sigurdos::ui::login_detail_refresh_after_submit(true, true));
 }
 
-TEST(LoginRefreshPolicy, RefreshesAfterFailedRoomLoginSubmit)
+TEST(LoginRefreshPolicy, RefreshesAfterFailedLoginSubmit)
 {
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(false, true));
 }
 
-TEST(LoginRefreshPolicy, RefreshesAfterSentRepeaterLogin)
+TEST(LoginRefreshPolicy, RefreshesAfterSentAdminOrRepeaterLogin)
 {
     EXPECT_TRUE(sigurdos::ui::login_detail_refresh_after_submit(true, false));
+}
+
+TEST(LoginRefreshPolicy, AllowsDelayedRefreshOnlyForCurrentOpenDetail)
+{
+    EXPECT_TRUE(sigurdos::ui::login_detail_refresh_allowed(true, true));
+    EXPECT_FALSE(sigurdos::ui::login_detail_refresh_allowed(false, true));
+    EXPECT_FALSE(sigurdos::ui::login_detail_refresh_allowed(true, false));
 }
 
 TEST(LoginPollPolicy, DoesNotTimeoutBeforeLastPendingPoll)

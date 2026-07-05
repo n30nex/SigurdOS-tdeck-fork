@@ -129,10 +129,10 @@ inline uint16_t chat_screen_render_limit_for_channel(const char* channel)
         : CHAT_SCREEN_RENDER_MAX;
 }
 
-inline bool chat_screen_live_append_should_rerender(const char* channel,
-                                                    uint16_t message_count)
+inline bool chat_screen_live_append_within_visible_budget(const char* channel,
+                                                          uint16_t child_count)
 {
-    return message_count > chat_screen_render_limit_for_channel(channel);
+    return child_count <= chat_screen_render_limit_for_channel(channel);
 }
 
 inline uint8_t chat_screen_normalize_text_type(uint8_t txt_type)

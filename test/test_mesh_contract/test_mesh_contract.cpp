@@ -99,6 +99,13 @@ TEST(MeshContractTest, LoginStatusValuesStayStableForUiStateMachine) {
     EXPECT_EQ(LOGIN_STATUS_FAILED, 3);
 }
 
+TEST(MeshContractTest, LoginStatusCancelPolicyMatchesPendingUiStates) {
+    EXPECT_FALSE(sigurdos::mesh::loginStatusNeedsLocalCancel(LOGIN_STATUS_NONE));
+    EXPECT_TRUE(sigurdos::mesh::loginStatusNeedsLocalCancel(LOGIN_STATUS_PENDING));
+    EXPECT_FALSE(sigurdos::mesh::loginStatusNeedsLocalCancel(LOGIN_STATUS_OK));
+    EXPECT_TRUE(sigurdos::mesh::loginStatusNeedsLocalCancel(LOGIN_STATUS_FAILED));
+}
+
 TEST(MeshContractTest, LoginPendingTimeoutUsesWrapSafeElapsedTime) {
     EXPECT_EQ(sigurdos::mesh::LOGIN_PENDING_TIMEOUT_MS, 30000u);
     EXPECT_FALSE(sigurdos::mesh::loginPendingTimedOut(29999u, 0u));
@@ -194,6 +201,18 @@ TEST(MeshContractTest, RoomMessageFormattingUsesPlainPublicPost) {
 
 TEST(MeshContractTest, UnsupportedRoomFetchFailsClosedAtWrapper) {
     EXPECT_FALSE(sigurdos::mesh::roomMessageFetchSupported());
+}
+
+TEST(MeshContractTest, ActiveRoomServerContextCanBeSetAndCleared) {
+    sigurdos::mesh::clearActiveRoomServer();
+    EXPECT_STREQ(sigurdos::mesh::getActiveRoomServer(), "");
+
+    EXPECT_TRUE(sigurdos::mesh::setActiveRoomServer("Krabs Lagoon"));
+    EXPECT_STREQ(sigurdos::mesh::getActiveRoomServer(), "Krabs Lagoon");
+
+    sigurdos::mesh::clearActiveRoomServer();
+    EXPECT_STREQ(sigurdos::mesh::getActiveRoomServer(), "");
+    EXPECT_FALSE(sigurdos::mesh::setActiveRoomServer(""));
 }
 
 TEST(MeshContractTest, ChannelSendWrappersRejectNullInputs) {

@@ -519,6 +519,10 @@ uint8_t getAdvertPathLen(const char* name);
 #define LOGIN_STATUS_FAILED  3   // login was rejected
 static constexpr uint32_t LOGIN_PENDING_TIMEOUT_MS = 30000UL;
 
+inline bool loginStatusNeedsLocalCancel(uint8_t status) {
+    return status == LOGIN_STATUS_PENDING || status == LOGIN_STATUS_FAILED;
+}
+
 inline bool loginPendingTimedOut(uint32_t now_ms, uint32_t started_at_ms) {
     return (uint32_t)(now_ms - started_at_ms) >= LOGIN_PENDING_TIMEOUT_MS;
 }

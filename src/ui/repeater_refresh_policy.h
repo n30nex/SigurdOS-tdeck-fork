@@ -43,9 +43,15 @@ inline const char* repeater_management_request_failed_message(RepeaterManagement
 }
 
 inline bool login_detail_refresh_after_submit(bool send_attempted,
-                                              bool contact_is_room_server)
+                                              bool blank_room_guest_login)
 {
-    return !send_attempted || !contact_is_room_server;
+    return !send_attempted || !blank_room_guest_login;
+}
+
+inline bool login_detail_refresh_allowed(bool detail_open_for_contact,
+                                         bool screen_still_current)
+{
+    return detail_open_for_contact && screen_still_current;
 }
 
 inline bool login_poll_timed_out(uint16_t pending_polls)

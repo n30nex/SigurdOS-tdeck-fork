@@ -44,12 +44,25 @@ static bool g_repeater_detail_open = false;
 static Screen g_repeater_detail_source = Screen::Repeaters;
 static char g_repeater_detail_name[32] = {0};
 
+void repeater_detail_close_state()
+{
+    g_repeater_detail_name[0] = '\0';
+    clear_back_override();
+    g_repeater_detail_open = false;
+}
+
+bool repeater_detail_is_open_for(const char* contact_name)
+{
+    return g_repeater_detail_open && contact_name && contact_name[0] &&
+           strcmp(g_repeater_detail_name, contact_name) == 0;
+}
+
 static void clear_repeater_pending_login(const char* name)
 {
     if (!name || !name[0]) return;
     cancel_login_poll_for(name);
     uint8_t st = sigurdos::mesh::getLoginStatus(name);
-    if (st == LOGIN_STATUS_PENDING || st == LOGIN_STATUS_FAILED) {
+    if (sigurdos::mesh::loginStatusNeedsLocalCancel(st)) {
         sigurdos::mesh::sendLogout(name);
         sigurdos::mesh::clearLoginState(name);
     }
@@ -59,9 +72,7 @@ static bool repeater_detail_back_override()
 {
     Screen source = g_repeater_detail_source;
     clear_repeater_pending_login(g_repeater_detail_name);
-    g_repeater_detail_name[0] = '\0';
-    clear_back_override();
-    g_repeater_detail_open = false;
+    repeater_detail_close_state();
     if (source == Screen::Contacts) {
         contacts_screen_show();
     } else {
@@ -156,8 +167,7 @@ static void arm_repeaters_refresh(lv_obj_t* screen, RepeaterListSignature signat
 // ════════════════════════════════════════════════════════
 void repeaters_screen_show()
 {
-    clear_back_override();
-    g_repeater_detail_open = false;
+    repeater_detail_close_state();
     lv_obj_t* scr = make_screen_full("Repeaters");
     RepeaterListSignature signature{0, 0};
 
@@ -1014,6 +1024,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 lv_obj_add_event_cb(r, [](lv_event_t* e) {
                     auto* c = (RoomChatCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
                     if (c && c->name) {
+                        repeater_detail_close_state();
                         chat_screen_open_room(c->name);
                     }
                 }, LV_EVENT_CLICKED, nullptr);

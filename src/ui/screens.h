@@ -40,6 +40,8 @@ void channels_screen_show();
 void finder_screen_show();
 void repeaters_screen_show();
 void repeater_detail_screen_show(const char* contact_name, bool skip_login = false);
+void repeater_detail_close_state();
+bool repeater_detail_is_open_for(const char* contact_name);
 void cancel_login_poll_for(const char* contact_name = nullptr);
 void admin_cmd_show(const char* contact_name);
 void advertise_screen_show();

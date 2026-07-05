@@ -3104,6 +3104,7 @@ void chat_screen_open_room(const char* room_name)
     clear_pending_channel_timers();
     chat_screen_set_filter(1);
     sigurdos::mesh::clearActiveRoomServer();
+    if (!sigurdos::mesh::setActiveRoomServer(room_copy)) return;
     const bool opened_from_chat = (current_screen() == Screen::Chat);
 
     g_skip_channel_list = true;
@@ -3175,8 +3176,7 @@ bool chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     if (!in_current_filter) return false;
 
-    if (search_active ||
-        chat_screen_live_append_should_rerender(dyn_channels[idx], ch_msg_count[idx])) {
+    if (search_active) {
         render_active_messages();
         return true;
     }
@@ -3186,9 +3186,12 @@ bool chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     create_bubble(msg_list, sender, text, now, is_self, false, txt_type);
 
-    const uint16_t render_limit = chat_screen_render_limit_for_channel(dyn_channels[idx]);
-    if (lv_obj_get_child_cnt(msg_list) > render_limit)
-        lv_obj_del_async(lv_obj_get_child(msg_list, 0));
+    while (!chat_screen_live_append_within_visible_budget(
+            dyn_channels[idx], lv_obj_get_child_cnt(msg_list))) {
+        lv_obj_t* first = lv_obj_get_child(msg_list, 0);
+        if (!first) break;
+        lv_obj_del(first);
+    }
 
     // Only auto-scroll if user was already at the bottom
     if (at_bottom) {
