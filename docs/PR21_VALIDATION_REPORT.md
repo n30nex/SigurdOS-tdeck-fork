@@ -3,38 +3,38 @@
 Branch: `codex/fix-tdeck-radio-keyboard-validation`
 PR: https://github.com/n30nex/SigurdOS-tdeck-fork/pull/21
 Latest flashed firmware candidate commit:
-`1498d8fb4fb0df7c4c18252177b610362bf5bb33`
+`6af019c6f7b0eb755314a84a72589350a2683fda`
 
 ## Current Status
 
-PR #21 remains a draft because visible device acceptance is still pending for
-room admin login, repeater management login, room chat entry, buzzer behavior,
-and persistence/RF validation flows.
+PR #21 remains a draft because the newest room/repeater login hardening needs
+visible device acceptance before the related issues can be closed. The current
+candidate is native-tested, built by GitHub Actions, downloaded from the
+Actions artifact, flashed to the COM8 T-Deck Plus, and passively monitored
+after flash without reset/crash signatures.
 
-The current candidate is code-reviewed, native-tested, built by GitHub Actions,
-downloaded from the Actions artifact, flashed to the COM8 T-Deck Plus, and
-passively monitored after flash without serial panic/backtrace/reset-loop
-output. This proves the current firmware image builds and boots after flashing.
-It does not prove manual UI behavior.
+This proves the current firmware image builds, flashes, and idles after
+flashing. It does not prove physical UI or RF behavior unless listed under
+confirmed hardware evidence.
 
 ## GitHub Actions Evidence
 
-- Pull Request CI run: `28725117689`
+- Pull Request CI run: `28726901624`
 - Pull Request CI result: passed
 - Pull Request CI head SHA:
-  `1498d8fb4fb0df7c4c18252177b610362bf5bb33`
-- Build Validation Matrix run: `28725132616`
+  `6af019c6f7b0eb755314a84a72589350a2683fda`
+- Build Validation Matrix run: `28727195233`
 - Build Validation Matrix result: passed
 - Build Validation Matrix head SHA:
-  `1498d8fb4fb0df7c4c18252177b610362bf5bb33`
+  `6af019c6f7b0eb755314a84a72589350a2683fda`
 - Downloaded artifact path:
-  `F:\SIGUI\artifacts\cloud-builds\20260704-211548-canada-1498d8f`
-- `firmware-merged.bin` size: `2,694,416` bytes
+  `F:\SIGUI\artifacts\cloud-builds\20260704-224230-canada-6af019c`
+- `firmware-merged.bin` size: `2,694,784` bytes
 - `firmware-merged.bin` SHA256:
-  `BF92A338319EDD8BA0A6C01D247E4B32FB702DAEDF50578D91EB9837EEE3C493`
-- `firmware.bin` size: `2,628,880` bytes
+  `4BD7E4B883744B7F19CDBCF7E715F1D283D0E0F5434D556C60B6E3A78369B156`
+- `firmware.bin` size: `2,629,248` bytes
 - `firmware.bin` SHA256:
-  `AD6270E828103EBBF732D7026C60DB96653CFFA706DFC1AA362AEE19BEAFBD42`
+  `DD5DC1A4FAB4D4770C911DDF53AB4A886E3BEAD4DCD62C541F950DDBFA75E2F1`
 - Artifact structural audit:
   `scripts\audit_launcher_artifact.py` passed against `firmware-merged.bin`
   with `PYTHONIOENCODING=utf-8`
@@ -54,70 +54,75 @@ COM enumeration before flash showed `COM8` as a USB serial device. `COM11`,
 Flash command used:
 
 ```powershell
-python -m esptool --chip esp32s3 --port COM8 --baud 921600 --before default-reset --after hard-reset write-flash 0x0 "F:\SIGUI\artifacts\cloud-builds\20260704-211548-canada-1498d8f\firmware-merged.bin"
+python -m esptool --chip esp32s3 --port COM8 --baud 921600 --before default-reset --after hard-reset write-flash 0x0 "F:\SIGUI\artifacts\cloud-builds\20260704-224230-canada-6af019c\firmware-merged.bin"
 ```
 
 Flash result:
 
 - ESP32-S3 detected on `COM8`
 - MAC: `cc:8d:a2:0d:14:28`
-- esptool wrote `2,694,416` bytes
-- esptool verified the written hash
+- esptool wrote `2,694,784` bytes
+- esptool verified the written data hash
 
-Passive boot capture:
+Passive post-flash monitor:
 
-- File: `F:\SIGUI\artifacts\cloud-builds\20260704-211548-canada-1498d8f\boot-capture-com8.txt`
-- Raw bytes captured: `321`
-- Observed one ROM boot banner and app entry
-- No panic, abort, backtrace, or reset loop observed in the capture
-- Log includes `[mesh] Radio not configured - holding SX1262 in reset`
-
-The `Radio not configured` line is expected after flashing the merged image,
-because the full merged flash resets local configuration state. Setup/Canada
-preset must be completed again before RF/manual UI validation.
+- Script: `scripts\validation\ui_crash_monitor.py`
+- File: `F:\SIGUI\artifacts\cloud-builds\20260704-224230-canada-6af019c\post-flash-idle-com8.json`
+- Duration: `30` seconds
+- DTR/RTS: `false` / `false`
+- Raw bytes captured: `0`
+- Reset/crash events: `0`
+- Exit code: `0`
 
 ## Native Test Evidence
 
 Focused host-native validation was run without building firmware locally.
 
-Latest focused suite before commit `1498d8f`:
+Local checks before commit `6af019c`:
 
 ```powershell
 git diff --check
-pio test -e native_test -f test_chat_config -f test_mesh_contract -f test_repeater_refresh_policy -f test_build -f test_ui_contract -v
+pio test -e native_test -f test_mesh_contract -f test_repeater_refresh_policy -f test_ui_timing -f test_navigation -f test_ui_contract -v
+pio test -e native_test -f test_companion_protocol -f test_chat_config -f test_mesh_contract -f test_mesh_wrapper -f test_repeater_refresh_policy -v
+pio test -e native_test -f test_mesh_contract -f test_mesh_messaging -f test_mesh_wrapper -f test_repeater_refresh_policy -f test_companion_protocol -v
+pio test -e native_test -v
 ```
 
-Result: `git diff --check` passed and the focused suite passed `83/83`, with
-one expected native skip in `test_build`.
+Results:
 
-Covered areas include:
+- `git diff --check`: passed
+- Focused UI/login suite: `86/86` passed
+- Broader mesh/chat suite: `177/177` passed
+- Mesh/login messaging suite: `218/218` passed
+- Full native suite: `983` test cases, `1` skipped, `982` succeeded
 
-- Public/room live append visible-budget trimming
-- Active room-server context set/clear contract
-- Login status cancel policy
-- Blank room guest-login refresh policy
-- Admin/repeater pending-login detail refresh policy
-- Stale delayed login-detail refresh gating
-- UI public API/header inclusion contracts
-
-PR CI run `28725117689` then passed the repository native test job, firmware
-build job, and advisory static/logging job on `1498d8f`.
+PR CI run `28726901624` then passed the repository native test job, firmware
+build job, and advisory static/logging job on `6af019c`.
 
 ## Current Code Changes Under Test
 
-- Blank-password room login opens the selected room chat immediately after the
-  guest login request is sent.
-- `chat_screen_open_room()` sets the active room server before opening the room
-  conversation so room sends route to the selected room server.
-- Repeater/detail state and back overrides are explicitly cleared before room
-  chat navigation.
-- Room admin-password and repeater login paths stay in the detail flow and
-  refresh into visible pending/cancel state.
-- Delayed login-detail refreshes only rebuild the still-open detail contact.
-- Several room/contact/admin modal allocations now fail closed with
-  `new(std::nothrow)` guards instead of throwing on low heap.
-- Public live message append trims synchronously from the head instead of
-  rebuilding the entire visible message list when the render budget is exceeded.
+- `parseLoginResponse()` accepts short successful login responses where
+  `data[4] == 0` and the newer optional keepalive/permission/ACL fields are
+  absent.
+- Failed login records are reclaimable, preventing repeated room/repeater
+  login failures from poisoning the fixed-size login table.
+- Room server and repeater login/admin dialogs now use LVGL current-target
+  event lookup for button-owned user data.
+- Contact removal dialog ownership was hardened against delete-event bubbling
+  and stale heap pointer reuse.
+- Repeater reboot confirmation dialog uses current-target parent lookup.
+
+## Confirmed Hardware Evidence From Current Manual Testing
+
+The following items were confirmed by direct device testing before this commit
+and remain listed as current issue disposition context:
+
+- Topbar five blue dots were removed and `G W B` appears.
+- Contacts -> select contact -> send DM works without reboot.
+- Repeater adverts now show non-zero RSSI/SNR.
+- Opening Public and RX while Public is open was reported fixed before the
+  latest login hardening; retest on `6af019c` is still requested because the
+  device was reflashed.
 
 ## Still Pending
 
@@ -151,7 +156,7 @@ Already closed from current or earlier hardware evidence:
 - #119 Public-open RX message black screen/reboot
 - #120 Contact detail DM send reboots
 
-Do not close these issues from current automated evidence alone:
+Do not close these issues from automated evidence alone:
 
 - #36 Add repeater management page and flow
 - #47 Chat/DM unread/history persistence
@@ -162,8 +167,8 @@ Do not close these issues from current automated evidence alone:
 - #121 Opening Krabs Lagoon room from Chat can reboot device
 
 The code and tests are consistent with fixes for several of these flows. The
-latest artifact is built, validated, flashed, and passively boot-monitored, but
-the visible device flows above still require confirmation before closure.
+latest artifact is built, validated, flashed, and passively monitored, but the
+visible device flows above still require confirmation before closure.
 
 ## Safety Notes
 
