@@ -37,6 +37,7 @@ using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_message_is_command;
 using sigurdos::ui::chat_screen_normalize_text_type;
 using sigurdos::ui::chat_screen_is_room_name;
+using sigurdos::ui::chat_screen_live_append_should_rerender;
 using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_public_message_actions_available;
 using sigurdos::ui::chat_screen_public_message_dm_available;
@@ -172,6 +173,24 @@ TEST(ChatConfig, PublicRenderTailIsExtraSmallForTDeckLvglBudget) {
               CHAT_SCREEN_RENDER_MAX);
     EXPECT_EQ(chat_screen_render_limit_for_channel("DM: Alice"),
               CHAT_SCREEN_RENDER_MAX);
+}
+
+TEST(ChatConfig, LiveAppendRerendersWhenPublicWouldExceedVisibleBudget) {
+    EXPECT_FALSE(chat_screen_live_append_should_rerender(
+        "Public", CHAT_SCREEN_PUBLIC_RENDER_MAX));
+    EXPECT_TRUE(chat_screen_live_append_should_rerender(
+        "Public", CHAT_SCREEN_PUBLIC_RENDER_MAX + 1));
+}
+
+TEST(ChatConfig, LiveAppendKeepsNormalChannelsUnderVisibleBudget) {
+    EXPECT_FALSE(chat_screen_live_append_should_rerender(
+        "#general", CHAT_SCREEN_RENDER_MAX));
+    EXPECT_TRUE(chat_screen_live_append_should_rerender(
+        "#general", CHAT_SCREEN_RENDER_MAX + 1));
+    EXPECT_FALSE(chat_screen_live_append_should_rerender(
+        "Room:Krabs Lagoon", CHAT_SCREEN_RENDER_MAX));
+    EXPECT_TRUE(chat_screen_live_append_should_rerender(
+        "Room:Krabs Lagoon", CHAT_SCREEN_RENDER_MAX + 1));
 }
 
 TEST(ChatConfig, ChannelOpenUsesDeferredLvglTimers) {

@@ -129,6 +129,12 @@ inline uint16_t chat_screen_render_limit_for_channel(const char* channel)
         : CHAT_SCREEN_RENDER_MAX;
 }
 
+inline bool chat_screen_live_append_should_rerender(const char* channel,
+                                                    uint16_t message_count)
+{
+    return message_count > chat_screen_render_limit_for_channel(channel);
+}
+
 inline uint8_t chat_screen_normalize_text_type(uint8_t txt_type)
 {
     return txt_type <= CHAT_SCREEN_TEXT_SIGNED_PLAIN ? txt_type : CHAT_SCREEN_TEXT_PLAIN;

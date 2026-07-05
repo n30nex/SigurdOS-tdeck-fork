@@ -3175,13 +3175,19 @@ bool chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     if (!in_current_filter) return false;
 
+    if (search_active ||
+        chat_screen_live_append_should_rerender(dyn_channels[idx], ch_msg_count[idx])) {
+        render_active_messages();
+        return true;
+    }
+
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
 
     create_bubble(msg_list, sender, text, now, is_self, false, txt_type);
 
-    const uint16_t cap = chat_msg_cap();
-    if (lv_obj_get_child_cnt(msg_list) > cap)
+    const uint16_t render_limit = chat_screen_render_limit_for_channel(dyn_channels[idx]);
+    if (lv_obj_get_child_cnt(msg_list) > render_limit)
         lv_obj_del_async(lv_obj_get_child(msg_list, 0));
 
     // Only auto-scroll if user was already at the bottom
