@@ -6,7 +6,13 @@
 
 #if defined(ESP32_PLATFORM)
 #include <driver/gpio.h>
+#if __has_include(<driver/i2s_std.h>)
+#define SIGURDOS_I2S_STD_DRIVER 1
 #include <driver/i2s_std.h>
+#else
+#define SIGURDOS_I2S_LEGACY_DRIVER 1
+#include <driver/i2s.h>
+#endif
 #include <esp_err.h>
 #include <freertos/FreeRTOS.h>
 #endif
@@ -29,7 +35,11 @@ static constexpr uint32_t I2S_SAMPLE_RATE_HZ = 16000;
 static constexpr size_t I2S_FRAMES_PER_CHUNK = 128;
 static constexpr int16_t I2S_TONE_AMPLITUDE = 9000;
 
+#if defined(SIGURDOS_I2S_STD_DRIVER)
 i2s_chan_handle_t s_i2s_tx = nullptr;
+#else
+static constexpr i2s_port_t I2S_LEGACY_PORT = I2S_NUM_0;
+#endif
 bool s_i2s_ready = false;
 uint32_t s_sample_cursor = 0;
 
@@ -37,6 +47,7 @@ bool speaker_init_i2s()
 {
     if (s_i2s_ready) return true;
 
+#if defined(SIGURDOS_I2S_STD_DRIVER)
     i2s_chan_config_t chan_cfg =
         I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
     if (i2s_new_channel(&chan_cfg, &s_i2s_tx, nullptr) != ESP_OK || !s_i2s_tx) {
@@ -66,14 +77,54 @@ bool speaker_init_i2s()
 
     s_i2s_ready = true;
     return true;
+#else
+    i2s_config_t i2s_cfg = {};
+    i2s_cfg.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_TX);
+    i2s_cfg.sample_rate = I2S_SAMPLE_RATE_HZ;
+    i2s_cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+    i2s_cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+    i2s_cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+    i2s_cfg.intr_alloc_flags = 0;
+    i2s_cfg.dma_buf_count = 4;
+    i2s_cfg.dma_buf_len = I2S_FRAMES_PER_CHUNK;
+    i2s_cfg.use_apll = false;
+    i2s_cfg.tx_desc_auto_clear = true;
+    i2s_cfg.fixed_mclk = 0;
+
+    i2s_pin_config_t pin_cfg = {};
+    pin_cfg.mck_io_num = I2S_PIN_NO_CHANGE;
+    pin_cfg.bck_io_num = PIN_I2S_BCK;
+    pin_cfg.ws_io_num = PIN_I2S_WS;
+    pin_cfg.data_out_num = PIN_I2S_DOUT;
+    pin_cfg.data_in_num = I2S_PIN_NO_CHANGE;
+
+    if (i2s_driver_install(I2S_LEGACY_PORT, &i2s_cfg, 0, nullptr) != ESP_OK) {
+        return false;
+    }
+    if (i2s_set_pin(I2S_LEGACY_PORT, &pin_cfg) != ESP_OK) {
+        i2s_driver_uninstall(I2S_LEGACY_PORT);
+        return false;
+    }
+    (void)i2s_zero_dma_buffer(I2S_LEGACY_PORT);
+    s_i2s_ready = true;
+    return true;
+#endif
 }
 
 void speaker_write_silence()
 {
+#if defined(SIGURDOS_I2S_STD_DRIVER)
     if (!s_i2s_ready || !s_i2s_tx) return;
+#else
+    if (!s_i2s_ready) return;
+#endif
     static int16_t silence[I2S_FRAMES_PER_CHUNK * 2] = {0};
     size_t written = 0;
+#if defined(SIGURDOS_I2S_STD_DRIVER)
     (void)i2s_channel_write(s_i2s_tx, silence, sizeof(silence), &written, 0);
+#else
+    (void)i2s_write(I2S_LEGACY_PORT, silence, sizeof(silence), &written, 0);
+#endif
 }
 
 void speaker_write_tone_chunk()
@@ -99,7 +150,11 @@ void speaker_write_tone_chunk()
     }
 
     size_t written = 0;
+#if defined(SIGURDOS_I2S_STD_DRIVER)
     (void)i2s_channel_write(s_i2s_tx, samples, sizeof(samples), &written, 0);
+#else
+    (void)i2s_write(I2S_LEGACY_PORT, samples, sizeof(samples), &written, 0);
+#endif
 }
 #endif
 
